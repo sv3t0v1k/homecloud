@@ -34,6 +34,7 @@ jobs:
       - run: node --test scripts/ci/test-recovery-native-workflow.cjs
       - run: python3 -B scripts/ci/test-recovery-context.py
       - run: python3 scripts/ci/test-ci-v2-fast-gate.py
+      - run: python3 -B scripts/ci/test-ci-v3-recovery-scope.py
       - run: python3 scripts/ci/test-ci-v2-candidate.py
       - run: python3 scripts/ci/test-test-channel.py
       - run: python3 scripts/ci/test-update-preflight.py
@@ -264,8 +265,101 @@ jobs:
           path: ${{ runner.temp }}/gitleaks-evidence
           if-no-files-found: error
           retention-days: 90
+  recovery-scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify exact PR trees using protected base policy
+        id: classify
+        shell: bash
+        env:
+          GIT_NO_REPLACE_OBJECTS: '1'
+        run: |
+          python3 -I -B - <<'PY_SCOPE'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          event_name = os.environ['GITHUB_EVENT_NAME']
+          event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
+          mode = 'full'
+
+          if event_name == 'push':
+              if event.get('ref') != 'refs/heads/test':
+                  raise SystemExit('Unexpected push branch')
+              mode = 'push'
+          elif event_name == 'pull_request':
+              pr = event['pull_request']
+              base = pr['base']['sha']
+              head = pr['head']['sha']
+
+              if not all(re.fullmatch(r'[a-f0-9]{40}', x)
+                         for x in (base, head)):
+                  raise SystemExit('Invalid candidate SHA')
+
+              actual = subprocess.check_output(
+                  ['git', 'rev-parse', 'HEAD'], text=True
+              ).strip()
+
+              if actual != head:
+                  raise SystemExit('Candidate checkout mismatch')
+
+              repository = os.environ['GITHUB_REPOSITORY'].lower()
+
+              same_repo = all(
+                  pr[key]['repo']['full_name'].lower() == repository
+                  for key in ('base', 'head')
+              )
+
+              if same_repo and pr['base']['ref'] == 'test':
+                  policy = subprocess.run(
+                      ['git', 'show',
+                       base + ':scripts/ci/ci-v3-recovery-scope.py'],
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                  )
+
+                  if policy.returncode == 0:
+                      proof = subprocess.run(
+                          [sys.executable, '-I', '-B', '-', base, head],
+                          input=policy.stdout,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE,
+                      )
+
+                      if proof.returncode == 0:
+                          candidate = proof.stdout.decode('ascii').strip()
+
+                          if candidate in ('ui', 'full'):
+                              mode = candidate
+
+                  # Missing base policy is the bootstrap case.
+                  # Never execute a policy from the candidate checkout.
+              print('Base:', base)
+              print('HEAD:', head)
+          else:
+              raise SystemExit('Unsupported routing event')
+
+          print('Native Recovery route:', mode)
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('mode=' + mode + '\n')
+          PY_SCOPE
   recovery-qualification:
-    if: github.event_name == 'pull_request'
+    needs: recovery-scope
+    if: github.event_name == 'pull_request' && needs.recovery-scope.outputs.mode == 'full'
     uses: ./.github/workflows/recovery-native.yml
     with:
       source_sha: ${{ github.event.pull_request.head.sha }}
@@ -274,7 +368,7 @@ jobs:
   fast-integration-gate:
     name: ci-v2-fast-terminal
     if: always()
-    needs: [pr-fast-backend, backend, frontend, configuration, secrets, recovery-qualification]
+    needs: [recovery-scope, pr-fast-backend, backend, frontend, configuration, secrets, recovery-qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
