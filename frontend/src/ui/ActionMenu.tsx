@@ -49,7 +49,7 @@ export function ActionMenu({ label, disabled, items, triggerLabel }: { label: st
     return () => document.removeEventListener('pointerdown', outside)
   }, [open])
   return <div className="action-menu" ref={root} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false) }}>
-    <button aria-controls={open ? id : undefined} aria-expanded={open} aria-haspopup="menu" aria-label={label} className={triggerLabel ? "button button--primary" : "icon-button"} aria-disabled={disabled || undefined} onClick={() => { if (!disabled) setOpen((value) => !value) }} onKeyDown={(event) => { if (disabled) return; if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true) } }} ref={trigger} type="button"><Icon name={triggerLabel ? "plus" : "more"} />{triggerLabel}</button>
+    <button aria-controls={open ? id : undefined} aria-expanded={open} aria-haspopup="menu" aria-label={label} className={triggerLabel ? "button button--primary" : "icon-button"} aria-disabled={disabled || undefined} onClick={() => { if (!disabled) setOpen((value) => !value) }} onKeyDown={(event) => { if (disabled) return; if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true) } }} ref={trigger} type="button"><Icon name={triggerLabel ? "plus" : "more"} />{triggerLabel ? <span className="action-menu-trigger-label">{triggerLabel}</span> : null}</button>
     {open ? <div aria-label={label} className="action-menu-popover" id={id} onKeyDown={(event) => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return }
       if (event.key === 'Tab') { close(); return }

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError, AxiosHeaders, CanceledError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 import { useState } from 'react'
@@ -86,6 +86,14 @@ describe('PreviewModal', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
+
+    await user.click(trigger)
+
+    const reopened = screen.getByRole('dialog')
+    await user.click(reopened)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 
   it('restores safely when the trigger disappears while the request is still loading', async () => {
@@ -109,9 +117,49 @@ describe('PreviewModal', () => {
 
     expect(await screen.findByRole('img', { name: 'Предпросмотр: photo.png' })).toHaveAttribute('src', 'blob:preview')
     expect(createObjectURL).toHaveBeenCalledOnce()
+
+    const image = screen.getByRole('img', {
+      name: 'Предпросмотр: photo.png',
+    })
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Загружаем предпросмотр…',
+    )
+    expect(image).toHaveAttribute('data-image-pending', 'true')
+
+    fireEvent.load(image)
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(image).not.toHaveAttribute('data-image-pending')
+
     view.unmount()
     expect(revokeObjectURL).toHaveBeenCalledOnce()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview')
+  })
+
+  it('leaves the loading state when the image cannot be displayed', async () => {
+    apiClient.defaults.adapter = async config => ok(config, {
+      type: 'image',
+      content: { type: 'Buffer', data: [1, 2, 3] },
+      mimeType: 'image/png',
+    })
+
+    render(<PreviewModal
+      file={file(40, 'broken.png', 'image/png')}
+      onClose={() => undefined}
+    />)
+
+    const image = await screen.findByRole('img', {
+      name: 'Предпросмотр: broken.png',
+    })
+
+    fireEvent.error(image)
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Не удалось отобразить изображение.',
+    )
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(image).not.toBeInTheDocument()
   })
 
   it('aborts an outstanding request when closed by its parent', async () => {

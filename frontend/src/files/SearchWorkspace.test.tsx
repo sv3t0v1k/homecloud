@@ -77,7 +77,7 @@ describe('global search in the shared authenticated workspace', () => {
     expect(calls.find(call => call.url === '/auth/login')?.data).toBe(JSON.stringify({ email: 'owner@example.test', password: 'test-password' }))
   })
 
-  it('keeps the real discovered upload queue mounted and visible across directory → search → folder → Back', async () => {
+  it('keeps the real discovered upload queue mounted across directory → Spotlight → folder → Back', async () => {
     discoveredSessions = [{ uploadId: '00000000-0000-4000-8000-000000000001', filename: 'paused-upload.bin', totalSize: 2048, chunkSize: 1024, totalChunks: 2, uploadedSize: 1024, parentId: null, status: 'uploading', expiresAt: '2027-01-01T00:00:00Z' }]
     searchResult.folders = [folder()]
     renderWorkspace('/files')
@@ -92,12 +92,60 @@ describe('global search in the shared authenticated workspace', () => {
     expect(screen.getByLabelText('Загрузки')).toBe(manager)
     expect(collapsed).toHaveAttribute('aria-expanded', 'false')
     await user.type(input, 'report{Enter}')
-    await user.click(await screen.findByRole('button', { name: 'report-folder' }))
+
+    const spotlight = screen.getByRole('region', {
+      name: 'Поиск во всём облаке',
+    })
+
+    // Spotlight must not replace the current directory.
+    expect(screen.getByTestId('route')).toHaveTextContent(/^\/files$/)
+    expect(
+      within(screen.getByRole('main')).getByRole('button', {
+        name: 'report-folder',
+      }),
+    ).toBeInTheDocument()
+
+    await user.click(
+      await within(spotlight).findByRole('button', {
+        name: 'report-folder',
+      }),
+    )
     expect(await screen.findByRole('heading', { name: 'report-folder' })).toBeInTheDocument()
     expect(screen.getByLabelText('Загрузки')).toBe(manager)
     expect(collapsed).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('route')).toHaveTextContent(/^\/files\/folders\/7$/)
+    expect(screen.queryByRole('region', {
+      name: 'Поиск во всём облаке',
+    })).not.toBeInTheDocument()
+
     await user.click(screen.getByRole('button', { name: 'История назад' }))
-    expect(await screen.findByRole('heading', { name: 'Результаты для «report»' })).toBeInTheDocument()
+
+    expect(await screen.findByRole('heading', {
+      name: 'Мои файлы',
+    })).toBeInTheDocument()
+    expect(screen.getByTestId('route')).toHaveTextContent(/^\/files$/)
+    expect(screen.queryByRole('region', {
+      name: 'Поиск во всём облаке',
+    })).not.toBeInTheDocument()
+
+    // Reopening Spotlight reuses the existing search session.
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+    const reopened = await screen.findByRole('searchbox', {
+      name: 'Название файла или папки',
+    })
+    await user.type(reopened, 'report{Enter}')
+
+    expect(await within(screen.getByRole('region', {
+      name: 'Поиск во всём облаке',
+    })).findByRole('button', {
+      name: 'report-folder',
+    })).toBeInTheDocument()
+
+    expect(calls.filter(call => call.url === '/files/search')).toHaveLength(1)
+
+    await user.keyboard('{Escape}')
     expect(screen.getByLabelText('Загрузки')).toBe(manager)
     expect(collapsed).toHaveAttribute('aria-expanded', 'false')
     expect(calls.filter(call => call.url === '/uploads/sessions')).toHaveLength(1)
@@ -107,26 +155,141 @@ describe('global search in the shared authenticated workspace', () => {
     expect(within(manager).getByText('Для докачки выберите исходный файл')).toBeVisible()
   })
 
-  it('focuses global search with Ctrl+K from a folder while leaving input and modal shortcuts alone', async () => {
+  it('opens Spotlight with Ctrl+K without navigation and leaves input and modal shortcuts alone', async () => {
     renderWorkspace('/files/folders/7')
     const user = userEvent.setup()
+
     await screen.findByRole('heading', { name: 'report-folder' })
-    const local = screen.getByRole('searchbox', { name: 'Поиск в текущей папке' })
-    local.focus()
-    fireEvent.keyDown(local, { key: 'k', ctrlKey: true })
-    expect(screen.getByTestId('route')).toHaveTextContent('/files/folders/7')
-    expect(local).toHaveFocus()
-    await user.click(screen.getByRole('button', { name: 'Открыть аккаунт: Owner' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Аккаунт и хранилище' })
+
+    const launcher = screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    })
+
+    expect(screen.queryByRole('searchbox', {
+      name: 'Поиск в текущей папке',
+    })).not.toBeInTheDocument()
+
+    // A modal has priority over the global shortcut.
+    await user.click(screen.getByRole('button', {
+      name: 'Открыть аккаунт: Owner',
+    }))
+
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Аккаунт и хранилище',
+    })
+
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+
     expect(dialog).toBeInTheDocument()
-    expect(screen.getByTestId('route')).toHaveTextContent('/files/folders/7')
+    expect(launcher).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('searchbox', {
+      name: 'Название файла или папки',
+    })).not.toBeInTheDocument()
+    expect(screen.getByTestId('route')).toHaveTextContent(/^\/files\/folders\/7$/)
+
     await user.keyboard('{Escape}')
+
+    // Opening search must leave the directory in place.
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
-    const global = await screen.findByRole('searchbox', { name: 'Название файла или папки' })
-    expect(screen.getByTestId('route')).toHaveTextContent('/files/search')
+
+    const global = await screen.findByRole('searchbox', {
+      name: 'Название файла или папки',
+    })
+
     expect(global).toHaveFocus()
-    expect(screen.getByRole('link', { name: 'К исходной папке' })).toHaveAttribute('href', '/files/folders/7')
+    expect(launcher).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('route')).toHaveTextContent(/^\/files\/folders\/7$/)
+
+    expect(screen.getByRole('heading', {
+      name: 'report-folder',
+    })).toBeInTheDocument()
+
+    // Do not intercept the shortcut inside an editable field.
+    await user.type(global, 'x')
+    fireEvent.keyDown(global, { key: 'k', ctrlKey: true })
+
+    expect(global).toHaveValue('x')
+    expect(global).toHaveFocus()
+    expect(launcher).toHaveAttribute('aria-expanded', 'true')
+    expect(calls.filter(call => call.url === '/files/search')).toHaveLength(0)
+
+    // Escape closes Spotlight and restores launcher focus.
+    await user.keyboard('{Escape}')
+    expect(launcher).toHaveFocus()
+    expect(launcher).toHaveAttribute('aria-expanded', 'false')
+    expect(global).not.toBeInTheDocument()
+
+    // The macOS shortcut must work too.
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+
+    expect(await screen.findByRole('searchbox', {
+      name: 'Название файла или папки',
+    })).toHaveFocus()
+
+    await user.click(screen.getByRole('heading', {
+      name: 'report-folder',
+    }))
+
+    expect(launcher).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('route')).toHaveTextContent(/^\/files\/folders\/7$/)
+  })
+
+  it('searches automatically after typing and opens a result with the keyboard', async () => {
+    searchResult.folders = [folder()]
+    renderWorkspace('/files')
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', { name: 'Мои файлы' })
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    const spotlight = screen.getByRole('region', {
+      name: 'Поиск во всём облаке',
+    })
+
+    const input = within(spotlight).getByRole('searchbox', {
+      name: 'Название файла или папки',
+    })
+
+    await user.type(input, 'r')
+    expect(calls.filter(call => call.url === '/files/search')).toHaveLength(0)
+
+    await user.type(input, 'eport')
+
+    // No Enter: live search should submit after its debounce.
+    const result = await within(spotlight).findByRole(
+      'button',
+      { name: 'report-folder' },
+      { timeout: 2000 },
+    )
+
+    const searches = calls.filter(call => call.url === '/files/search')
+    expect(searches).toHaveLength(1)
+    expect(searches[0].params).toEqual({
+      q: 'report',
+      limit: 20,
+      offset: 0,
+    })
+
+    expect(screen.getByTestId('route')).toHaveTextContent(/^\/files$/)
+    expect(input).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+    expect(result).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+
+    expect(await screen.findByRole('heading', {
+      name: 'report-folder',
+    })).toBeInTheDocument()
+
+    expect(screen.getByTestId('route')).toHaveTextContent(/^\/files\/folders\/7$/)
+
+    expect(screen.queryByRole('region', {
+      name: 'Поиск во всём облаке',
+    })).not.toBeInTheDocument()
   })
 
   it.each([true, false])('shows a found file in its folder with present=%s, handling a stale result explicitly', async present => {

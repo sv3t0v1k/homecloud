@@ -57,8 +57,19 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
     } finally { lock.current = false; setBusy(false) }
   }
   const percent = storage ? storagePercent(storage.storageUsed, storage.storageQuota) : null
-  return <div aria-label="Аккаунт и хранилище" aria-modal="true" className="dialog-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
-    <div className="dialog-surface account-dialog"><header className="dialog-header"><h2>Аккаунт и хранилище</h2><button className="button button--ghost" disabled={busy} onClick={close} type="button">Закрыть</button></header>
+  return <div aria-label="Аккаунт и хранилище" aria-modal="true" className="dialog-overlay liquid-settings-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
+    <div className="dialog-surface account-dialog liquid-settings-dialog"><header className="dialog-header"><h2>Аккаунт и хранилище</h2><button
+      aria-label="Закрыть"
+      className="icon-button liquid-close-button"
+      disabled={busy}
+      onClick={close}
+      type="button"
+    >
+      <Icon name="close" />
+      <span className="liquid-close-label" aria-hidden="true">
+        Закрыть
+      </span>
+    </button></header>
       <div className="dialog-body">
         <section aria-labelledby="account-profile-title" className="account-section">
           <h3 id="account-profile-title">Профиль</h3>

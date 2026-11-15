@@ -116,6 +116,52 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .empty-state { text-align: center; padding: var(--space-16) var(--space-6); color: var(--text-muted); border: 1px dashed var(--border-subtle); border-radius: var(--radius-lg); }
 .empty-state svg { margin: 0 auto var(--space-4); width: 36px; height: 36px; color: var(--accent); }
 .empty-state h3 { color: var(--text-primary); font-size: 18px; font-weight: 600; }
+
+/* UI foundation: file manager empty state and primary action */
+.files-page .empty-state:not([role="alert"]) {
+  background: var(--bg-sidebar);
+  border-color: var(--border-strong);
+  padding-block: var(--space-12);
+}
+
+.files-page .empty-state:not([role="alert"]) svg {
+  width: 60px;
+  height: 60px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-soft);
+  margin-bottom: var(--space-5);
+}
+
+.files-page .empty-state:not([role="alert"]) h3 {
+  font-weight: 700;
+  letter-spacing: -.025em;
+  margin-bottom: var(--space-2);
+}
+
+.files-page .empty-state:not([role="alert"]) p {
+  margin: 0;
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .files-page .button--primary {
+    transition:
+      background var(--motion-fast),
+      box-shadow var(--motion-normal),
+      transform var(--motion-fast);
+  }
+
+  .files-page .button--primary:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgb(159 190 99 / 18%);
+  }
+
+  .files-page .button--primary:not(:disabled):active {
+    transform: translateY(0) scale(.98);
+    box-shadow: none;
+  }
+}
+
 .dialog-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: var(--space-6); background: var(--overlay); backdrop-filter: blur(5px); overflow-y: auto; }
 .dialog-surface { width: 100%; max-width: 580px; max-height: 90dvh; overflow-y: auto; background: var(--surface-primary); border: 1px solid var(--border-strong); border-radius: var(--radius-xl); padding: var(--space-8); box-shadow: var(--elevation-modal); }
 .dialog-header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-6); }
@@ -428,4 +474,4552 @@ h1, h2, h3, h4, p { margin-top: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .file-thumbnail-image { animation: none; }
+}
+
+
+/* UI foundation: premium file cards */
+.files-page .directory-grid tbody {
+  gap: var(--space-4);
+}
+
+.files-page .directory-grid .directory-row {
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  align-content: start;
+  grid-template-columns: minmax(0, 1fr) auto;
+  background: var(--surface-primary);
+  border-color: var(--border-subtle);
+  transition:
+    background-color var(--motion-normal),
+    border-color var(--motion-normal),
+    box-shadow var(--motion-normal);
+}
+
+.files-page .directory-grid .file-name-cell {
+  grid-column: 1 / -1;
+  padding: 0 0 var(--space-2);
+  min-width: 0;
+}
+
+/* Lightweight thumbnail controls */
+.files-page .directory-grid .selection-hit {
+  position: absolute;
+  top: calc(var(--space-3) + var(--space-1));
+  left: calc(var(--space-3) + var(--space-1));
+  z-index: 1;
+  margin: 0;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition: opacity 180ms ease;
+}
+
+.files-page .directory-grid
+.selection-hit input[type=checkbox] {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid #fff;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
+  cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.files-page .directory-grid
+.selection-hit input[type=checkbox]:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5 10l3 3 7-7' fill='none' stroke='%2317200d' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.files-page .directory-grid .selection-hit:focus-within {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.files-page .directory-grid .file-actions {
+  top: calc(var(--space-3) + var(--space-1));
+  right: calc(var(--space-3) + var(--space-1));
+}
+
+.files-page .directory-grid .file-actions
+.action-menu > .icon-button {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  border-color: transparent;
+  color: #fff;
+  transition: opacity 180ms ease, color 180ms ease;
+}
+
+.files-page .directory-grid .file-actions
+.action-menu > .icon-button svg {
+  width: 23px;
+  height: 23px;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 35%));
+}
+
+.files-page .directory-grid .file-actions
+.action-menu > .icon-button:hover,
+.files-page .directory-grid .file-actions
+.action-menu > .icon-button[aria-expanded="true"] {
+  background: transparent;
+  border-color: transparent;
+  color: #fff;
+}
+
+/* Soft contrast around the controls, not opaque buttons. */
+.files-page .directory-grid .file-thumbnail {
+  position: relative;
+}
+
+.files-page .directory-grid .file-thumbnail::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgb(0 0 0 / 72%) 0,
+    rgb(0 0 0 / 58%) 36px,
+    transparent 80px
+  );
+  opacity: 1;
+  transition: opacity 180ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .files-page .directory-grid .directory-row
+  .selection-hit,
+  .files-page .directory-grid .directory-row
+  .file-actions .action-menu > .icon-button,
+  .files-page .directory-grid .directory-row
+  .file-thumbnail::after {
+    opacity: 0;
+  }
+
+  .files-page .directory-grid .directory-row:is(
+    :hover, :focus-within, .is-selected,
+    :has(.action-menu > [aria-expanded="true"])
+  ) .selection-hit,
+  .files-page .directory-grid .directory-row:is(
+    :hover, :focus-within, .is-selected,
+    :has(.action-menu > [aria-expanded="true"])
+  ) .file-actions .action-menu > .icon-button,
+  .files-page .directory-grid .directory-row:is(
+    :hover, :focus-within, .is-selected,
+    :has(.action-menu > [aria-expanded="true"])
+  ) .file-thumbnail::after {
+    opacity: 1;
+  }
+}
+
+@media (any-pointer: coarse) {
+  .files-page .directory-grid .directory-row
+  .selection-hit,
+  .files-page .directory-grid .directory-row
+  .file-actions .action-menu > .icon-button,
+  .files-page .directory-grid .directory-row
+  .file-thumbnail::after {
+    opacity: 1;
+  }
+}
+
+@media (hover: hover) and (pointer: fine)
+       and (prefers-reduced-motion: no-preference) {
+  .files-page .directory-grid .file-thumbnail-image {
+    transition: transform 320ms cubic-bezier(.2,.7,.2,1);
+  }
+
+  .files-page .directory-grid .directory-row:hover
+  .file-thumbnail-image {
+    transform: scale(1.02);
+  }
+}
+
+@media (forced-colors: active) {
+  .files-page .directory-grid
+  .selection-hit input[type=checkbox] {
+    appearance: auto;
+    background: revert;
+    border: revert;
+  }
+
+  .files-page .directory-grid .file-actions
+  .action-menu > .icon-button {
+    color: ButtonText;
+  }
+}
+
+.files-page .directory-grid .file-name-cell .file-thumbnail {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  margin: 0 0 var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.files-page .directory-grid .file-name-cell
+.file-icon:not(.file-thumbnail) {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  margin: 0 0 var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.files-page .directory-grid .file-name-cell
+.file-icon:not(.file-thumbnail) svg {
+  width: 44px;
+  height: 44px;
+}
+
+.files-page .directory-grid .file-name-cell .file-name {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.5;
+  text-align: left;
+  padding: var(--space-1) var(--space-1);
+}
+
+.files-page .directory-grid .directory-row > .file-meta {
+  min-width: 0;
+  padding: 2px var(--space-1);
+  line-height: 1.6;
+}
+
+.files-page .directory-grid .directory-row
+> .file-meta:nth-child(2) {
+  grid-column: 1 / -1;
+  font-family: var(--font-ui);
+}
+
+.files-page .directory-grid .directory-row
+> .file-meta:nth-child(3) {
+  grid-column: 1;
+}
+
+.files-page .directory-grid .directory-row
+> .file-meta:nth-child(4) {
+  grid-column: 2;
+  text-align: right;
+}
+
+.files-page .directory-grid .file-meta .mobile-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .files-page .directory-grid .directory-row:hover {
+    background: var(--surface-secondary);
+    border-color: var(--accent-muted);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  }
+}
+
+.files-page .directory-grid .directory-row.is-selected,
+.files-page .directory-grid .directory-row.is-selected:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.files-page .directory-grid .directory-row
+.selection-hit input[type=checkbox] {
+  accent-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .files-page .directory-grid .directory-row {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: compact workspace */
+.files-page > .breadcrumbs {
+  margin-bottom: var(--space-3);
+}
+
+.files-page > .breadcrumbs ol {
+  margin: 0;
+}
+
+.files-page .files-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.files-page .files-page-header .page-heading {
+  min-width: 0;
+  margin: 0;
+}
+
+.files-page .files-page-header .page-heading h2 {
+  margin: 0;
+  line-height: 1.25;
+}
+
+.files-page .files-page-header .files-toolbar {
+  display: block;
+  margin: 0;
+  min-width: 0;
+}
+
+.files-page .files-page-header .upload-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2) var(--space-4);
+  max-width: 520px;
+}
+
+.files-page .files-page-header .upload-control > .action-menu {
+  flex-shrink: 0;
+}
+
+.files-page .files-page-header
+.upload-control > p {
+  flex-basis: 100%;
+}
+
+.files-page .directory-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+.files-page .directory-controls .directory-search {
+  width: 100%;
+  min-width: 0;
+  max-width: 440px;
+  margin: 0;
+}
+
+.files-page .directory-controls .directory-search .field {
+  margin-bottom: var(--space-1);
+  font-size: 12px;
+}
+
+.files-page .directory-controls .directory-search .input {
+  transition:
+    border-color var(--motion-fast),
+    background-color var(--motion-fast);
+}
+
+.files-page .directory-controls .directory-search .input:focus {
+  background: var(--surface-primary);
+  border-color: var(--border-focus);
+}
+
+.files-page .directory-controls .directory-toolbar {
+  margin: 0;
+  min-height: 44px;
+  gap: var(--space-5);
+}
+
+.files-page .directory-controls .directory-toolbar p {
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .files-page .files-page-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .files-page .files-page-header .upload-control {
+    justify-content: flex-start;
+  }
+
+  .files-page .directory-controls {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .files-page .directory-controls .directory-search {
+    max-width: none;
+  }
+
+  .files-page .directory-controls .directory-toolbar {
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .files-page .directory-controls .directory-toolbar p {
+    white-space: normal;
+  }
+}
+
+/* UI foundation: directory motion */
+@media (prefers-reduced-motion: no-preference) {
+  .files-page [data-directory-motion] {
+    --directory-scale: .98;
+  }
+
+  /* Animate visual leaves, not menu or dialog containers. */
+  .files-page [data-directory-motion]
+  .file-name-cell > :is(.file-icon, .file-name),
+  .files-page [data-directory-motion]
+  .empty-state:not([role="alert"]) > :is(svg, h3, p) {
+    transform-origin: center center;
+    animation: homecloud-directory-depth
+      1000ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .files-page [data-directory-motion]
+  .directory-row > .file-meta {
+    animation: homecloud-directory-detail
+      1000ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-directory-depth {
+    from {
+      opacity: .70;
+      transform: scale(var(--directory-scale));
+    }
+
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes homecloud-directory-detail {
+    from { opacity: .70; }
+    to { opacity: 1; }
+  }
+}
+
+
+/* UI foundation: action menu motion */
+@media (prefers-reduced-motion: no-preference) {
+  .files-page .action-menu-popover {
+    animation: homecloud-menu-appear
+      450ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .files-page .action-menu-popover .action-menu-item {
+    transition:
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+
+  @keyframes homecloud-menu-appear {
+    from {
+      opacity: .6;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+}
+
+
+/* UI foundation: expanding add button */
+@media (hover: hover) and (pointer: fine) {
+  .files-page .files-page-header
+  .upload-control > .action-menu {
+    display: flex;
+    justify-content: flex-end;
+    inline-size: 128px;
+    flex: 0 0 128px;
+  }
+
+  .files-page .files-page-header
+  .upload-control > .action-menu > .button--primary {
+    box-sizing: border-box;
+    inline-size: 44px;
+    min-inline-size: 44px;
+    block-size: 44px;
+    border-radius: 999px;
+    flex-shrink: 0;
+    padding-inline: 12px;
+    gap: 0;
+    overflow: hidden;
+    white-space: nowrap;
+
+    transition:
+      inline-size 450ms cubic-bezier(.4,0,.3,1),
+      gap 450ms cubic-bezier(.4,0,.3,1),
+      background-color 120ms ease;
+  }
+
+  .files-page .files-page-header
+  .upload-control > .action-menu > .button--primary > svg {
+    flex-shrink: 0;
+  }
+
+  .files-page .files-page-header
+  .upload-control .action-menu-trigger-label {
+    display: block;
+    max-inline-size: 0;
+    min-inline-size: 0;
+    overflow: hidden;
+    opacity: 0;
+    white-space: nowrap;
+
+    transition:
+      max-inline-size 450ms cubic-bezier(.4,0,.3,1),
+      opacity 350ms ease;
+  }
+
+  .files-page .files-page-header
+  .upload-control > .action-menu >
+  .button--primary:is(
+    :hover,
+    :focus-visible,
+    [aria-expanded="true"]
+  ) {
+    inline-size: 128px;
+    gap: var(--space-2);
+  }
+
+  .files-page .files-page-header
+  .upload-control > .action-menu >
+  .button--primary:is(
+    :hover,
+    :focus-visible,
+    [aria-expanded="true"]
+  ) .action-menu-trigger-label {
+    max-inline-size: 90px;
+    opacity: 1;
+  }
+}
+
+/* Respect the system motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .files-page .files-page-header
+  .upload-control > .action-menu > .button--primary,
+  .files-page .files-page-header
+  .upload-control .action-menu-trigger-label {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid glass */
+
+/* Green glass capsule. Keep the existing expansion. */
+.files-page .files-page-header
+.upload-control > .action-menu > .button--primary {
+  border-radius: 999px;
+
+  background-image: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, .30) 0%,
+    rgba(255, 255, 255, .07) 44%,
+    rgba(0, 0, 0, .07) 100%
+  );
+
+  border-color: color-mix(
+    in srgb, var(--accent) 65%, white
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, .55),
+    inset 0 -2px 5px rgba(0, 0, 0, .10),
+    0 3px 12px rgba(0, 0, 0, .14);
+}
+
+/* Liquid menu: opaque fallback first. */
+.files-page :is(.files-page-header, .directory-list)
+.action-menu > .action-menu-popover {
+  border-radius: 20px;
+
+  background: var(--surface-elevated);
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .10),
+    0 12px 32px rgba(0, 0, 0, .20),
+    0 3px 8px rgba(0, 0, 0, .10);
+}
+
+.files-page :is(.files-page-header, .directory-list)
+.action-menu .action-menu-item {
+  border-radius: 12px;
+}
+
+/* Translucent glass when supported by the browser. */
+@supports (
+  (backdrop-filter: blur(16px)) or
+  (-webkit-backdrop-filter: blur(16px))
+) {
+  .files-page :is(.files-page-header, .directory-list)
+  .action-menu > .action-menu-popover {
+    background: color-mix(
+      in srgb,
+      var(--surface-elevated) 72%,
+      transparent
+    );
+
+    -webkit-backdrop-filter:
+      blur(24px) saturate(145%);
+
+    backdrop-filter:
+      blur(24px) saturate(145%);
+
+    border-color: color-mix(
+      in srgb,
+      var(--border-strong) 90%,
+      white
+    );
+
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, .14),
+      inset 0 -1px 2px rgba(0, 0, 0, .08),
+      0 12px 32px rgba(0, 0, 0, .20);
+  }
+
+  .files-page :is(.files-page-header, .directory-list)
+  .action-menu .action-menu-item:is(
+    :hover, :focus-visible
+  ) {
+    background: color-mix(
+      in srgb,
+      var(--surface-primary) 78%,
+      transparent
+    );
+  }
+}
+
+/* Preserve readability when transparency is reduced. */
+@media (prefers-reduced-transparency: reduce) {
+  .files-page :is(.files-page-header, .directory-list)
+  .action-menu > .action-menu-popover {
+    background: var(--surface-elevated);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+
+/* UI foundation: liquid view switch */
+
+.files-page .directory-toolbar .view-switch {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: repeat(2, 44px);
+  gap: 0;
+  padding: 3px;
+  flex-shrink: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, .07),
+    rgba(255, 255, 255, .01)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, .10),
+    0 2px 8px rgba(0, 0, 0, .10);
+}
+
+/* Sliding glass selection. */
+.files-page .directory-toolbar .view-switch::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset-block: 3px;
+  inset-inline-start: 3px;
+  inline-size: 44px;
+
+  box-sizing: border-box;
+  border-radius: 999px;
+
+  background: var(--accent-soft);
+
+  background: linear-gradient(
+    150deg,
+    color-mix(
+      in srgb, var(--accent) 35%, var(--surface-primary)
+    ),
+    color-mix(
+      in srgb, var(--accent) 18%, var(--surface-primary)
+    )
+  );
+
+  border: 1px solid color-mix(
+    in srgb, var(--accent) 40%, transparent
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, .18),
+    0 2px 6px rgba(0, 0, 0, .14);
+
+  transform: translateX(0);
+  pointer-events: none;
+
+  transition:
+    transform 450ms cubic-bezier(.4,0,.3,1);
+}
+
+.files-page .directory-toolbar
+.view-switch:has(> button:nth-child(2)[aria-pressed="true"])::before {
+  transform: translateX(44px);
+}
+
+/* Keep both action targets stationary. */
+.files-page .directory-toolbar
+.view-switch > .icon-button {
+  position: relative;
+  z-index: 1;
+
+  box-sizing: border-box;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+
+  color: var(--text-secondary);
+
+  transition: color 200ms ease;
+}
+
+.files-page .directory-toolbar
+.view-switch > .icon-button:hover {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.files-page .directory-toolbar
+.view-switch > .icon-button[aria-pressed="true"] {
+  color: var(--accent);
+  background: transparent;
+}
+
+.files-page .directory-toolbar
+.view-switch > .icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Respect the system motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .files-page .directory-toolbar .view-switch::before,
+  .files-page .directory-toolbar
+  .view-switch > .icon-button {
+    transition: none;
+  }
+}
+
+/* Fallback for browsers without relational selectors. */
+@supports not selector(:has(*)) {
+  .files-page .directory-toolbar
+  .view-switch::before {
+    display: none;
+  }
+
+  .files-page .directory-toolbar
+  .view-switch > .icon-button[aria-pressed="true"] {
+    background: var(--accent-soft);
+  }
+}
+
+
+/* UI foundation: liquid view transition */
+
+@media (prefers-reduced-motion: no-preference) {
+  .files-page .directory-list[data-view-motion="list"] {
+    animation: homecloud-view-list-enter
+      600ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .files-page .directory-list[data-view-motion="grid"] {
+    animation: homecloud-view-grid-enter
+      600ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-view-list-enter {
+    from { opacity: .70; }
+    to { opacity: 1; }
+  }
+
+  @keyframes homecloud-view-grid-enter {
+    from { opacity: .70; }
+    to { opacity: 1; }
+  }
+}
+
+
+/* Native view transition: files only. */
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.directory-list[data-view-crossfade]) {
+    view-transition-name: none;
+  }
+
+  .files-page .directory-list[data-view-crossfade] {
+    view-transition-name: homecloud-directory-view;
+  }
+
+  html:has(.directory-list[data-view-crossfade])
+  ::view-transition {
+    pointer-events: none;
+  }
+
+  /* Do not stretch the old list into the new grid. */
+  ::view-transition-group(homecloud-directory-view) {
+    animation: none;
+  }
+
+  ::view-transition-old(homecloud-directory-view),
+  ::view-transition-new(homecloud-directory-view) {
+    inline-size: 100%;
+    block-size: auto;
+    mix-blend-mode: plus-lighter;
+  }
+
+  ::view-transition-old(homecloud-directory-view) {
+    animation: homecloud-view-crossfade-out
+      600ms cubic-bezier(.4,0,.3,1) both;
+  }
+
+  ::view-transition-new(homecloud-directory-view) {
+    animation: homecloud-view-crossfade-in
+      600ms cubic-bezier(.4,0,.3,1) both;
+  }
+
+  @keyframes homecloud-view-crossfade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  @keyframes homecloud-view-crossfade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+
+/* UI foundation: liquid spotlight */
+
+/* Glass search launcher in the top bar. */
+.ux-v2 .global-search-launcher {
+  border-radius: 999px;
+  min-height: 44px;
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.09),
+    rgba(255,255,255,.015)
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.12),
+    0 2px 8px rgba(0,0,0,.08);
+
+  transition:
+    border-color 200ms ease,
+    background-color 200ms ease,
+    box-shadow 350ms ease;
+}
+
+.ux-v2 .global-search-launcher:hover {
+  background-color: var(--surface-elevated);
+
+  border-color: color-mix(
+    in srgb, var(--accent) 45%, var(--border-strong)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.14),
+    0 3px 14px rgba(0,0,0,.12);
+}
+
+.ux-v2 .global-search-launcher > svg {
+  color: var(--accent);
+}
+
+/* Spotlight-inspired search surface.
+   Keep the existing search route and document scrolling. */
+.ux-v2 .global-search-page {
+  max-width: 920px;
+  padding: clamp(16px, 3vw, 32px);
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005)
+  );
+
+  border: 1px solid var(--border-strong);
+  border-radius: 28px;
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.10),
+    0 12px 36px rgba(0,0,0,.13);
+}
+
+.ux-v2 .global-search-page .search-page-heading {
+  margin-block: 12px 24px;
+}
+
+.ux-v2 .global-search-page .search-form {
+  margin-bottom: 24px;
+}
+
+.ux-v2 .global-search-page .search-input-wrap {
+  min-height: 62px;
+  border-radius: 20px;
+
+  background: var(--surface-elevated);
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.07),
+    transparent
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.10),
+    0 3px 10px rgba(0,0,0,.08);
+
+  transition:
+    border-color 200ms ease,
+    box-shadow 350ms ease;
+}
+
+.ux-v2 .global-search-page
+.search-input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.14),
+    0 0 0 3px var(--accent-soft);
+}
+
+.ux-v2 .global-search-page
+.search-input-wrap > svg {
+  color: var(--accent);
+  width: 23px;
+  height: 23px;
+  flex-shrink: 0;
+}
+
+.ux-v2 .global-search-page .search-input {
+  font-size: 19px;
+}
+
+.ux-v2 .global-search-page .search-submit {
+  border-radius: 999px;
+
+  background-image: linear-gradient(
+    160deg,
+    rgba(255,255,255,.30),
+    rgba(255,255,255,.04) 55%,
+    rgba(0,0,0,.07)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.35),
+    0 3px 10px rgba(0,0,0,.10);
+}
+
+.ux-v2 .global-search-page
+.search-result-list {
+  display: grid;
+  gap: 4px;
+}
+
+.ux-v2 .global-search-page
+.search-result-row {
+  border-radius: 14px;
+  padding-inline: 12px;
+
+  transition:
+    background-color 180ms ease;
+}
+
+.ux-v2 .global-search-page
+.search-result-row:hover,
+.ux-v2 .global-search-page
+.search-result-row:focus-within {
+  background: var(--surface-elevated);
+}
+
+/* Animate only the search heading and field,
+   never containers holding fixed menus/dialogs. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .global-search-page .search-page-heading,
+  .ux-v2 .global-search-page .search-form {
+    animation: homecloud-spotlight-appear
+      600ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-spotlight-appear {
+    from { opacity: .7; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .global-search-page {
+    border-radius: 20px;
+    padding: 16px;
+  }
+
+  .ux-v2 .global-search-page .search-input {
+    font-size: 16px;
+  }
+}
+
+
+/* UI foundation: unified liquid spotlight */
+
+/* No duplicate directory search: one compact control row. */
+.files-page .directory-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.files-page .directory-controls .directory-toolbar {
+  width: 100%;
+  justify-content: space-between;
+}
+
+/* Circular search launcher with reserved expansion space. */
+.ux-v2 .spotlight-launcher-slot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 128px;
+  margin-inline: auto;
+}
+
+.ux-v2 .spotlight-launcher-slot
+> .global-search-launcher {
+  box-sizing: border-box;
+  inline-size: 44px;
+  min-inline-size: 44px;
+  block-size: 44px;
+  min-block-size: 44px;
+  margin: 0;
+  padding-inline: 12px;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.13),
+    rgba(255,255,255,.02)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 3px 12px rgba(0,0,0,.12);
+
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text-primary);
+
+  transition:
+    inline-size 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    background-color 150ms ease;
+}
+
+.ux-v2 .spotlight-launcher-slot
+.global-search-launcher > svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.ux-v2 .spotlight-launcher-slot
+.spotlight-launcher-label {
+  display: block;
+  max-inline-size: 0;
+  min-inline-size: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+
+  transition:
+    max-inline-size 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 741px) {
+  .ux-v2 .spotlight-launcher-slot
+  > .global-search-launcher:is(
+    :hover, :focus-visible, [aria-expanded="true"]
+  ) {
+    inline-size: 128px;
+    gap: var(--space-2);
+  }
+
+  .ux-v2 .spotlight-launcher-slot
+  .global-search-launcher:is(
+    :hover, :focus-visible, [aria-expanded="true"]
+  ) .spotlight-launcher-label {
+    max-inline-size: 82px;
+    opacity: 1;
+  }
+}
+
+/* Floating search, no modal backdrop or page navigation. */
+.ux-v2 .spotlight-panel {
+  position: fixed;
+  inset-inline: 0;
+  top: 12px;
+  margin-inline: auto;
+  width: min(720px, calc(100% - 24px));
+  z-index: 90;
+
+  isolation: isolate;
+  border-radius: 28px;
+}
+
+/* The material lives on a decorative sibling layer.
+   It is not an ancestor of interactive search results. */
+.ux-v2 .spotlight-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 20px 60px rgba(0,0,0,.28),
+    0 4px 12px rgba(0,0,0,.12);
+}
+
+@supports (
+  (backdrop-filter: blur(24px)) or
+  (-webkit-backdrop-filter: blur(24px))
+) {
+  .ux-v2 .spotlight-panel::before {
+    background: color-mix(
+      in srgb,
+      var(--surface-elevated) 84%,
+      transparent
+    );
+
+    -webkit-backdrop-filter:
+      blur(24px) saturate(145%);
+
+    backdrop-filter:
+      blur(24px) saturate(145%);
+  }
+}
+
+.ux-v2 .spotlight-panel .global-search-page {
+  box-sizing: border-box;
+  max-width: none;
+  max-height: calc(100dvh - 24px);
+  margin: 0;
+  padding: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+
+  border: 0;
+  border-radius: 28px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ux-v2 .spotlight-topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.ux-v2 .spotlight-topline h1 {
+  margin: 0 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ux-v2 .spotlight-topline .icon-button {
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.ux-v2 .spotlight-search .search-form {
+  margin-bottom: 18px;
+}
+
+.ux-v2 .spotlight-search .search-form > label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.ux-v2 .spotlight-search .search-input-wrap {
+  min-height: 60px;
+  border-radius: 999px;
+
+  background: var(--surface-primary);
+  border-color: var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.12);
+}
+
+.ux-v2 .spotlight-search
+.search-input-wrap:focus-within {
+  border-color: var(--accent);
+}
+
+.ux-v2 .spotlight-search
+.search-input-wrap > svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ux-v2 .spotlight-search .search-input {
+  font-size: 18px;
+}
+
+.ux-v2 .spotlight-search .search-submit {
+  min-width: 105px;
+  border-radius: 999px;
+  background-image: linear-gradient(
+    160deg,
+    rgba(255,255,255,.30),
+    rgba(255,255,255,.04)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.32);
+}
+
+.ux-v2 .spotlight-search .search-results {
+  min-height: 0;
+}
+
+.ux-v2 .spotlight-search .search-empty {
+  padding: 20px 10px;
+}
+
+.ux-v2 .spotlight-search .search-empty > svg {
+  display: none;
+}
+
+.ux-v2 .spotlight-search .search-result-row {
+  padding: 10px;
+  border-radius: 14px;
+  border-bottom-color: transparent;
+}
+
+.ux-v2 .spotlight-search
+.search-result-row:is(:hover, :focus-within) {
+  background: var(--surface-primary);
+}
+
+.ux-v2 .spotlight-search .search-result-name {
+  font-size: 14px;
+}
+
+/* Same Liquid material on search result menus. */
+.ux-v2 .spotlight-search .action-menu-popover {
+  border-radius: 20px;
+  background: var(--surface-elevated);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.14),
+    0 12px 32px rgba(0,0,0,.20);
+}
+
+.ux-v2 .spotlight-search .action-menu-item {
+  border-radius: 12px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .spotlight-panel::before,
+  .ux-v2 .spotlight-search .spotlight-topline,
+  .ux-v2 .spotlight-search .search-form {
+    animation: homecloud-spotlight-open
+      450ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-spotlight-open {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 740px) {
+  .ux-v2 .spotlight-launcher-slot {
+    flex-basis: 44px;
+    margin-inline: auto 0;
+  }
+
+  .ux-v2 .spotlight-panel {
+    width: calc(100% - 16px);
+    top: 8px;
+  }
+
+  .ux-v2 .spotlight-panel .global-search-page {
+    max-height: calc(100dvh - 16px);
+    padding: 12px;
+  }
+
+  .ux-v2 .spotlight-search .search-input {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .spotlight-panel::before {
+    background: var(--surface-elevated);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .spotlight-launcher-slot
+  .global-search-launcher,
+  .ux-v2 .spotlight-launcher-slot
+  .spotlight-launcher-label {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: spotlight thumbnails */
+
+.ux-v2 .global-search-page
+.search-result-row > .file-icon {
+  box-sizing: border-box;
+  inline-size: 56px;
+  block-size: 56px;
+  flex-shrink: 0;
+  margin: 0;
+
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.08);
+}
+
+/* Real thumbnail, not the full-size original image. */
+.ux-v2 .global-search-page
+.search-result-row > .file-thumbnail {
+  overflow: hidden;
+  background: var(--surface-primary);
+}
+
+.ux-v2 .global-search-page
+.search-result-row .file-thumbnail-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ux-v2 .global-search-page
+.search-result-row > .file-icon > svg {
+  width: 23px;
+  height: 23px;
+}
+
+.ux-v2 .spotlight-search .search-result-row {
+  min-height: 76px;
+}
+
+.ux-v2 .global-search-page .search-result-copy {
+  min-width: 0;
+}
+
+/* Keep the same proportions on narrow displays. */
+@media (max-width: 600px) {
+  .ux-v2 .global-search-page
+  .search-result-row > .file-icon {
+    inline-size: 44px;
+    block-size: 44px;
+    border-radius: 10px;
+  }
+
+  .ux-v2 .spotlight-search .search-result-row {
+    min-height: 64px;
+  }
+}
+
+
+/* UI foundation: adaptive liquid spotlight */
+
+/* Preserve the legacy search page layout. */
+.global-search-page:not(.spotlight-search)
+> .spotlight-content {
+  display: contents;
+}
+
+/* Measure natural content independently of animated height. */
+.ux-v2 .spotlight-search > .spotlight-content {
+  display: flow-root;
+}
+
+.ux-v2 .spotlight-panel .spotlight-search {
+  height: var(--spotlight-height, auto);
+  scrollbar-gutter: stable;
+
+  transition:
+    height 450ms cubic-bezier(.4,0,.3,1);
+}
+
+/* Minimal initial state. */
+.ux-v2 .spotlight-search[data-spotlight-idle="true"]
+.search-results-heading {
+  display: none;
+}
+
+.ux-v2 .spotlight-search[data-spotlight-idle="true"]
+.search-empty {
+  padding: 4px 10px 10px;
+}
+
+.ux-v2 .spotlight-search[data-spotlight-idle="true"]
+.search-empty p {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* More compact result layout with stationary action slots. */
+.ux-v2 .spotlight-search .search-result-list {
+  display: grid;
+  gap: 3px;
+}
+
+.ux-v2 .spotlight-search .search-result-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 44px 44px;
+  align-items: center;
+  gap: 12px;
+
+  min-height: 68px;
+  padding: 6px 8px;
+}
+
+.ux-v2 .spotlight-search
+.search-result-row > .search-result-copy {
+  min-width: 0;
+}
+
+/* Location: circle at rest, Liquid capsule on hover. */
+.ux-v2 .spotlight-search
+.search-result-row > .search-result-path {
+  position: relative;
+  z-index: 1;
+  justify-self: end;
+
+  box-sizing: border-box;
+  inline-size: 44px;
+  min-inline-size: 44px;
+  block-size: 44px;
+  min-block-size: 44px;
+
+  margin: 0;
+  padding: 0;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.07),
+    rgba(255,255,255,.01)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.09);
+
+  white-space: nowrap;
+  overflow: hidden;
+
+  transition:
+    inline-size 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    padding 450ms cubic-bezier(.4,0,.3,1),
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.ux-v2 .spotlight-search
+.search-result-path > svg {
+  flex-shrink: 0;
+  width: 19px;
+  height: 19px;
+}
+
+.ux-v2 .spotlight-search
+.search-result-path > span {
+  display: block;
+  max-inline-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  opacity: 0;
+
+  transition:
+    max-inline-size 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ux-v2 .spotlight-search
+  .search-result-path:is(
+    :hover, :focus-visible
+  ):not(:disabled) {
+    inline-size: 148px;
+    padding-inline: 10px;
+    gap: var(--space-2);
+
+    background-color: var(--surface-elevated);
+    border-color: var(--border-strong);
+  }
+
+  .ux-v2 .spotlight-search
+  .search-result-path:is(
+    :hover, :focus-visible
+  ):not(:disabled) > span {
+    max-inline-size: 110px;
+    opacity: 1;
+  }
+}
+
+.ux-v2 .spotlight-search
+.search-result-path[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: var(--accent-muted);
+}
+
+/* Keep the menu trigger aligned with the folder button. */
+.ux-v2 .spotlight-search
+.search-result-row > .action-menu {
+  margin: 0;
+}
+
+.ux-v2 .spotlight-search
+.search-result-row > .action-menu > .icon-button {
+  inline-size: 44px;
+  min-inline-size: 44px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+/* The existing location panel occupies the next full row. */
+.ux-v2 .spotlight-search
+.search-result-row > .search-location-panel {
+  grid-column: 1 / -1;
+  margin: 4px 0;
+}
+
+/* Small screens keep compact touch targets. */
+@media (max-width: 600px) {
+  .ux-v2 .spotlight-search .search-result-row {
+    grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
+    gap: 8px;
+    min-height: 60px;
+    padding: 6px 4px;
+  }
+}
+
+/* Respect system accessibility settings. */
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .spotlight-panel .spotlight-search,
+  .ux-v2 .spotlight-search .search-result-path,
+  .ux-v2 .spotlight-search .search-result-path > span {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid trash */
+
+/* Floating neutral glass capsule. */
+.ux-v2 .trash-launcher {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  padding: 0 15px;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+
+  background: var(--surface-elevated);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.14),
+    rgba(255,255,255,.025) 55%,
+    rgba(0,0,0,.06)
+  );
+
+  color: var(--text-secondary);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.22),
+    inset 0 -2px 4px rgba(0,0,0,.08),
+    0 5px 18px rgba(0,0,0,.20);
+
+  overflow: hidden;
+  white-space: nowrap;
+  transform: none;
+
+  transition:
+    width 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.ux-v2 .trash-launcher > svg {
+  width: 25px;
+  height: 25px;
+  flex-shrink: 0;
+}
+
+/* The old tooltip becomes an integrated label. */
+.ux-v2 .trash-launcher > .trash-launcher-tooltip {
+  position: static;
+  display: block;
+
+  min-width: 0;
+  max-width: 0;
+
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+
+  color: inherit;
+  font-size: 13px;
+  font-weight: 650;
+
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transform: none;
+
+  transition:
+    max-width 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+/* No old upward hover movement. */
+.ux-v2 .trash-launcher:hover,
+.ux-v2 .trash-launcher:focus-visible {
+  transform: none;
+  color: var(--text-primary);
+
+  border-color: color-mix(
+    in srgb, var(--border-strong) 70%, white
+  );
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ux-v2 .trash-launcher:hover,
+  .ux-v2 .trash-launcher:focus-visible {
+    width: 152px;
+    gap: 10px;
+  }
+
+  .ux-v2 .trash-launcher:hover > .trash-launcher-tooltip,
+  .ux-v2 .trash-launcher:focus-visible > .trash-launcher-tooltip {
+    max-width: 95px;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Actual backdrop blur only on the floating button. */
+@supports (
+  (backdrop-filter: blur(24px)) or
+  (-webkit-backdrop-filter: blur(24px))
+) {
+  .ux-v2 .trash-launcher {
+    background-color: color-mix(
+      in srgb, var(--surface-elevated) 78%, transparent
+    );
+
+    -webkit-backdrop-filter:
+      blur(24px) saturate(145%);
+
+    backdrop-filter:
+      blur(24px) saturate(145%);
+  }
+}
+
+/* Main trash dialog: same material, stable geometry.
+   Keep the original overlay blur and focus handling. */
+.ux-v2 .trash-dialog {
+  border-radius: 28px;
+
+  background-color: var(--surface-elevated);
+  background-color: color-mix(
+    in srgb, var(--surface-elevated) 90%, transparent
+  );
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005) 65%
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 24px 72px rgba(0,0,0,.35);
+
+  /* No transform or additional backdrop filter here:
+     nested deletion confirmation remains fixed. */
+}
+
+.ux-v2 .trash-dialog > .dialog-header {
+  align-items: center;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ux-v2 .trash-dialog > .dialog-header > .icon-button {
+  box-sizing: border-box;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 999px;
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.09),
+    transparent
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.12);
+}
+
+/* Restore and delete actions retain their semantic colors. */
+.ux-v2 .trash-page .trash-actions > .button,
+.ux-v2 .trash-page .page-header > .button {
+  border-radius: 999px;
+}
+
+.ux-v2 .trash-page .trash-card {
+  border-radius: 14px;
+  padding-inline: 12px;
+
+  transition:
+    background-color 150ms ease;
+}
+
+.ux-v2 .trash-page .trash-card:hover,
+.ux-v2 .trash-page .trash-card:focus-within {
+  background-color: var(--surface-primary);
+}
+
+.ux-v2 .trash-page .trash-card > .item-icon {
+  border-radius: 12px;
+}
+
+/* Keep the destructive confirmation in the same family. */
+.ux-v2 .trash-page > .dialog-overlay > .dialog-surface {
+  border-radius: 24px;
+  background: var(--surface-elevated);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.16),
+    var(--elevation-modal);
+}
+
+.ux-v2 .trash-page > .dialog-overlay
+.dialog-actions > .button {
+  border-radius: 999px;
+}
+
+/* Soft entrance, no scale or directional movement. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .dialog-overlay:has(> .trash-dialog) {
+    animation: homecloud-trash-backdrop-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .ux-v2 .trash-dialog {
+    animation: homecloud-trash-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-trash-backdrop-appear {
+    from {
+      background-color: transparent;
+      backdrop-filter: blur(0px);
+    }
+
+    to {
+      background-color: var(--overlay);
+      backdrop-filter: blur(5px);
+    }
+  }
+
+  @keyframes homecloud-trash-appear {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .trash-dialog {
+    border-radius: 22px;
+  }
+
+  .ux-v2 .trash-page .trash-card {
+    padding-inline: 8px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .trash-launcher,
+  .ux-v2 .trash-dialog {
+    background-color: var(--surface-elevated);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .trash-launcher,
+  .ux-v2 .trash-launcher > .trash-launcher-tooltip,
+  .ux-v2 .trash-page .trash-card {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: compact liquid trash */
+
+.ux-v2 .trash-dialog {
+  padding: clamp(20px, 3vw, 32px);
+}
+
+.ux-v2 .trash-dialog > .dialog-header {
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+}
+
+.ux-v2 .trash-dialog > .dialog-header h2 {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -.035em;
+}
+
+.ux-v2 .trash-dialog .trash-page > .page-header {
+  align-items: center;
+  margin-bottom: 20px;
+  gap: 16px;
+}
+
+.ux-v2 .trash-dialog .page-header .page-description {
+  margin: 0;
+  max-width: 48ch;
+  line-height: 1.65;
+  font-size: 12px;
+}
+
+/* Calm, frameless empty state. */
+.ux-v2 .trash-dialog .trash-page > .empty-state {
+  border: 0;
+  background: transparent;
+  padding: 24px 12px 36px;
+}
+
+.ux-v2 .trash-dialog
+.trash-page > .empty-state > svg {
+  box-sizing: border-box;
+  display: block;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 20px;
+  padding: 17px;
+
+  border-radius: 999px;
+
+  background: var(--accent-soft);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(159,190,99,.12),
+    rgba(159,190,99,.015)
+  );
+
+  border: 1px solid var(--accent-muted);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.13),
+    0 5px 16px rgba(0,0,0,.10);
+}
+
+.ux-v2 .trash-dialog
+.trash-page > .empty-state > h3 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+  margin: 0 0 8px;
+}
+
+.ux-v2 .trash-dialog
+.trash-page > .empty-state > p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* Empty/loading/error states need less horizontal space.
+   The populated list retains the original 960px maximum. */
+@supports selector(:has(*)) {
+  .ux-v2 .trash-dialog:not(:has(.trash-list)) {
+    max-width: 560px;
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .trash-dialog {
+    padding: 20px;
+  }
+
+  .ux-v2 .trash-dialog > .dialog-header h2 {
+    font-size: 23px;
+  }
+
+  .ux-v2 .trash-dialog .trash-page > .empty-state {
+    padding: 20px 8px 28px;
+  }
+
+  .ux-v2 .trash-dialog .trash-page > .page-header {
+    align-items: stretch;
+  }
+}
+
+
+/* UI foundation: liquid close button */
+
+.ux-v2 .trash-dialog > .dialog-header
+> .liquid-close-button {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 12px;
+  gap: 0;
+
+  border-radius: 999px;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.10),
+    rgba(255,255,255,.01)
+  );
+
+  border: 1px solid var(--border-subtle);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10),
+    0 2px 8px rgba(0,0,0,.08);
+
+  transition:
+    width 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    border-color 350ms ease,
+    box-shadow 350ms ease,
+    background-color 350ms ease;
+}
+
+.ux-v2 .liquid-close-button > svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.ux-v2 .liquid-close-label {
+  display: block;
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+
+  transition:
+    max-width 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+/* Reserve space so the title never moves. */
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .ux-v2 .trash-dialog > .dialog-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 128px;
+    align-items: center;
+  }
+
+  .ux-v2 .trash-dialog > .dialog-header
+  > .liquid-close-button {
+    justify-self: end;
+  }
+
+  .ux-v2 .trash-dialog > .dialog-header
+  > .liquid-close-button:is(:hover, :focus-visible) {
+    width: 128px;
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: color-mix(
+      in srgb,
+      var(--border-strong) 65%,
+      white
+    );
+
+    box-shadow:
+      inset 0 1px 2px rgba(255,255,255,.22),
+      0 3px 14px rgba(0,0,0,.14);
+  }
+
+  .ux-v2 .liquid-close-button:is(
+    :hover, :focus-visible
+  ) > .liquid-close-label {
+    max-width: 85px;
+    opacity: 1;
+  }
+}
+
+.ux-v2 .liquid-close-button:active {
+  background-color: var(--surface-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .trash-dialog > .dialog-header
+  > .liquid-close-button,
+  .ux-v2 .liquid-close-label {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid preview */
+
+.ux-v2 .preview-dialog {
+  max-width: 1160px;
+  padding: clamp(18px, 3vw, 28px);
+  border-radius: 28px;
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005) 65%
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 24px 72px rgba(0,0,0,.35);
+}
+
+.ux-v2 .preview-dialog > .dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.ux-v2 .preview-dialog .preview-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+  line-height: 1.5;
+}
+
+.ux-v2 .preview-dialog > .dialog-header
+> .liquid-close-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+
+  box-sizing: border-box;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+
+  padding: 0 12px;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.10),
+    rgba(255,255,255,.01)
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10);
+
+  white-space: nowrap;
+  overflow: hidden;
+
+  transition:
+    width 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    border-color 350ms ease,
+    background-color 350ms ease;
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .ux-v2 .preview-dialog > .dialog-header {
+    grid-template-columns: minmax(0, 1fr) 128px;
+  }
+
+  .ux-v2 .preview-dialog > .dialog-header
+  > .liquid-close-button:is(:hover, :focus-visible) {
+    width: 128px;
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: color-mix(
+      in srgb, var(--border-strong) 65%, white
+    );
+  }
+}
+
+.ux-v2 .preview-dialog .preview-content {
+  min-width: 0;
+  min-height: 160px;
+  padding: 0;
+}
+
+.ux-v2 .preview-dialog .preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 75dvh;
+
+  object-fit: contain;
+  border-radius: 12px;
+}
+
+.ux-v2 .preview-dialog .preview-text {
+  border-radius: 16px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .preview-overlay {
+    animation: homecloud-preview-backdrop
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .ux-v2 .preview-dialog {
+    animation: homecloud-preview-surface
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-preview-backdrop {
+    from {
+      background-color: transparent;
+      backdrop-filter: blur(0px);
+    }
+
+    to {
+      background-color: var(--overlay);
+      backdrop-filter: blur(5px);
+    }
+  }
+
+  @keyframes homecloud-preview-surface {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .preview-dialog {
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .ux-v2 .preview-dialog .preview-title {
+    font-size: 14px;
+  }
+
+  .ux-v2 .preview-dialog .preview-image {
+    max-height: 70dvh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .preview-dialog > .dialog-header
+  > .liquid-close-button {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: soft liquid preview */
+
+/* Reserve the photograph's viewing area before it loads.
+   Keep text documents at their natural content size. */
+.ux-v2 .preview-dialog[data-preview-image="true"]
+.preview-content {
+  height: min(64dvh, 720px);
+  min-height: 0;
+}
+
+.ux-v2 .preview-dialog[data-preview-image="true"]
+.preview-image {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* A gentle reveal inside the already stable preview.
+   No geometry change, zoom or flying copy. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .preview-dialog .preview-image {
+    animation: homecloud-preview-image-reveal
+      450ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-preview-image-reveal {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .preview-dialog[data-preview-image="true"]
+  .preview-content {
+    height: min(60dvh, 620px);
+  }
+}
+
+
+/* UI foundation: liquid preview loader */
+
+.ux-v2 .preview-dialog .preview-content {
+  position: relative;
+}
+
+.ux-v2 .preview-dialog .preview-loader {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+
+  padding: 24px 16px;
+  text-align: center;
+}
+
+/* Neutral glass with a soft green light. */
+.ux-v2 .preview-loader-orbit {
+  position: relative;
+  isolation: isolate;
+
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: radial-gradient(
+    circle at 35% 25%,
+    rgba(159,190,99,.17),
+    rgba(159,190,99,.035) 75%
+  );
+
+  color: var(--accent);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.13),
+    0 0 28px rgba(159,190,99,.06);
+}
+
+/* Moving light, not a spinning cloud. */
+.ux-v2 .preview-loader-orbit::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+
+  box-sizing: border-box;
+  border-radius: inherit;
+
+  border: 2px solid transparent;
+
+  border-top-color: var(--success);
+  border-right-color: var(--accent-muted);
+
+  pointer-events: none;
+}
+
+.ux-v2 .preview-loader-orbit > svg {
+  width: 32px;
+  height: 32px;
+}
+
+.ux-v2 .preview-loader-label {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* Do not let an undecoded image affect the layout. */
+.ux-v2 .preview-dialog
+.preview-image[data-image-pending="true"] {
+  position: absolute;
+  opacity: 0;
+  animation: none;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .preview-loader-orbit::before {
+    animation: homecloud-preview-orbit 1800ms linear infinite;
+  }
+
+  .ux-v2 .preview-loader {
+    animation: homecloud-loader-appear
+      350ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-preview-orbit {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes homecloud-loader-appear {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .preview-loader-orbit::before {
+    animation: none;
+  }
+}
+
+
+/* UI foundation: liquid operation dialogs */
+
+/* Compact, neutral glass surface. */
+.ux-v2 .liquid-operation-dialog {
+  max-width: 520px;
+  padding: clamp(20px, 3vw, 28px);
+  border-radius: 28px;
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005) 65%
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 24px 72px rgba(0,0,0,.35);
+}
+
+.ux-v2 .liquid-operation-dialog > .dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 12px;
+
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ux-v2 .liquid-operation-dialog
+> .dialog-header > h3 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.035em;
+  line-height: 1.35;
+}
+
+/* Reuse the approved Liquid Close label behavior. */
+.ux-v2 .liquid-operation-dialog
+> .dialog-header > .liquid-close-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+
+  box-sizing: border-box;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.10),
+    rgba(255,255,255,.01)
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10);
+
+  overflow: hidden;
+  white-space: nowrap;
+
+  transition:
+    width 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    border-color 350ms ease,
+    background-color 350ms ease;
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .ux-v2 .liquid-operation-dialog > .dialog-header {
+    grid-template-columns: minmax(0, 1fr) 128px;
+  }
+
+  .ux-v2 .liquid-operation-dialog
+  > .dialog-header
+  > .liquid-close-button:is(:hover, :focus-visible) {
+    width: 128px;
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: color-mix(
+      in srgb, var(--border-strong) 65%, white
+    );
+  }
+}
+
+/* Calm typography and clean input surfaces. */
+.ux-v2 .liquid-operation-dialog .field {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.ux-v2 .liquid-operation-dialog .input {
+  min-height: 50px;
+  padding-inline: 14px;
+
+  border-radius: 14px;
+  background-color: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 3px rgba(0,0,0,.10);
+
+  transition:
+    border-color 200ms ease,
+    box-shadow 250ms ease;
+}
+
+.ux-v2 .liquid-operation-dialog .input:focus {
+  border-color: var(--accent);
+
+  box-shadow:
+    0 0 0 3px var(--accent-soft);
+}
+
+.ux-v2 .liquid-operation-dialog .dialog-item-name {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Rounded actions, preserving semantic colors. */
+.ux-v2 .liquid-operation-dialog .dialog-actions {
+  margin-top: 24px;
+  gap: 10px;
+}
+
+.ux-v2 .liquid-operation-dialog
+.dialog-actions > .button {
+  min-height: 44px;
+  border-radius: 999px;
+  padding-inline: 18px;
+}
+
+.ux-v2 .liquid-operation-dialog
+.dialog-actions > .button--primary {
+  background-image: linear-gradient(
+    160deg,
+    rgba(255,255,255,.28),
+    rgba(255,255,255,.04) 55%,
+    rgba(0,0,0,.06)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.30),
+    0 3px 10px rgba(0,0,0,.10);
+}
+
+.ux-v2 .liquid-operation-dialog
+.dialog-actions > .button--ghost {
+  border-color: var(--border-subtle);
+}
+
+/* The same opening rhythm as the approved trash dialog. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .liquid-operation-overlay {
+    animation: homecloud-trash-backdrop-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .ux-v2 .liquid-operation-dialog {
+    animation: homecloud-trash-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .liquid-operation-dialog {
+    padding: 20px;
+    border-radius: 22px;
+  }
+
+  .ux-v2 .liquid-operation-dialog .input {
+    font-size: 16px;
+  }
+
+  .ux-v2 .liquid-operation-dialog
+  .dialog-actions > .button {
+    flex: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .liquid-operation-dialog
+  > .dialog-header > .liquid-close-button,
+  .ux-v2 .liquid-operation-dialog .input {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid share and account */
+
+.liquid-settings-dialog {
+  padding: clamp(20px, 3vw, 28px);
+  border-radius: 28px;
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005) 65%
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 24px 72px rgba(0,0,0,.35);
+}
+
+.liquid-settings-dialog.share-dialog {
+  max-width: 720px;
+}
+
+.liquid-settings-dialog.account-dialog {
+  max-width: 640px;
+}
+
+.liquid-settings-dialog > .dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: start;
+  gap: 12px;
+
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.liquid-settings-dialog > .dialog-header > div {
+  min-width: 0;
+}
+
+.liquid-settings-dialog > .dialog-header h2,
+.liquid-settings-dialog > .dialog-header h3 {
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -.035em;
+}
+
+.liquid-settings-dialog > .dialog-header
+.page-description {
+  margin: 10px 0 0;
+  line-height: 1.65;
+}
+
+/* Compact, expanding close control. */
+.liquid-settings-dialog > .dialog-header
+> .liquid-close-button {
+  box-sizing: border-box;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 10px;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.10),
+    rgba(255,255,255,.01)
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10);
+
+  white-space: nowrap;
+  overflow: hidden;
+
+  transition:
+    width 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    border-color 350ms ease,
+    background-color 350ms ease;
+}
+
+.liquid-settings-dialog .liquid-close-button > svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.liquid-settings-dialog .liquid-close-label {
+  display: block;
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+
+  transition:
+    max-width 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .liquid-settings-dialog > .dialog-header {
+    grid-template-columns: minmax(0, 1fr) 128px;
+  }
+
+  .liquid-settings-dialog > .dialog-header
+  > .liquid-close-button:not(:disabled):is(
+    :hover, :focus-visible
+  ) {
+    width: 128px;
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: color-mix(
+      in srgb, var(--border-strong) 65%, white
+    );
+  }
+
+  .liquid-settings-dialog
+  .liquid-close-button:not(:disabled):is(
+    :hover, :focus-visible
+  ) > .liquid-close-label {
+    max-width: 85px;
+    opacity: 1;
+  }
+}
+
+/* Form controls share the operation-dialog language. */
+.liquid-settings-dialog .input {
+  min-height: 48px;
+  border-radius: 14px;
+  padding-inline: 14px;
+  background-color: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 3px rgba(0,0,0,.10);
+
+  transition:
+    border-color 200ms ease,
+    box-shadow 250ms ease;
+}
+
+.liquid-settings-dialog .input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.liquid-settings-dialog .button {
+  border-radius: 999px;
+}
+
+.liquid-settings-dialog .button--primary {
+  background-image: linear-gradient(
+    160deg,
+    rgba(255,255,255,.28),
+    rgba(255,255,255,.04) 55%,
+    rgba(0,0,0,.06)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.30),
+    0 3px 10px rgba(0,0,0,.10);
+}
+
+/* Share links: separate calm, readable glass cards. */
+.liquid-settings-dialog .share-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.055);
+}
+
+.liquid-settings-dialog .share-list {
+  gap: 12px;
+}
+
+.liquid-settings-dialog .share-links .empty-state {
+  padding: 24px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  background: var(--surface-primary);
+}
+
+.liquid-settings-dialog .share-create {
+  min-height: 48px;
+}
+
+.liquid-settings-dialog .share-actions > .button {
+  min-height: 40px;
+}
+
+/* Account: separate profile, quota, updates and security. */
+.liquid-settings-dialog.account-dialog .dialog-body {
+  gap: 14px;
+}
+
+.liquid-settings-dialog.account-dialog .account-section {
+  min-width: 0;
+  padding: 20px;
+
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+
+  background: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.045);
+}
+
+.liquid-settings-dialog.account-dialog .account-section h3 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+}
+
+.liquid-settings-dialog.account-dialog .account-identity {
+  gap: 14px;
+}
+
+.liquid-settings-dialog.account-dialog .avatar {
+  width: 48px;
+  height: 48px;
+
+  background: var(--accent-soft);
+  color: var(--accent);
+
+  border: 1px solid var(--accent-muted);
+}
+
+.liquid-settings-dialog.account-dialog
+.upload-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+}
+
+/* Reuse the already approved 750ms entrance. */
+@media (prefers-reduced-motion: no-preference) {
+  .liquid-settings-overlay {
+    animation: homecloud-trash-backdrop-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .liquid-settings-dialog {
+    animation: homecloud-trash-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+}
+
+@media (max-width: 600px) {
+  .liquid-settings-dialog {
+    padding: 20px;
+    border-radius: 22px;
+  }
+
+  .liquid-settings-dialog > .dialog-header h2,
+  .liquid-settings-dialog > .dialog-header h3 {
+    font-size: 20px;
+  }
+
+  .liquid-settings-dialog .input {
+    font-size: 16px;
+  }
+
+  .liquid-settings-dialog.account-dialog
+  .account-section {
+    padding: 16px;
+  }
+
+  .liquid-settings-dialog .share-actions > .button {
+    flex: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-settings-dialog > .dialog-header
+  > .liquid-close-button,
+  .liquid-settings-dialog .liquid-close-label,
+  .liquid-settings-dialog .input {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid share target */
+
+.liquid-settings-dialog.share-dialog
+> .dialog-header {
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.liquid-settings-dialog.share-dialog
+> .dialog-header h3 {
+  font-size: 26px;
+}
+
+.liquid-settings-dialog.share-dialog
+.dialog-body {
+  gap: 18px;
+}
+
+/* A compact glass card for the actual selected object. */
+.liquid-settings-dialog .share-target-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+
+  min-width: 0;
+  padding: 12px;
+
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.035),
+    transparent 65%
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.06);
+}
+
+.liquid-settings-dialog .share-target-card
+> .file-thumbnail,
+.liquid-settings-dialog .share-target-icon {
+  box-sizing: border-box;
+
+  display: grid;
+  place-items: center;
+
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+
+  margin: 0;
+  flex: 0 0 56px;
+
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.liquid-settings-dialog .share-target-card
+.file-thumbnail-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.liquid-settings-dialog .share-target-icon {
+  color: var(--text-secondary);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.liquid-settings-dialog .share-target-icon.is-folder {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-muted);
+}
+
+.liquid-settings-dialog .share-target-icon > svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* The full name remains in the DOM and in the tooltip.
+   Long names cannot stretch the dialog. */
+.liquid-settings-dialog .share-target-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.liquid-settings-dialog .share-target-name {
+  display: block;
+  min-width: 0;
+
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.liquid-settings-dialog .share-target-type {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.liquid-settings-dialog .share-policy-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+@media (max-width: 600px) {
+  .liquid-settings-dialog.share-dialog
+  > .dialog-header h3 {
+    font-size: 23px;
+  }
+
+  .liquid-settings-dialog .share-target-card {
+    gap: 12px;
+    padding: 10px;
+  }
+
+  .liquid-settings-dialog .share-target-card
+  > .file-thumbnail,
+  .liquid-settings-dialog .share-target-icon {
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    flex-basis: 48px;
+  }
+
+  /* Touch users can read the complete filename. */
+  .liquid-settings-dialog .share-target-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+
+/* UI foundation: liquid upload dock */
+
+.liquid-upload-dock {
+  box-sizing: border-box;
+
+  width: min(440px, calc(100vw - 48px));
+
+  right: max(24px, env(safe-area-inset-right));
+  bottom: calc(max(24px, env(safe-area-inset-bottom)) + 64px);
+
+  padding: 10px;
+  border-radius: 24px;
+  border: 1px solid var(--border-strong);
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.075),
+    rgba(255,255,255,.008) 65%
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 14px 44px rgba(0,0,0,.30);
+}
+
+@supports (
+  (backdrop-filter: blur(24px)) or
+  (-webkit-backdrop-filter: blur(24px))
+) {
+  .liquid-upload-dock {
+    background-color: color-mix(
+      in srgb, var(--surface-elevated) 88%, transparent
+    );
+    backdrop-filter: blur(24px) saturate(145%);
+    -webkit-backdrop-filter: blur(24px) saturate(145%);
+  }
+}
+
+/* The header remains a real accessible disclosure button. */
+.liquid-upload-dock .upload-manager-header {
+  align-items: center;
+  gap: 8px;
+}
+
+.liquid-upload-dock .upload-summary {
+  min-height: 48px;
+  padding: 8px 12px;
+
+  gap: 8px;
+  justify-content: flex-start;
+
+  border-radius: 16px;
+  border-color: transparent;
+
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.liquid-upload-dock .upload-summary > svg {
+  box-sizing: border-box;
+
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+
+  border: 1px solid var(--accent-muted);
+  border-radius: 999px;
+
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.liquid-upload-dock .upload-summary > span {
+  margin-left: auto;
+
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.liquid-upload-dock .upload-summary:hover {
+  background-color: var(--surface-secondary);
+}
+
+.liquid-upload-dock .upload-dismiss {
+  min-height: 36px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+/* Only one scrollable list, even for many queued files. */
+.liquid-upload-dock #upload-list {
+  max-height: min(48dvh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 2px 2px;
+}
+
+.liquid-upload-dock .upload-queue {
+  gap: 8px;
+  max-height: none;
+  overflow: visible;
+}
+
+/* Every upload is a separate calm glass card. */
+.liquid-upload-dock .upload-queue-item {
+  min-width: 0;
+  padding: 14px;
+
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+
+  background: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.045);
+}
+
+.liquid-upload-dock .upload-queue-title {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+}
+
+.liquid-upload-dock .upload-queue-title strong {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.liquid-upload-dock .upload-queue-title .muted {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Real server-confirmed progress. No simulated percentage. */
+.liquid-upload-dock .upload-progress-bar {
+  display: block;
+  width: 100%;
+  height: 7px;
+  margin: 12px 0 8px;
+  border-radius: 999px;
+  background: var(--surface-elevated);
+}
+
+.liquid-upload-dock
+.upload-progress-bar::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--surface-elevated);
+}
+
+.liquid-upload-dock
+.upload-progress-bar::-webkit-progress-value {
+  border-radius: 999px;
+
+  background: linear-gradient(
+    90deg,
+    var(--accent-muted),
+    var(--accent),
+    var(--success)
+  );
+
+  transition: width 350ms ease;
+}
+
+.liquid-upload-dock
+.upload-progress-bar::-moz-progress-bar {
+  border-radius: 999px;
+
+  background: linear-gradient(
+    90deg,
+    var(--accent-muted),
+    var(--success)
+  );
+}
+
+.liquid-upload-dock .upload-details {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Distinct success, paused and error states. */
+.liquid-upload-dock
+[data-upload-state="completed"] {
+  border-color: var(--accent-muted);
+}
+
+.liquid-upload-dock
+[data-upload-state="completed"]
+.upload-queue-title .muted {
+  color: var(--success);
+}
+
+.liquid-upload-dock
+:is(
+  [data-upload-state="paused"],
+  [data-upload-state="retrying"],
+  [data-needs-file="true"]
+)
+.upload-queue-title .muted {
+  color: var(--warning);
+}
+
+.liquid-upload-dock
+[data-upload-state="error"] {
+  border-color: color-mix(
+    in srgb, var(--danger) 35%, var(--border-subtle)
+  );
+}
+
+.liquid-upload-dock
+[data-upload-state="error"]
+.upload-queue-title .muted {
+  color: var(--danger);
+}
+
+/* Compact action capsules. */
+.liquid-upload-dock .state-actions {
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.liquid-upload-dock
+.state-actions > .button {
+  min-height: 38px;
+  padding: 7px 12px;
+
+  border-radius: 999px;
+  border-color: var(--border-subtle);
+
+  font-size: 11px;
+  line-height: 1.5;
+
+  background: var(--surface-secondary);
+
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.liquid-upload-dock
+.state-actions > .button:hover {
+  background: var(--surface-elevated);
+  border-color: var(--border-strong);
+}
+
+.liquid-upload-dock
+.state-actions > label:focus-within {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* Soft reveal of the dock and its expanded contents. */
+@media (prefers-reduced-motion: no-preference) {
+  .liquid-upload-dock {
+    animation: homecloud-upload-dock-appear
+      450ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .liquid-upload-dock #upload-list:not([hidden]) {
+    animation: homecloud-upload-dock-appear
+      350ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-upload-dock-appear {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .liquid-upload-dock {
+    right: max(16px, env(safe-area-inset-right));
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 64px);
+    width: min(440px, calc(100vw - 32px));
+
+    padding: 8px;
+    border-radius: 22px;
+  }
+
+  .liquid-upload-dock #upload-list {
+    max-height: 40dvh;
+  }
+
+  .liquid-upload-dock .upload-queue-item {
+    padding: 12px;
+  }
+
+  .liquid-upload-dock
+  .state-actions > .button {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .liquid-upload-dock {
+    background-color: var(--surface-elevated);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-upload-dock
+  .upload-progress-bar::-webkit-progress-value {
+    transition: none;
+  }
+
+  .liquid-upload-dock
+  .state-actions > .button {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid upload pro */
+
+/* Upload Dock lives outside .ux-v2. */
+.liquid-upload-dock {
+  padding: 12px;
+}
+
+.liquid-upload-dock .upload-manager-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A real disclosure button with a compact visual chevron. */
+.liquid-upload-dock .upload-summary {
+  flex: 1;
+  min-width: 0;
+
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+
+  gap: 10px;
+  padding: 4px;
+  min-height: 48px;
+
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+}
+
+.liquid-upload-dock .upload-summary
+> .upload-dock-mark {
+  flex: 0 0 38px;
+
+  display: grid;
+  place-items: center;
+
+  width: 38px;
+  height: 38px;
+  margin: 0;
+
+  border: 1px solid var(--accent-muted);
+  border-radius: 999px;
+
+  background: var(--accent-soft);
+  color: var(--accent);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.13);
+}
+
+.liquid-upload-dock .upload-dock-mark > svg {
+  width: 20px;
+  height: 20px;
+}
+
+.liquid-upload-dock .upload-summary
+> .upload-dock-heading {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: 0;
+}
+
+.liquid-upload-dock .upload-dock-heading strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.liquid-upload-dock .upload-dock-subtitle,
+.liquid-upload-dock .upload-dock-warning {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: normal;
+}
+
+.liquid-upload-dock[data-completed="true"]
+.upload-dock-subtitle {
+  color: var(--success);
+}
+
+.liquid-upload-dock .upload-dock-warning {
+  color: var(--warning);
+}
+
+.liquid-upload-dock .upload-summary
+> .upload-dock-chevron {
+  display: grid;
+  place-items: center;
+
+  width: 36px;
+  height: 36px;
+
+  flex: 0 0 36px;
+  margin: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+}
+
+.liquid-upload-dock .upload-dock-chevron > svg {
+  width: 18px;
+  height: 18px;
+  transform: rotate(-90deg);
+  transition: transform 450ms cubic-bezier(.4,0,.3,1);
+}
+
+.liquid-upload-dock[data-collapsed="true"]
+.upload-dock-chevron > svg {
+  transform: rotate(90deg);
+}
+
+/* Our approved circle -> capsule close interaction.
+   Reserve its width so the header stays stable. */
+.liquid-upload-dock .upload-dismiss-slot {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 44px;
+}
+
+.liquid-upload-dock .upload-dismiss {
+  box-sizing: border-box;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+
+  gap: 0;
+  padding: 0 10px;
+
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.10),
+    rgba(255,255,255,.01)
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10);
+
+  overflow: hidden;
+  white-space: nowrap;
+
+  transition:
+    width 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    border-color 350ms ease,
+    background-color 350ms ease;
+}
+
+.liquid-upload-dock .upload-dismiss > svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.liquid-upload-dock .upload-dismiss
+> .liquid-close-label {
+  display: block;
+  min-width: 0;
+  max-width: 0;
+
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+
+  font-size: 12px;
+  font-weight: 650;
+
+  transition:
+    max-width 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .liquid-upload-dock .upload-dismiss-slot {
+    flex-basis: 116px;
+  }
+
+  .liquid-upload-dock
+  .upload-dismiss:is(:hover, :focus-visible) {
+    width: 116px;
+    gap: 7px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: color-mix(
+      in srgb, var(--border-strong) 65%, white
+    );
+  }
+
+  .liquid-upload-dock
+  .upload-dismiss:is(:hover, :focus-visible)
+  > .liquid-close-label {
+    max-width: 80px;
+    opacity: 1;
+  }
+}
+
+/* File card: icon, identity, state, real percentage. */
+.liquid-upload-dock .upload-queue-title {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.liquid-upload-dock .upload-file-mark {
+  display: grid;
+  place-items: center;
+
+  width: 40px;
+  height: 40px;
+
+  flex: 0 0 40px;
+
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.liquid-upload-dock .upload-file-mark > svg {
+  width: 22px;
+  height: 22px;
+}
+
+.liquid-upload-dock .upload-file-copy {
+  display: flex;
+  flex-direction: column;
+
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.liquid-upload-dock .upload-file-statusline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.liquid-upload-dock .upload-file-size {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.liquid-upload-dock .upload-file-percent {
+  color: var(--accent);
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Compact completed files, no redundant visual meter. */
+.liquid-upload-dock
+[data-upload-state="completed"] {
+  position: relative;
+
+  padding: 12px;
+  border-color: var(--accent-muted);
+}
+
+.liquid-upload-dock
+[data-upload-state="completed"]
+.upload-file-mark {
+  border-radius: 999px;
+  border-color: var(--accent-muted);
+  background: var(--accent-soft);
+  color: var(--success);
+}
+
+/* Retain native progress semantics for assistive technology. */
+.liquid-upload-dock
+[data-upload-state="completed"]
+.upload-progress-bar {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.liquid-upload-dock .state-actions:empty {
+  display: none;
+}
+
+/* Refined pause and retry controls. */
+.liquid-upload-dock .state-actions
+> .button[aria-label^="Отменить загрузку:"] {
+  color: var(--danger);
+}
+
+.liquid-upload-dock
+[data-upload-state="error"]
+.upload-file-mark {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* A soft moving light on the confirmed portion of the bar.
+   Animation never changes the actual progress value. */
+@media (prefers-reduced-motion: no-preference) {
+  .liquid-upload-dock
+  [data-upload-state="uploading"]
+  .upload-progress-bar::-webkit-progress-value {
+    background: linear-gradient(
+      110deg,
+      var(--accent-muted) 0%,
+      var(--accent) 40%,
+      var(--success) 50%,
+      var(--accent) 60%,
+      var(--accent-muted) 100%
+    );
+
+    background-size: 220% 100%;
+
+    animation: homecloud-upload-light
+      2400ms linear infinite;
+  }
+
+  @keyframes homecloud-upload-light {
+    from { background-position: 200% 0; }
+    to { background-position: -20% 0; }
+  }
+}
+
+@media (max-width: 600px) {
+  .liquid-upload-dock {
+    padding: 8px;
+  }
+
+  .liquid-upload-dock .upload-summary {
+    gap: 8px;
+  }
+
+  .liquid-upload-dock .upload-file-mark {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .liquid-upload-dock .upload-file-percent {
+    font-size: 15px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-upload-dock .upload-dismiss,
+  .liquid-upload-dock .liquid-close-label,
+  .liquid-upload-dock .upload-dock-chevron > svg {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid drag and drop */
+
+/* Overlay is anchored to the actual drop target.
+   It never participates in layout or intercepts drag events. */
+.ux-v2 .files-page {
+  position: relative;
+}
+
+.ux-v2 .files-page--drop {
+  outline: none;
+}
+
+.ux-v2 .files-page > .liquid-drop-surface {
+  box-sizing: border-box;
+
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+
+  min-width: 0;
+  padding: 24px;
+  margin: 0;
+
+  border: 1px solid var(--accent);
+  border-radius: 24px;
+
+  background: var(--surface-primary);
+
+  background-image: radial-gradient(
+    ellipse at 50% 35%,
+    rgba(159,190,99,.10),
+    transparent 68%
+  );
+
+  box-shadow:
+    inset 0 0 0 1px rgba(159,190,99,.10),
+    inset 0 0 48px rgba(159,190,99,.06),
+    0 0 30px rgba(159,190,99,.10);
+
+  pointer-events: none;
+}
+
+@supports (
+  (backdrop-filter: blur(14px)) or
+  (-webkit-backdrop-filter: blur(14px))
+) {
+  .ux-v2 .files-page > .liquid-drop-surface {
+    background-color: color-mix(
+      in srgb,
+      var(--surface-primary) 88%,
+      transparent
+    );
+
+    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    backdrop-filter: blur(14px) saturate(110%);
+  }
+}
+
+/* Keep the message readable even in long directories.
+   Do not place it at the center of a very tall file list. */
+.ux-v2 .liquid-drop-message {
+  position: sticky;
+  top: 18dvh;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  width: 100%;
+  max-width: 480px;
+  min-width: 0;
+
+  margin-top: clamp(24px, 10dvh, 96px);
+  padding: 20px 8px;
+
+  gap: 12px;
+  text-align: center;
+}
+
+/* HomeCloud emblem: glass, green edge and soft inner light. */
+.ux-v2 .liquid-drop-emblem {
+  position: relative;
+
+  display: grid;
+  place-items: center;
+
+  width: 96px;
+  height: 96px;
+  flex-shrink: 0;
+
+  margin-bottom: 12px;
+
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: radial-gradient(
+    circle at 35% 20%,
+    rgba(159,190,99,.24),
+    rgba(159,190,99,.035) 78%
+  );
+
+  color: var(--success);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.20),
+    0 0 38px rgba(159,190,99,.09);
+}
+
+.ux-v2 .liquid-drop-arrow {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+
+  display: grid;
+  place-items: center;
+
+  width: 32px;
+  height: 32px;
+
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: var(--surface-elevated);
+  color: var(--accent);
+}
+
+.ux-v2 .liquid-drop-title {
+  color: var(--text-primary);
+
+  font-size: clamp(20px, 2.5vw, 27px);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -.035em;
+}
+
+.ux-v2 .liquid-drop-description {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.ux-v2 .liquid-drop-destination {
+  box-sizing: border-box;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  max-width: 100%;
+  min-width: 0;
+
+  gap: 8px;
+  padding: 10px 18px;
+  margin-top: 2px;
+
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: var(--accent-soft);
+  color: var(--success);
+
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ux-v2 .liquid-drop-destination > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ux-v2 .liquid-drop-destination > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ux-v2 .liquid-drop-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+/* Unavailable destination must not look ready. */
+.ux-v2 .liquid-drop-surface[data-drop-ready="false"] {
+  border-color: var(--border-strong);
+  box-shadow: var(--elevation-floating);
+}
+
+.ux-v2 .liquid-drop-surface[data-drop-ready="false"]
+.liquid-drop-emblem {
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+  background: var(--surface-secondary);
+  box-shadow: none;
+}
+
+.ux-v2 .liquid-drop-surface[data-drop-ready="false"]
+.liquid-drop-arrow {
+  display: none;
+}
+
+/* Fast visual acknowledgment when a file enters the region. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .liquid-drop-surface {
+    animation: homecloud-drop-appear
+      350ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .ux-v2 .liquid-drop-surface[data-drop-ready="true"]
+  .liquid-drop-emblem {
+    animation: homecloud-drop-light
+      2200ms ease-in-out infinite;
+  }
+
+  @keyframes homecloud-drop-appear {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes homecloud-drop-light {
+    0%, 100% {
+      box-shadow:
+        inset 0 1px 2px rgba(255,255,255,.20),
+        0 0 24px rgba(159,190,99,.06);
+    }
+
+    50% {
+      box-shadow:
+        inset 0 1px 2px rgba(255,255,255,.24),
+        0 0 42px rgba(159,190,99,.20);
+    }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .files-page > .liquid-drop-surface {
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .ux-v2 .liquid-drop-message {
+    top: 12dvh;
+    margin-top: 16px;
+    padding: 12px 4px;
+  }
+
+  .ux-v2 .liquid-drop-emblem {
+    width: 76px;
+    height: 76px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .files-page > .liquid-drop-surface {
+    background-color: var(--surface-primary);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+
+/* UI foundation: liquid selection dock */
+
+.ux-v2 .selection-toolbar.liquid-selection-dock {
+  box-sizing: border-box;
+
+  position: fixed;
+  z-index: 32;
+
+  left: max(24px, env(safe-area-inset-left));
+  bottom: max(24px, env(safe-area-inset-bottom));
+
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+
+  gap: 7px;
+  padding: 8px;
+
+  max-width: min(720px, calc(100vw - 120px));
+  max-height: 40dvh;
+
+  border-radius: 28px;
+  border: 1px solid var(--border-strong);
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.085),
+    rgba(255,255,255,.008) 68%
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.20),
+    0 12px 36px rgba(0,0,0,.28);
+}
+
+@supports (
+  (backdrop-filter: blur(24px)) or
+  (-webkit-backdrop-filter: blur(24px))
+) {
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    background-color: color-mix(
+      in srgb,
+      var(--surface-elevated) 86%,
+      transparent
+    );
+
+    backdrop-filter: blur(24px) saturate(145%);
+    -webkit-backdrop-filter: blur(24px) saturate(145%);
+  }
+}
+
+/* Selection count: the dock's visual anchor. */
+.ux-v2 .selection-dock-count {
+  display: flex;
+  align-items: center;
+
+  gap: 9px;
+  padding-right: 4px;
+  min-width: 0;
+}
+
+.ux-v2 .selection-dock-number {
+  box-sizing: border-box;
+
+  display: grid;
+  place-items: center;
+
+  min-width: 44px;
+  height: 44px;
+  padding-inline: 9px;
+
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: var(--accent-soft);
+
+  background-image: radial-gradient(
+    circle at 35% 20%,
+    rgba(159,190,99,.23),
+    rgba(159,190,99,.025) 80%
+  );
+
+  color: var(--success);
+
+  font-size: 16px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.13);
+}
+
+.ux-v2 .selection-dock-caption {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.ux-v2 .selection-dock-divider {
+  display: block;
+  flex: 0 0 1px;
+  width: 1px;
+  height: 26px;
+  margin-inline: 1px;
+
+  background: var(--border-subtle);
+}
+
+/* Circular glass actions. */
+.ux-v2 .liquid-selection-dock
+.selection-dock-action {
+  box-sizing: border-box;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  flex: 0 0 auto;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 11px;
+
+  gap: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.075),
+    rgba(255,255,255,.005)
+  );
+
+  color: var(--text-secondary);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.085);
+
+  white-space: nowrap;
+
+  transition:
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    border-color 250ms ease,
+    background-color 250ms ease,
+    color 250ms ease,
+    box-shadow 250ms ease;
+}
+
+.ux-v2 .selection-dock-action > svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.ux-v2 .selection-dock-label {
+  display: block;
+  min-width: 0;
+  max-width: 0;
+
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+
+  font-size: 12px;
+  font-weight: 600;
+
+  transition:
+    max-width 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+.ux-v2 .selection-dock-action:not(:disabled):is(
+  :hover, :focus-visible
+) {
+  color: var(--text-primary);
+  background-color: var(--surface-secondary);
+
+  border-color: color-mix(
+    in srgb,
+    var(--border-strong) 75%,
+    white
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.18),
+    0 3px 12px rgba(0,0,0,.10);
+}
+
+.ux-v2 .selection-dock-action:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.ux-v2 .selection-dock-action:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+
+
+/* A destructive action gets a semantic hover accent.
+   Confirmation is still required before moving to Trash. */
+.ux-v2 .selection-dock-trash:not(:disabled):is(
+  :hover, :focus-visible
+) {
+  background-color: var(--danger-soft);
+  color: var(--danger);
+
+  border-color: color-mix(
+    in srgb,
+    var(--danger) 45%,
+    var(--border-subtle)
+  );
+}
+
+/* Do not cover the upload dock on narrower desktops. */
+@media (min-width: 901px) {
+  body:has(.liquid-upload-dock)
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    max-width: min(720px, calc(100vw - 520px));
+  }
+}
+
+/* Soft entrance, in the same rhythm as the toolbars. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .liquid-selection-dock {
+    animation: homecloud-selection-dock-appear
+      450ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-selection-dock-appear {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+/* No hover dependency on narrow screens or touch devices. */
+@media (max-width: 800px), (hover: none), (pointer: coarse) {
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    left: max(16px, env(safe-area-inset-left));
+    bottom: max(16px, env(safe-area-inset-bottom));
+
+    max-width: calc(100vw - 104px);
+    padding: 6px;
+    gap: 5px;
+    border-radius: 22px;
+  }
+
+  .ux-v2 .selection-dock-caption,
+  .ux-v2 .selection-dock-divider {
+    display: none;
+  }
+
+  .ux-v2 .selection-dock-count {
+    padding-right: 0;
+  }
+
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action {
+    height: auto;
+    min-height: 48px;
+    max-width: 110px;
+
+    flex-direction: column;
+    gap: 3px;
+    padding: 5px 8px;
+
+    border-radius: 14px;
+    white-space: normal;
+  }
+
+  .ux-v2 .selection-dock-label {
+    max-width: 100%;
+    opacity: 1;
+    overflow: visible;
+    white-space: normal;
+
+    font-size: 10px;
+    line-height: 1.3;
+    text-align: center;
+  }
+}
+
+/* When both docks are visible on a narrow screen,
+   move Upload Dock above the selection controls. */
+@media (max-width: 900px) {
+  body:has(.liquid-selection-dock) .liquid-upload-dock {
+    bottom: calc(
+      max(24px, env(safe-area-inset-bottom)) + 180px
+    );
+
+    max-height: calc(100dvh - 220px);
+    overflow-y: auto;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    background-color: var(--surface-elevated);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .liquid-selection-dock .selection-dock-action,
+  .ux-v2 .liquid-selection-dock .selection-dock-label {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid selection fixed motion */
+
+/* The dock is a stable instrument: no scaling,
+   no expanding buttons and no moving neighbours. */
+@media (hover: hover) and (pointer: fine)
+and (min-width: 801px) {
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    overflow: visible;
+  }
+
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action {
+    position: static;
+
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    height: 44px;
+
+    flex: 0 0 44px;
+    padding: 0;
+    gap: 0;
+
+    transform: none;
+
+    transition:
+      background-color 250ms ease,
+      border-color 250ms ease,
+      color 250ms ease,
+      box-shadow 250ms ease;
+  }
+
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action:is(
+    :hover, :focus-visible, :active
+  ) {
+    gap: 0;
+    transform: none;
+  }
+
+  /* Shared caption position, above the entire dock.
+     Each button retains its own accessible name. */
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-label {
+    box-sizing: border-box;
+
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 12px);
+
+    transform: translateX(-50%);
+
+    width: min(210px, calc(100% - 12px));
+    max-width: none;
+    min-width: 0;
+
+    padding: 11px 14px;
+    margin: 0;
+
+    border-radius: 999px;
+    border: 1px solid var(--accent-muted);
+
+    background: var(--surface-elevated);
+
+    background-image: linear-gradient(
+      155deg,
+      rgba(159,190,99,.10),
+      rgba(255,255,255,.01) 72%
+    );
+
+    color: var(--text-primary);
+
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+
+    white-space: normal;
+    overflow-wrap: anywhere;
+
+    box-shadow:
+      inset 0 1px 1px rgba(255,255,255,.14),
+      0 6px 22px rgba(0,0,0,.22);
+
+    z-index: 1;
+    pointer-events: none;
+
+    opacity: 0;
+    visibility: hidden;
+
+    transition: opacity 220ms ease;
+  }
+
+  /* Only one caption can be visible at a time. */
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action:not(:disabled):is(
+    :hover, :focus-visible
+  ) > .selection-dock-label {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Pointer hover takes priority when another
+     button retains keyboard focus. */
+  .ux-v2 .liquid-selection-dock:has(
+    .selection-dock-action:not(:disabled):hover
+  )
+  .selection-dock-action:not(:hover)
+  > .selection-dock-label {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  /* Soft green inner light, not physical movement. */
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action:not(:disabled):is(
+    :hover, :focus-visible
+  ) {
+    background-color: var(--accent-soft);
+    color: var(--success);
+
+    border-color: color-mix(
+      in srgb, var(--accent) 65%, var(--border-strong)
+    );
+
+    box-shadow:
+      inset 0 1px 2px rgba(255,255,255,.18),
+      inset 0 0 12px rgba(159,190,99,.08),
+      0 0 14px rgba(159,190,99,.10);
+  }
+
+  /* The same light language for destructive actions,
+     but with the existing semantic danger color. */
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-trash:not(:disabled):is(
+    :hover, :focus-visible
+  ) {
+    background-color: var(--danger-soft);
+    color: var(--danger);
+
+    border-color: color-mix(
+      in srgb, var(--danger) 50%, var(--border-strong)
+    );
+
+    box-shadow:
+      inset 0 1px 2px rgba(255,255,255,.14),
+      0 0 12px rgba(247,163,155,.08);
+  }
+
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-trash > .selection-dock-label {
+    border-color: color-mix(
+      in srgb, var(--danger) 40%, var(--border-strong)
+    );
+
+    color: var(--danger);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ux-v2 .liquid-selection-dock
+    .selection-dock-action,
+    .ux-v2 .liquid-selection-dock
+    .selection-dock-label {
+      transition: none;
+    }
+  }
+}
+
+/* On touch devices, keep the existing visible labels.
+   Give them enough width instead of forcing 44px. */
+@media (max-width: 800px), (hover: none), (pointer: coarse) {
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action {
+    width: auto;
+    min-width: 56px;
+    max-width: 110px;
+  }
 }

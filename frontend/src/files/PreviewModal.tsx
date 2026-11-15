@@ -8,13 +8,80 @@ import { Icon } from '../ui/Icon'
 
 type PreviewState =
   | { status: 'loading' }
-  | { status: 'ready'; preview: PreviewPayload; imageUrl?: string }
+  | {
+      status: 'ready'
+      preview: PreviewPayload
+      imageUrl?: string
+      imageLoaded?: boolean
+    }
   | { status: 'error'; message: string }
 
-export function PreviewModal({ file, onClose }: { file: Pick<FileItem, 'id' | 'name'>; onClose(): void }) {
+export function PreviewModal({
+  file,
+  onClose,
+}: {
+  file: Pick<FileItem, 'id' | 'name'> &
+    Partial<Pick<FileItem, 'mimeType'>>
+  onClose(): void
+}) {
   const [state, setState] = useState<PreviewState>({ status: 'loading' })
   const closeButtonRef = useRef<HTMLButtonElement>(null)
-  const dialogRef = useDialogFocus(onClose, closeButtonRef)
+
+  const waitingForImage =
+    state.status === 'ready' &&
+    state.preview.type === 'image' &&
+    Boolean(state.imageUrl) &&
+    !state.imageLoaded
+  const closingAnimation = useRef<Animation | null>(null)
+  const dialogRef = useDialogFocus(close, closeButtonRef)
+
+  useEffect(() => {
+    return () => {
+      const animation = closingAnimation.current
+      closingAnimation.current = null
+      animation?.cancel()
+    }
+  }, [file.id])
+
+  function close() {
+    if (closingAnimation.current) return
+
+    const overlay = dialogRef.current
+
+    if (
+      !overlay ||
+      typeof overlay.animate !== 'function' ||
+      window.matchMedia?.(
+        '(prefers-reduced-motion: reduce)',
+      ).matches
+    ) {
+      onClose()
+      return
+    }
+
+    try {
+      // Fade the entire preview, including its backdrop.
+      const animation = overlay.animate(
+        [{ opacity: 1 }, { opacity: 0 }],
+        {
+          duration: 450,
+          easing: 'cubic-bezier(.4,0,.3,1)',
+          fill: 'both',
+        },
+      )
+
+      closingAnimation.current = animation
+
+      const finish = () => {
+        if (closingAnimation.current !== animation) return
+        onClose()
+      }
+
+      void animation.finished.then(finish, finish)
+    } catch {
+      onClose()
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -49,19 +116,74 @@ export function PreviewModal({ file, onClose }: { file: Pick<FileItem, 'id' | 'n
       role="dialog"
       tabIndex={-1}
     >
-      <div className="dialog-surface preview-dialog">
+      <div
+        className="dialog-surface preview-dialog"
+        data-preview-image={
+          file.mimeType?.startsWith('image/') ||
+          (state.status === 'ready' &&
+            state.preview.type === 'image')
+            ? 'true'
+            : undefined
+        }
+      >
         <div className="dialog-header">
           <h3 className="preview-title" id="preview-title">Просмотр: {file.name}</h3>
-          <button aria-label="Закрыть просмотр" className="icon-button" onClick={onClose} ref={closeButtonRef} title="Закрыть просмотр" type="button"><Icon name="close" /></button>
+          <button
+            aria-label="Закрыть просмотр"
+            className="icon-button liquid-close-button"
+            onClick={close}
+            ref={closeButtonRef}
+            title="Закрыть просмотр"
+            type="button"
+          >
+            <Icon name="close" />
+            <span className="liquid-close-label" aria-hidden="true">
+              Закрыть
+            </span>
+          </button>
         </div>
         <div className="dialog-body preview-content">
-        {state.status === 'loading' ? <p className="loading-state preview-loading" role="status">Загружаем предпросмотр…</p> : null}
+        {state.status === 'loading' || waitingForImage ? (
+          <div className="preview-loader" role="status">
+            <span className="preview-loader-orbit" aria-hidden="true">
+              <Icon name="cloud" width={32} height={32} />
+            </span>
+            <p className="preview-loader-label">
+              Загружаем предпросмотр…
+            </p>
+          </div>
+        ) : null}
         {state.status === 'error' ? <p className="alert alert--danger" role="alert">{state.message}</p> : null}
         {state.status === 'ready' && state.preview.type === 'text' ? (
           <pre className="preview-text mono">{state.preview.content}</pre>
         ) : null}
         {state.status === 'ready' && state.preview.type === 'image' && state.imageUrl ? (
-          <img alt={`Предпросмотр: ${file.name}`} className="preview-image" src={state.imageUrl} />
+          <img
+            alt={`Предпросмотр: ${file.name}`}
+            key={state.imageUrl}
+            className="preview-image"
+            src={state.imageUrl}
+            data-image-pending={waitingForImage ? 'true' : undefined}
+            onLoad={() => {
+              setState(current =>
+                current.status === 'ready' &&
+                current.imageUrl === state.imageUrl
+                  ? { ...current, imageLoaded: true }
+                  : current,
+              )
+            }}
+            onError={() => {
+              setState(current =>
+                current.status === 'ready' &&
+                current.imageUrl === state.imageUrl
+                  ? {
+                      status: 'error',
+                      message: 'Не удалось отобразить изображение.',
+                    }
+                  : current,
+              )
+            }}
+          />
         ) : null}
         {state.status === 'ready' && state.preview.type === 'unsupported' ? (
           <p className="empty-state preview-unsupported" role="status">Предпросмотр недоступен для этого типа файлов.</p>
@@ -71,6 +193,7 @@ export function PreviewModal({ file, onClose }: { file: Pick<FileItem, 'id' | 'n
     </div>
   )
 }
+
 
 function previewErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return 'Не удалось загрузить предпросмотр. Попробуйте ещё раз.'
