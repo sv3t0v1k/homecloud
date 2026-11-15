@@ -9,6 +9,7 @@ import { FileBrowserPage, UploadQueueProvider } from './files/FileBrowserPage'
 import { TrashPage } from './files/TrashPage'
 import { ProtectedRoute } from './routing/ProtectedRoute'
 import { Icon } from './ui/Icon'
+import { LiquidCloseButton } from './ui/LiquidCloseButton'
 import { AccountDialog } from './account/AccountDialog'
 import { PublicSharePage } from './sharing/PublicSharePage'
 import { GlobalSearchPage } from './files/GlobalSearchPage'
@@ -76,7 +77,7 @@ function TrashDialog({ background, onClose }: { background: HTMLElement | null; 
     return () => { if (background) background.inert = inert; document.body.style.overflow = overflow }
   }, [background])
   return <div className="dialog-overlay"><div aria-label="Корзина" aria-modal="true" className="dialog-surface trash-dialog" ref={ref} role="dialog" tabIndex={-1}>
-    <div className="dialog-header"><h2 id="trash-dialog-heading">Корзина</h2><button aria-label="Закрыть корзину" className="icon-button liquid-close-button" onClick={onClose} type="button"><Icon name="close" /><span className="liquid-close-label" aria-hidden="true">Закрыть</span></button></div>
+    <div className="dialog-header"><h2 id="trash-dialog-heading">Корзина</h2><LiquidCloseButton aria-label="Закрыть корзину" onClick={onClose} /></div>
     <TrashPage embedded onConfirmationChange={setConfirming} />
   </div></div>
 }

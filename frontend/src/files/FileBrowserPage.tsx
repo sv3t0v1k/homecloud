@@ -2,6 +2,7 @@ import { formatBytes } from '../ui/formatBytes'
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { Icon } from '../ui/Icon'
+import { LiquidCloseButton } from '../ui/LiquidCloseButton'
 import { ActionMenu } from '../ui/ActionMenu'
 import { useDialogFocus } from '../accessibility/useDialogFocus'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
@@ -888,20 +889,10 @@ function SmallDialog({ title, children, onClose }: { title: string; children: Re
       >
         <div className="dialog-header">
           <h3 id="file-operation-title">{title}</h3>
-          <button
+          <LiquidCloseButton
             aria-label="Закрыть"
-            className="icon-button liquid-close-button"
             onClick={onClose}
-            type="button"
-          >
-            <Icon name="close" />
-            <span
-              className="liquid-close-label"
-              aria-hidden="true"
-            >
-              Закрыть
-            </span>
-          </button>
+          />
         </div>
         {children}
       </div>
@@ -1102,20 +1093,11 @@ function UploadManager({ queue }: { queue: UploadQueue }) {
 
         {allCompleted ? (
           <div className="upload-dismiss-slot">
-            <button
+            <LiquidCloseButton
               aria-label="Закрыть"
-              className="icon-button liquid-close-button upload-dismiss"
+              className="upload-dismiss"
               onClick={() => queue.dismissCompleted()}
-              type="button"
-            >
-              <Icon name="close" />
-              <span
-                className="liquid-close-label"
-                aria-hidden="true"
-              >
-                Закрыть
-              </span>
-            </button>
+            />
           </div>
         ) : null}
       </div>

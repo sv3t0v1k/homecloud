@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/errors'
 import { Icon } from '../ui/Icon'
+import { LiquidCloseButton } from '../ui/LiquidCloseButton'
 import { FileThumbnail } from '../files/FileThumbnail'
 import { useDialogFocus } from '../accessibility/useDialogFocus'
 import { createShare, listShares, publicShareUrl, revokeShare, type OwnerShare, type ShareTarget } from './api'
@@ -148,18 +149,11 @@ export function ShareDialog({ target, onClose }: {
       <div className="dialog-surface share-dialog liquid-settings-dialog">
         <header className="dialog-header">
           <h3 id="share-title">Поделиться</h3>
-          <button
+          <LiquidCloseButton
             aria-label="Закрыть общий доступ"
-            className="icon-button liquid-close-button"
             onClick={onClose}
             ref={closeButtonRef}
-            type="button"
-          >
-            <Icon name="close" />
-            <span className="liquid-close-label" aria-hidden="true">
-              Закрыть
-            </span>
-          </button>
+          />
         </header>
         <div className="dialog-body">
           <div className="share-target-card">

@@ -5,6 +5,7 @@ import { useDialogFocus } from '../accessibility/useDialogFocus'
 import type { FileItem } from '../types/files'
 import { getFilePreview, previewImageBlob, type PreviewPayload } from './preview'
 import { Icon } from '../ui/Icon'
+import { LiquidCloseButton } from '../ui/LiquidCloseButton'
 
 type PreviewState =
   | { status: 'loading' }
@@ -128,19 +129,12 @@ export function PreviewModal({
       >
         <div className="dialog-header">
           <h3 className="preview-title" id="preview-title">Просмотр: {file.name}</h3>
-          <button
+          <LiquidCloseButton
             aria-label="Закрыть просмотр"
-            className="icon-button liquid-close-button"
             onClick={close}
             ref={closeButtonRef}
             title="Закрыть просмотр"
-            type="button"
-          >
-            <Icon name="close" />
-            <span className="liquid-close-label" aria-hidden="true">
-              Закрыть
-            </span>
-          </button>
+          />
         </div>
         <div className="dialog-body preview-content">
         {state.status === 'loading' || waitingForImage ? (
