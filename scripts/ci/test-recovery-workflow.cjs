@@ -45,7 +45,7 @@ test('real age is installed before scheduled recovery contracts in both CI route
   }
 });
 
-test('every PR revision reaches read-only exact-HEAD native recovery', () => {
+test('every full-route PR reaches read-only exact-HEAD native recovery', () => {
   const parent = read('ci-v2-fast.yml');
 
   assert.deepEqual(
@@ -58,7 +58,8 @@ test('every PR revision reaches read-only exact-HEAD native recovery', () => {
   const invocation = parent.jobs['recovery-qualification'];
 
   assert.deepEqual(invocation, {
-    if: "github.event_name == 'pull_request'",
+    needs: 'recovery-scope',
+    if: "github.event_name == 'pull_request' && needs.recovery-scope.outputs.mode == 'full'",
     uses: './.github/workflows/recovery-native.yml',
     with: { source_sha: '${{ github.event.pull_request.head.sha }}' },
     permissions: { contents: 'read' },

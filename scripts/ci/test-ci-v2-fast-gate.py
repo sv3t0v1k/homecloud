@@ -1,55 +1,100 @@
 #!/usr/bin/env python3
-"""Negative routing checks for the proposed Fast/Integration aggregate gate."""
 import importlib.util
 from pathlib import Path
 import unittest
 
-spec = importlib.util.spec_from_file_location('ci_v2_fast_gate', Path(__file__).with_name('ci-v2-fast-gate.py'))
+spec = importlib.util.spec_from_file_location(
+    'ci_v2_fast_gate',
+    Path(__file__).with_name('ci-v2-fast-gate.py'),
+)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 
 class FastGateTests(unittest.TestCase):
-    def setUp(self):
-        self.results = {name: {'result': 'success'} for name in gate.REQUIRED}
+    def results(self, mode='full'):
+        r = {name: {'result': 'success'} for name in gate.REQUIRED}
+        r['recovery-scope']['outputs'] = {'mode': mode}
 
-    def test_complete_current_run_passes(self):
-        gate.validate(self.results)
+        if mode in ('ui', 'push'):
+            r['recovery-qualification']['result'] = 'skipped'
+
+        return r
+
+    def test_complete_full_route(self):
+        self.assertEqual(gate.validate(self.results()), 'full')
+
+    def test_complete_ui_route(self):
+        self.assertEqual(gate.validate(self.results('ui')), 'ui')
+
+    def test_complete_push_route(self):
+        self.assertEqual(
+            gate.validate(self.results('push'), 'push'), 'push'
+        )
 
     def test_missing_job_blocks(self):
-        self.results.pop('backend')
-        with self.assertRaisesRegex(ValueError, 'Missing'):
-            gate.validate(self.results)
+        r = self.results()
+        r.pop('backend')
+        with self.assertRaises(ValueError):
+            gate.validate(r)
 
-    def test_skipped_or_failed_job_blocks(self):
+    def test_full_route_requires_every_job(self):
         for name in gate.REQUIRED:
             for state in ('skipped', 'failure', 'cancelled', None):
                 with self.subTest(name=name, state=state):
-                    results = {key: dict(value) for key, value in self.results.items()}
-                    results[name]['result'] = state
-                    with self.assertRaisesRegex(ValueError, 'failed or skipped'):
-                        gate.validate(results)
+                    r = self.results()
+                    r[name]['result'] = state
+                    with self.assertRaises(ValueError):
+                        gate.validate(r)
 
-    def test_test_push_allows_only_pr_qualification_skip(self):
-        self.results['recovery-qualification']['result'] = 'skipped'
-        gate.validate(self.results, 'push')
+    def test_ui_cannot_skip_other_jobs(self):
         for name in gate.REQUIRED - {'recovery-qualification'}:
-            with self.subTest(name=name):
-                results = {key: dict(value) for key, value in self.results.items()}
-                results[name]['result'] = 'skipped'
-                with self.assertRaisesRegex(ValueError, 'failed or skipped'):
-                    gate.validate(results, 'push')
+            r = self.results('ui')
+            r[name]['result'] = 'skipped'
+            with self.assertRaises(ValueError):
+                gate.validate(r)
 
-    def test_test_push_cannot_hide_a_failed_qualification(self):
-        for state in ('failure', 'cancelled', None):
-            with self.subTest(state=state):
-                self.results['recovery-qualification']['result'] = state
-                with self.assertRaisesRegex(ValueError, 'failed or skipped'):
-                    gate.validate(self.results, 'push')
+    def test_push_cannot_skip_other_jobs(self):
+        for name in gate.REQUIRED - {'recovery-qualification'}:
+            r = self.results('push')
+            r[name]['result'] = 'skipped'
+            with self.assertRaises(ValueError):
+                gate.validate(r, 'push')
 
-    def test_unknown_event_refused(self):
-        with self.assertRaisesRegex(ValueError, 'Unsupported'):
-            gate.validate(self.results, 'workflow_dispatch')
+    def test_failed_recovery_is_never_accepted(self):
+        for mode, event in (
+            ('full', 'pull_request'),
+            ('ui', 'pull_request'),
+            ('push', 'push'),
+        ):
+            for state in ('failure', 'cancelled', None):
+                r = self.results(mode)
+                r['recovery-qualification']['result'] = state
+                with self.assertRaises(ValueError):
+                    gate.validate(r, event)
+
+    def test_missing_scope_output_blocks(self):
+        r = self.results('ui')
+        r['recovery-scope'].pop('outputs')
+        with self.assertRaises(ValueError):
+            gate.validate(r)
+
+    def test_invalid_scope_output_blocks(self):
+        for mode in ('', 'unknown', None, True, 'push'):
+            with self.assertRaises(ValueError):
+                gate.validate(self.results(mode))
+
+    def test_ui_mode_not_allowed_on_push(self):
+        with self.assertRaises(ValueError):
+            gate.validate(self.results('ui'), 'push')
+
+    def test_full_mode_not_allowed_on_push(self):
+        with self.assertRaises(ValueError):
+            gate.validate(self.results(), 'push')
+
+    def test_unknown_event_blocks(self):
+        with self.assertRaises(ValueError):
+            gate.validate(self.results(), 'workflow_dispatch')
 
 
 if __name__ == '__main__':

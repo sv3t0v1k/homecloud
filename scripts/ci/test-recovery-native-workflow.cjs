@@ -473,7 +473,8 @@ test('Fast CI invokes Native Recovery directly and only for pull requests', () =
   const gate = fast.jobs['fast-integration-gate'];
 
   assert.deepEqual(call, {
-    if: "github.event_name == 'pull_request'",
+    needs: 'recovery-scope',
+    if: "github.event_name == 'pull_request' && needs.recovery-scope.outputs.mode == 'full'",
     uses: './.github/workflows/recovery-native.yml',
     with: {
       source_sha: '${{ github.event.pull_request.head.sha }}',
@@ -482,6 +483,7 @@ test('Fast CI invokes Native Recovery directly and only for pull requests', () =
   });
 
   assert.deepEqual(new Set(gate.needs), new Set([
+    'recovery-scope',
     'pr-fast-backend',
     'backend',
     'frontend',
@@ -506,7 +508,7 @@ test('TEST publication survives an intentionally skipped PR-only recovery job', 
 
   assert.equal(
     jobs['recovery-qualification'].if,
-    "github.event_name == 'pull_request'"
+    "github.event_name == 'pull_request' && needs.recovery-scope.outputs.mode == 'full'"
   );
 
   assert.equal(jobs['fast-integration-gate'].if, 'always()');
@@ -643,4 +645,25 @@ test('TEST publication terminal executes successfully only with complete evidenc
     assert.equal(result.status, 1);
     assert.match(result.stderr, /BLOCKED: missing or invalid TEST manifest artifact ID/);
   }
+});
+
+
+test('Native Recovery routing uses the exact base policy, never candidate policy', () => {
+  const fast = read('ci-v2-fast.yml');
+  const route = fast.jobs['recovery-scope'];
+  const gate = fast.jobs['fast-integration-gate'];
+
+  assert.deepEqual(route.permissions, { contents: 'read' });
+  assert.equal(route.steps[0].with['fetch-depth'], 0);
+  assert.equal(route.steps[0].with['persist-credentials'], false);
+
+  const step = route.steps.find(item => item.id === 'classify');
+
+  assert.equal(step.env.GIT_NO_REPLACE_OBJECTS, '1');
+  assert.ok(step.run.includes("base + ':scripts/ci/ci-v3-recovery-scope.py'"));
+  assert.ok(step.run.includes("mode = 'full'"));
+  assert.ok(step.run.includes("pr['base']['ref'] == 'test'"));
+  assert.ok(step.run.includes('input=policy.stdout'));
+  assert.ok(step.run.includes("actual != head"));
+  assert.ok(gate.needs.includes('recovery-scope'));
 });
