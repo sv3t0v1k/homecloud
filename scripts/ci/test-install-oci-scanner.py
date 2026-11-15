@@ -20,7 +20,7 @@ case "$1" in
     test "$2" = '--platform'
     test "$3" = 'linux/amd64'
     case "$4" in
-      ghcr.io/aquasecurity/trivy@sha256:166061a4a15c64a94a3aab430659e2c166dc0815fbc54a222c6d56d64132f552|ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb)
+      ghcr.io/aquasecurity/trivy@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb|ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb)
         ;;
       *) exit 77 ;;
     esac
@@ -50,7 +50,7 @@ esac
 
 
 class InstallerTests(unittest.TestCase):
-    def invoke(self, tool="trivy", version="Version: 0.76.0",
+    def invoke(self, tool="trivy", version="Version: 0.76.2",
                exit_code=0, platform="linux/amd64",
                missing=False, existing=False, symlink=False,
                wrong_digest=False):
@@ -85,7 +85,7 @@ class InstallerTests(unittest.TestCase):
             if wrong_digest:
                 content = INSTALLER.read_text()
                 content = content.replace(
-                    "166061a4a15c64a94a3aab430659e2c166dc0815fbc54a222c6d56d64132f552",
+                    "8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb",
                     "0" * 64,
                 )
                 script = root / "altered-installer.sh"
@@ -105,6 +105,9 @@ class InstallerTests(unittest.TestCase):
 
     def test_valid_trivy(self):
         self.assertEqual(self.invoke().returncode, 0)
+
+    def test_previous_scanner_version_blocks(self):
+        self.assertNotEqual(self.invoke(version="Version: 0.76.0").returncode, 0)
 
     def test_valid_gitleaks(self):
         self.assertEqual(

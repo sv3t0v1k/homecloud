@@ -7,7 +7,7 @@ target=$2
 
 case "$tool" in
   trivy)
-    image='ghcr.io/aquasecurity/trivy@sha256:166061a4a15c64a94a3aab430659e2c166dc0815fbc54a222c6d56d64132f552'
+    image='ghcr.io/aquasecurity/trivy@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb'
     binary='/usr/local/bin/trivy'
     ;;
   gitleaks)
@@ -46,7 +46,7 @@ test -f "$target" && test -x "$target"
 case "$tool" in
   trivy)
     version=$("$target" --version)
-    test "$version" = 'Version: 0.76.0'
+    test "$version" = 'Version: 0.76.2'
     ;;
   gitleaks)
     version=$("$target" version)

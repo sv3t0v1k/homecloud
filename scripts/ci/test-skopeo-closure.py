@@ -77,7 +77,7 @@ class SkopeoClosureTests(unittest.TestCase):
                                  archive_path='var/cache/apt/archives/skopeo_1.16.1_amd64.deb'))],
             skopeo=dict(path=str(self.binary), sha256=closure.sha256(self.binary),
                         ldd=[dict(path=str(self.lib), resolved_path=str(self.lib), sha256=closure.sha256(self.lib), owners=['libc6:amd64'])]))
-        self.rootfs = dict(ArtifactType='filesystem', ArtifactName='runner-host', Trivy={'Version': '0.76.0'},
+        self.rootfs = dict(ArtifactType='filesystem', ArtifactName='runner-host', Trivy={'Version': '0.76.2'},
                            Results=[dict(Class='os-pkgs',
                                          Packages=[dict(Name='libc6', Version='2.39', Arch='amd64'),
                                                    dict(Name='skopeo', Version='1.16.1', Arch='amd64'),
