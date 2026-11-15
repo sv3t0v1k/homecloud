@@ -499,3 +499,148 @@ test('Fast CI invokes Native Recovery directly and only for pull requests', () =
   assert.equal(job.uses, undefined);
   assert.equal(job['continue-on-error'], undefined);
 });
+
+
+test('TEST publication survives an intentionally skipped PR-only recovery job', () => {
+  const jobs = read('ci-v2-fast.yml').jobs;
+
+  assert.equal(
+    jobs['recovery-qualification'].if,
+    "github.event_name == 'pull_request'"
+  );
+
+  assert.equal(jobs['fast-integration-gate'].if, 'always()');
+
+  assert.equal(jobs['test-image'].needs, 'fast-integration-gate');
+
+  assert.equal(
+    jobs['test-image'].if,
+    "${{ always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/test' && needs.fast-integration-gate.result == 'success' }}"
+  );
+
+  assert.equal(jobs['test-pair'].needs, 'test-image');
+
+  assert.equal(
+    jobs['test-pair'].if,
+    "${{ always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/test' && needs.test-image.result == 'success' }}"
+  );
+
+  assert.deepEqual(
+    jobs['test-image'].strategy.matrix.component,
+    ['backend', 'frontend']
+  );
+
+  assert.equal(jobs['test-image']['continue-on-error'], undefined);
+  assert.equal(jobs['test-pair']['continue-on-error'], undefined);
+});
+
+test('TEST pair exposes the identity of the actual uploaded manifest', () => {
+  const pair = read('ci-v2-fast.yml').jobs['test-pair'];
+
+  assert.equal(
+    pair.outputs.manifest_sha256,
+    '${{ steps.manifest.outputs.sha256 }}'
+  );
+
+  assert.equal(
+    pair.outputs.artifact_id,
+    '${{ steps.publish-manifest.outputs.artifact-id }}'
+  );
+
+  const upload = pair.steps.find(step => step.id === 'publish-manifest');
+
+  assert.ok(upload);
+  assert.ok(upload.uses.startsWith('actions/upload-artifact@'));
+  assert.equal(upload.with.name, 'test-channel-${{ github.run_attempt }}');
+  assert.equal(upload.with.path, 'test-channel.json');
+  assert.equal(upload.with['if-no-files-found'], 'error');
+});
+
+test('TEST publication terminal is push-only and checks the entire chain', () => {
+  const gate = read('ci-v2-fast.yml').jobs['test-publication-gate'];
+
+  assert.equal(gate.name, 'test-publication-terminal');
+
+  assert.equal(
+    gate.if,
+    "${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/test' }}"
+  );
+
+  assert.deepEqual(
+    gate.needs,
+    ['fast-integration-gate', 'test-image', 'test-pair']
+  );
+
+  assert.deepEqual(gate.permissions, {});
+  assert.equal(gate['continue-on-error'], undefined);
+
+  const step = gate.steps[0];
+
+  assert.equal(step.shell, 'bash');
+
+  assert.deepEqual(step.env, {
+    GATE_RESULT: '${{ needs.fast-integration-gate.result }}',
+    IMAGE_RESULT: '${{ needs.test-image.result }}',
+    PAIR_RESULT: '${{ needs.test-pair.result }}',
+    MANIFEST_SHA256: '${{ needs.test-pair.outputs.manifest_sha256 }}',
+    ARTIFACT_ID: '${{ needs.test-pair.outputs.artifact_id }}',
+  });
+});
+
+test('TEST publication terminal executes successfully only with complete evidence', () => {
+  const { spawnSync } = require('node:child_process');
+
+  const gate = read('ci-v2-fast.yml').jobs['test-publication-gate'];
+
+  const valid = {
+    GATE_RESULT: 'success',
+    IMAGE_RESULT: 'success',
+    PAIR_RESULT: 'success',
+    MANIFEST_SHA256: 'a'.repeat(64),
+    ARTIFACT_ID: '12345',
+  };
+
+  const execute = overrides => {
+    const result = spawnSync(
+      'bash',
+      ['-c', gate.steps[0].run],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, ...valid, ...overrides },
+      }
+    );
+
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+
+    return result;
+  };
+
+  const success = execute({});
+
+  assert.equal(success.status, 0);
+  assert.match(success.stdout, /PASS: complete TEST publication/);
+
+  for (const key of ['GATE_RESULT', 'IMAGE_RESULT', 'PAIR_RESULT']) {
+    for (const state of ['failure', 'skipped', 'cancelled', '']) {
+      const result = execute({ [key]: state });
+
+      assert.equal(result.status, 1, `${key}=${state}`);
+      assert.match(result.stderr, /BLOCKED: incomplete TEST publication/);
+    }
+  }
+
+  for (const digest of ['', 'bad', 'A'.repeat(64), 'a'.repeat(63)]) {
+    const result = execute({ MANIFEST_SHA256: digest });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /BLOCKED: missing or invalid TEST manifest SHA256/);
+  }
+
+  for (const id of ['', '0', '-1', 'invalid']) {
+    const result = execute({ ARTIFACT_ID: id });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /BLOCKED: missing or invalid TEST manifest artifact ID/);
+  }
+});
