@@ -29,7 +29,11 @@ test('reusable secrets gate validates excluded history before a full reachable h
   const excluded = steps.findIndex(step => step.run === 'python3 scripts/ci/check-excluded-history.py');
   const scan = steps.findIndex(step => (step.run || '').includes('"$RUNNER_TEMP/gitleaks" git'));
   assert.ok(excluded >= 0 && excluded < scan);
-  assert.match(steps[scan].run, /--log-opts="--full-history --all -- \. :\(exclude\)scripts\/tests\/PHASE-5\.3\.1-TEST-AUDIT\.md"/);
+  assert.match(steps[scan].run, /history_opts='--full-history --all --diff-merges=first-parent -- \. :\(exclude\)scripts\/tests\/PHASE-5\.3\.1-TEST-AUDIT\.md'/);
+  assert.match(steps[scan].run, /--log-opts="\$history_opts"/);
+  const regression = steps[scan].run.indexOf('test-gitleaks-merge-history.py');
+  const scanner = steps[scan].run.indexOf('"$RUNNER_TEMP/gitleaks" git');
+  assert.ok(regression >= 0 && regression < scanner);
 });
 
 test('real age is installed before scheduled recovery contracts in both CI routes', () => {

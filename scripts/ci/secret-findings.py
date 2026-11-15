@@ -215,12 +215,94 @@ def local_commit(sha,ancestor):
         return False
 
 
+
+def strict_json(raw):
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate JSON key")
+            result[key] = value
+        return result
+
+    def invalid_constant(_):
+        raise ValueError("Invalid JSON constant")
+
+    return json.loads(
+        raw,
+        object_pairs_hook=unique_object,
+        parse_constant=invalid_constant,
+    )
+
+
+def validate_findings(findings):
+    fingerprints = set()
+    identities = set()
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            raise ValueError("Invalid scanner finding")
+
+        for key in ("RuleID", "Commit", "File", "Fingerprint"):
+            value = finding.get(key)
+            if not isinstance(value, str) or not value:
+                raise ValueError("Missing finding identity")
+
+        if not SHA.fullmatch(finding["Commit"]):
+            raise ValueError("Invalid finding commit")
+
+        if finding.get("Secret") != "REDACTED":
+            raise ValueError("Expected redacted finding")
+
+        path = finding["File"]
+
+        if (
+            path == FORBIDDEN
+            or path.startswith("/")
+            or "\0" in path
+            or not PurePosixPath(path).parts
+            or str(PurePosixPath(path)) != path
+            or ".." in PurePosixPath(path).parts
+        ):
+            raise ValueError("Invalid or excluded finding path")
+
+        coordinates = tuple(
+            finding.get(key) for key in (
+                "StartLine", "EndLine",
+                "StartColumn", "EndColumn",
+            )
+        )
+
+        if any(type(v) is not int or v < 1
+               for v in coordinates):
+            raise ValueError("Invalid finding coordinates")
+
+        first, last, start, end = coordinates
+
+        if first > last or (first == last and start > end):
+            raise ValueError("Invalid finding coordinate order")
+
+        identity = (
+            finding["Commit"], path,
+            finding["RuleID"], *coordinates,
+        )
+
+        fingerprint = finding["Fingerprint"]
+
+        if fingerprint in fingerprints or identity in identities:
+            raise ValueError("Duplicate or ambiguous finding")
+
+        fingerprints.add(fingerprint)
+        identities.add(identity)
+
+
 def qualify(findings, scanner_exit, raw_report_sha256=None, read_line=source_line, verify_upstream=upstream, verify_local=local_commit, check_context=historical_context):
-    if scanner_exit not in (0,42) or not isinstance(findings,list) or (scanner_exit == 0) != (len(findings) == 0):
+    if type(scanner_exit) is not int or scanner_exit not in (0,42) or not isinstance(findings,list) or (scanner_exit == 0) != (len(findings) == 0):
         raise ValueError('Scanner failure or inconsistent report')
     if findings and (not isinstance(raw_report_sha256,str)
                      or not re.fullmatch(r'[a-f0-9]{64}',raw_report_sha256)):
         raise ValueError('Missing or invalid raw report digest')
+    validate_findings(findings)
     plans = []
     for finding in findings:
         if (not isinstance(finding,dict) or finding.get('Secret') != 'REDACTED'
@@ -261,11 +343,239 @@ def qualify(findings, scanner_exit, raw_report_sha256=None, read_line=source_lin
             if plan[0]=='upstream_go_commit':
                 record['proof'].update(object_id=plan[2],url=plan[1],
                                        transport='HTTPS; certificate verification enabled; redirects disabled')
+        if not accepted:
+            proof = _checkpoint_source_hash_proof(finding)
+
+            if proof is not None:
+                proof.update(
+                    verification="EXACT_GIT_OBJECT_CHAIN_AND_SOURCE_SHA256",
+                    checkpoint_commit=finding["Commit"],
+                    checkpoint_file=finding["File"],
+                    source_line_number=finding["StartLine"],
+                    source_columns=[
+                        finding["StartColumn"], finding["EndColumn"],
+                    ],
+                    finding_fingerprint=finding["Fingerprint"],
+                    raw_report_sha256=raw_report_sha256,
+                )
+
+                record.update(
+                    classification="VERIFIED_SOURCE_SHA256",
+                    reason="EXACT_HISTORICAL_SOURCE_HASH",
+                    proof=proof,
+                )
+
         records.append(record)
-    blocked=sum(record['classification'] != 'VERIFIED_PUBLIC_GIT_REFERENCE' for record in records)
-    return dict(format='homecloud-secret-reference-evidence-v1',scanner_exit=scanner_exit,
-                raw_findings=len(findings),verified_public_references=len(findings)-blocked,
-                unresolved_findings=blocked,findings=records,status='BLOCKED' if blocked else 'PASS')
+    public_count = sum(
+        r["classification"] == "VERIFIED_PUBLIC_GIT_REFERENCE"
+        for r in records
+    )
+    source_count = sum(
+        r["classification"] == "VERIFIED_SOURCE_SHA256"
+        for r in records
+    )
+
+    if source_count > len(_CHECKPOINT_ENTRIES):
+        raise ValueError("Too many historical checksum findings")
+
+    blocked = len(findings) - public_count - source_count
+
+    if blocked < 0:
+        raise ValueError("Inconsistent classification totals")
+
+    return dict(
+        format="homecloud-secret-reference-evidence-v1",
+        scanner_exit=scanner_exit,
+        raw_findings=len(findings),
+        verified_public_references=public_count,
+        verified_source_hashes=source_count,
+        unresolved_findings=blocked,
+        findings=records,
+        status="BLOCKED" if blocked else "PASS",
+    )
+
+
+# Exact historical PR45 source checksum evidence.
+_CHECKPOINT_COMMIT = '131be90546c7142e79e9' + '292e27a835674e11751d'
+_CHECKPOINT_SOURCE_COMMIT = '7068d8dc08c7cc19b1c7' + '4701f0ae85193e5ac233'
+_CHECKPOINT_PATH = 'docs/handoff/PR-45-CLOSURE-CHECKS.json'
+_CHECKPOINT_ENTRIES = {6713: (24, 110, 'scripts/ci/secret-findings.py'), 6724: (36, 145, 'backend/src/migrations/1746825000000-CreateRefreshTokensTable.ts'), 6728: (36, 142, 'backend/src/migrations/1746825040000-ShareLinksTokenUnique.ts')}
+
+
+
+def _verified_git_object(kind, oid):
+    """Read an exact Git object and independently verify its identity."""
+    if kind not in ("commit", "tree", "blob"):
+        raise ValueError("Invalid Git object type")
+
+    if not isinstance(oid, str) or not SHA.fullmatch(oid):
+        raise ValueError("Invalid Git object ID")
+
+    env = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1")
+
+    payload = subprocess.check_output(
+        ["git", "cat-file", kind, oid],
+        stderr=subprocess.DEVNULL,
+        env=env,
+        timeout=30,
+    )
+
+    header = (
+        kind.encode("ascii") + b" "
+        + str(len(payload)).encode("ascii") + b"\0"
+    )
+
+    if hashlib.sha1(header + payload).hexdigest() != oid:
+        raise ValueError("Git object content does not match identity")
+
+    return payload
+
+
+def _checkpoint_blob(commit, path):
+    """Verify the commit, every tree and the exact regular blob."""
+    if (
+        not isinstance(path, str)
+        or path == FORBIDDEN
+        or path.startswith("/")
+        or str(PurePosixPath(path)) != path
+        or ".." in PurePosixPath(path).parts
+    ):
+        raise ValueError("Invalid historical object path")
+
+    payload = _verified_git_object("commit", commit)
+    root = payload.split(b"\n", 1)[0]
+    match = re.fullmatch(rb"tree ([a-f0-9]{40})", root)
+
+    if not match:
+        raise ValueError("Commit root tree missing")
+
+    oid = match[1].decode("ascii")
+    parts = PurePosixPath(path).parts
+
+    if not parts:
+        raise ValueError("Empty historical path")
+
+    for index, part in enumerate(parts):
+        tree = _verified_git_object("tree", oid)
+        offset = 0
+        matches = []
+
+        while offset < len(tree):
+            separator = tree.index(b"\0", offset)
+            mode, name = tree[offset:separator].split(b" ", 1)
+            object_end = separator + 21
+
+            if object_end > len(tree):
+                raise ValueError("Truncated Git tree entry")
+
+            child = tree[separator + 1:object_end].hex()
+
+            if name == part.encode("utf-8"):
+                matches.append((mode, child))
+
+            offset = object_end
+
+        if len(matches) != 1:
+            raise ValueError("Missing or ambiguous Git tree path")
+
+        mode, oid = matches[0]
+
+        if index == len(parts) - 1:
+            if mode not in (b"100644", b"100755"):
+                raise ValueError("Historical source is not a regular blob")
+
+            return _verified_git_object("blob", oid)
+
+        if mode != b"40000":
+            raise ValueError("Historical path component is not a tree")
+
+    raise ValueError("Historical blob resolution failed")
+
+
+
+def _checkpoint_source_hash_proof(finding):
+    """Prove only the three immutable historical checksum findings."""
+    try:
+        if (
+            finding.get("RuleID") != "generic-api-key"
+            or finding.get("Commit") != _CHECKPOINT_COMMIT
+            or finding.get("File") != _CHECKPOINT_PATH
+            or finding.get("Secret") != "REDACTED"
+        ):
+            return None
+
+        number = finding.get("StartLine")
+        entry = _CHECKPOINT_ENTRIES.get(number)
+
+        if entry is None or finding.get("EndLine") != number:
+            return None
+
+        start, end, path = entry
+
+        if (
+            finding.get("StartColumn") != start
+            or finding.get("EndColumn") != end
+        ):
+            return None
+
+        raw = _checkpoint_blob(
+            _CHECKPOINT_COMMIT, _CHECKPOINT_PATH
+        )
+
+        document = strict_json(raw)
+        manifest = document["ci"]["actual_wave2_collector"]["pair_manifest"]
+
+        if manifest["commit"] != _CHECKPOINT_SOURCE_COMMIT:
+            return None
+
+        line = raw.decode("utf-8").splitlines()[number - 1]
+        field = strict_json("{" + line.strip().rstrip(",") + "}")
+
+        expected = manifest["source_files"][path]
+
+        if (
+            field != {path: expected}
+            or not isinstance(expected, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", expected)
+        ):
+            return None
+
+        # The pinned scanner includes the leading diff '+'.
+        token = '"' + expected + '"'
+
+        if line.count(token) != 1:
+            return None
+
+        if not 2 <= start <= end <= len(line) + 1:
+            return None
+
+        value_start = line.index(token) + 1
+
+        if not (
+            start - 2 <= value_start
+            and value_start + 64 <= end - 1
+        ):
+            return None
+
+        actual = hashlib.sha256(
+            _checkpoint_blob(_CHECKPOINT_SOURCE_COMMIT, path)
+        ).hexdigest()
+
+        if actual != expected:
+            return None
+
+        return {
+            "kind": "historical_source_sha256",
+            "source_commit": _CHECKPOINT_SOURCE_COMMIT,
+            "source_path": path,
+        }
+
+    except (
+        OSError, ValueError, TypeError,
+        KeyError, IndexError, subprocess.SubprocessError,
+    ):
+        return None
+
 
 
 def main():
@@ -277,7 +587,7 @@ def main():
     try:
         raw=Path(args.report).read_bytes()
         report_sha256=hashlib.sha256(raw).hexdigest()
-        result=qualify(json.loads(raw),args.scanner_exit,raw_report_sha256=report_sha256)
+        result=qualify(strict_json(raw),args.scanner_exit,raw_report_sha256=report_sha256)
         result['raw_report_sha256']=report_sha256
     except (OSError,ValueError,KeyError,TypeError,UnicodeError,subprocess.SubprocessError):
         result=dict(format='homecloud-secret-reference-evidence-v1',status='BLOCKED',error='Invalid or unavailable scanner/reference evidence')
