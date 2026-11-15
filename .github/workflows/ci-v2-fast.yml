@@ -302,7 +302,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/branches/test" > "$RUNNER_TEMP/current-test.json"
           python3 scripts/ci/ci-v2-candidate.py --event "$GITHUB_EVENT_PATH" --live "$RUNNER_TEMP/current-test.json" --checkout "$(git rev-parse HEAD)" --branch test
   test-image:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/test'
+    if: ${{ always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/test' && needs.fast-integration-gate.result == 'success' }}
     needs: fast-integration-gate
     runs-on: ubuntu-24.04
     timeout-minutes: 100
@@ -376,7 +376,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
   test-pair:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/test'
+    if: ${{ always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/test' && needs.test-image.result == 'success' }}
     needs: test-image
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -385,6 +385,7 @@ jobs:
       packages: read
     outputs:
       manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
+      artifact_id: ${{ steps.publish-manifest.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -408,8 +409,45 @@ jobs:
           python3 scripts/ci/test-channel.py check --manifest test-channel.json
           echo "sha256=$(python3 -c 'import json; print(json.load(open("test-channel.json"))["manifest_sha256"])')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: publish-manifest
         with:
           name: test-channel-${{ github.run_attempt }}
           path: test-channel.json
           if-no-files-found: error
           retention-days: 90
+
+  test-publication-gate:
+    name: test-publication-terminal
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/test' }}
+    needs: [fast-integration-gate, test-image, test-pair]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Require completed TEST publication and manifest identity
+        env:
+          GATE_RESULT: ${{ needs.fast-integration-gate.result }}
+          IMAGE_RESULT: ${{ needs.test-image.result }}
+          PAIR_RESULT: ${{ needs.test-pair.result }}
+          MANIFEST_SHA256: ${{ needs.test-pair.outputs.manifest_sha256 }}
+          ARTIFACT_ID: ${{ needs.test-pair.outputs.artifact_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for status in "$GATE_RESULT" "$IMAGE_RESULT" "$PAIR_RESULT"; do
+            if [[ "$status" != success ]]; then
+              echo "BLOCKED: incomplete TEST publication: $status" >&2
+              exit 1
+            fi
+          done
+          if [[ ! "$MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "BLOCKED: missing or invalid TEST manifest SHA256" >&2
+            exit 1
+          fi
+          if [[ ! "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "BLOCKED: missing or invalid TEST manifest artifact ID" >&2
+            exit 1
+          fi
+          echo "PASS: complete TEST publication"
+          echo "Manifest SHA256: $MANIFEST_SHA256"
+          echo "Manifest artifact ID: $ARTIFACT_ID"
