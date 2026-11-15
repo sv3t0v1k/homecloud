@@ -27,7 +27,8 @@ for suite in \
   scripts/tests/test-restore-cleanup.py \
   scripts/tests/test-restore-health.py \
   scripts/tests/test-restore-storage.py \
-  scripts/tests/test-scheduled-operations.py
+  scripts/tests/test-scheduled-operations.py \
+  scripts/tests/test-certificate-lifecycle.py
 do
   printf '%s\n' "$suite"
   python3 -B "$suite"

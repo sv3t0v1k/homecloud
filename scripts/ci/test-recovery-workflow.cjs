@@ -9,6 +9,39 @@ const read = name => yaml.load(fs.readFileSync(path.join(root, '.github/workflow
 const caller = read('recovery-qualification.yml');
 const workflow = read('ci.yml');
 
+test('all actual environment qualification jobs bootstrap the pinned global npm', () => {
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    const steps = job.steps || [];
+    const scan = steps.findIndex(step => (step.run || '').includes('sh scripts/ci/scan-environment.sh'));
+    if (scan < 0) continue;
+    const bootstrap = steps.findIndex(step => step.run === 'python3 scripts/ci/install-npm.py');
+    assert.ok(bootstrap >= 0 && bootstrap < scan, name);
+    if (!job.container) {
+      const runtime = steps.findIndex(step => step.uses === 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020');
+      assert.ok(runtime >= 0 && runtime < bootstrap, name);
+      assert.equal(steps[runtime].with['node-version'], '24.21.0', name);
+    }
+  }
+});
+
+test('reusable secrets gate validates excluded history before a full reachable history scan', () => {
+  const steps = workflow.jobs.secrets.steps;
+  const excluded = steps.findIndex(step => step.run === 'python3 scripts/ci/check-excluded-history.py');
+  const scan = steps.findIndex(step => (step.run || '').includes('"$RUNNER_TEMP/gitleaks" git'));
+  assert.ok(excluded >= 0 && excluded < scan);
+  assert.match(steps[scan].run, /--log-opts="--full-history --all -- \. :\(exclude\)scripts\/tests\/PHASE-5\.3\.1-TEST-AUDIT\.md"/);
+});
+
+test('real age is installed before scheduled recovery contracts in both CI routes', () => {
+  for (const filename of ['ci-v2-fast.yml', 'ci.yml']) {
+    const steps = read(filename).jobs.configuration.steps;
+    const setup = steps.findIndex(step => step.name === 'Install real age before recovery and scheduled contracts');
+    const contracts = steps.findIndex(step => (step.run || '').includes('bash scripts/ci/test-recovery-contracts.sh'));
+    assert.ok(setup >= 0 && setup < contracts, filename);
+    assert.match(steps[setup].run, /apt-get install -y --no-install-recommends age/);
+  }
+});
+
 test('every PR revision reaches read-only exact-HEAD offline qualification', () => {
   const parent = read('ci-v2-fast.yml');
   assert.deepEqual(new Set(parent.on.pull_request.types), new Set(['opened', 'synchronize', 'reopened', 'ready_for_review']));

@@ -232,6 +232,11 @@ jobs:
           persist-credentials: false
       - name: Remove unused hosted .NET SDK before workload; retain evidence
         run: python3 scripts/ci/minimize-runner.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Upgrade global npm from the verified archive before workload
+        run: python3 scripts/ci/install-npm.py
       - name: Pin normalized Compose API; preserve explicit false bind flags
         shell: bash
         run: |
@@ -252,14 +257,16 @@ jobs:
       - run: docker compose version && python3 scripts/ci/compose-check.py
       - run: python3 deploy/linux/test_startup_gate.py
       - run: python3 scripts/ci/test-entrypoint.py
+      - name: Install real age before recovery and scheduled contracts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends age
       - name: Recovery contracts and real Linux crash filesystem checks
         run: |
           bash scripts/ci/test-recovery-contracts.sh
           sudo python3 -B scripts/ci/test-restore-storage-linux.py
       - name: Encrypted backup with real age
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends age
           bash scripts/tests/test-backup-production.sh
       - run: python3 deploy/linux/test_preflight.py
         env:
@@ -299,6 +306,11 @@ jobs:
           persist-credentials: false
       - name: Remove unused hosted .NET SDK before workload; retain evidence
         run: python3 scripts/ci/minimize-runner.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Upgrade global npm from the verified archive before workload
+        run: python3 scripts/ci/install-npm.py
       - id: bases
         run: |
           python3 -c 'import json,os; d=json.load(open("scripts/ci/images.lock.json")); f=open(os.environ["GITHUB_OUTPUT"],"a"); [f.write(k+"="+v+"\n") for k,v in d.items()]'
@@ -501,6 +513,11 @@ jobs:
           persist-credentials: false
       - name: Remove unused hosted .NET SDK before workload; retain evidence
         run: python3 scripts/ci/minimize-runner.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Upgrade global npm from the verified archive before workload
+        run: python3 scripts/ci/install-npm.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: offline-provenance-backend-${{ github.run_attempt }}
@@ -546,6 +563,11 @@ jobs:
           persist-credentials: false
       - name: Remove unused hosted .NET SDK before workload; retain evidence
         run: python3 scripts/ci/minimize-runner.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Upgrade global npm from the verified archive before workload
+        run: python3 scripts/ci/install-npm.py
       - name: Install checksum-pinned scanner
         run: sh scripts/ci/install-trivy.sh "$RUNNER_TEMP/homecloud-trivy"
       - name: Scan pinned linux/amd64 base, including unfixed vulnerabilities
@@ -645,6 +667,13 @@ jobs:
           persist-credentials: false
       - name: Remove unused hosted .NET SDK before workload; retain evidence
         run: python3 scripts/ci/minimize-runner.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Upgrade global npm from the verified archive before workload
+        run: python3 scripts/ci/install-npm.py
+      - name: Verify excluded audit path before reading history
+        run: python3 scripts/ci/check-excluded-history.py
       - name: Pinned gitleaks; full reachable history, forbidden audit excluded before reading
         shell: bash
         run: |
@@ -653,7 +682,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
           mkdir "$RUNNER_TEMP/gitleaks-evidence"
           set +e
-          "$RUNNER_TEMP/gitleaks" git --redact=100 --exit-code 42 --report-format json --report-path "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --log-opts="--all -- . :(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md" .
+          "$RUNNER_TEMP/gitleaks" git --redact=100 --exit-code 42 --report-format json --report-path "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --log-opts="--full-history --all -- . :(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md" .
           scanner_result=$?
           set -e
           python3 scripts/ci/secret-findings.py --report "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --scanner-exit "$scanner_result" --output "$RUNNER_TEMP/gitleaks-evidence/classification.json"
@@ -691,6 +720,11 @@ jobs:
           persist-credentials: false
       - name: Remove unused hosted .NET SDK before workload; retain evidence
         run: python3 scripts/ci/minimize-runner.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Upgrade global npm from the verified archive before workload
+        run: python3 scripts/ci/install-npm.py
       - name: Export exact pinned amd64 artifact without registry writes
         run: |
           sudo apt-get update
