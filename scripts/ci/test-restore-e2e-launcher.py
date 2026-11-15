@@ -28,6 +28,8 @@ elif a[:2]==['image','inspect']:
             value='sha256:'+'1'*64
             if os.environ.get('HC_TEST_SUBSTITUTION') and a[2]=='homecloud-restore-e2e-backend:local':
                 value='sha256:'+'2'*64
+            if os.environ.get('HC_TEST_STUB_SUBSTITUTION') and a[2]=='homecloud-restore-e2e-stub:local':
+                value='sha256:'+'2'*64
             print(value)
 elif a[0]=='build' and a[-1]=='-':
     sys.stdin.buffer.read()
@@ -105,6 +107,27 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any(call[0] == "build" and call[-1] == "backend" for call in calls))
         self.assertIn(["tag", "retained-candidate", "homecloud-restore-e2e-backend:local"], calls)
+
+    def test_digest_stub_crosses_save_load_as_exact_id_checked_tag(self):
+        reference = 'node:qualified@sha256:' + 'a' * 64
+        result, calls = self.invoke(HOMECLOUD_E2E_STUB_IMAGE=reference)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        identity = 'sha256:' + '1' * 64
+        self.assertIn(['tag', identity, 'homecloud-restore-e2e-stub:local'], calls)
+        exported = next(call for call in calls if call[0] == 'save')
+        self.assertIn('homecloud-restore-e2e-stub:local', exported)
+        self.assertNotIn(reference, exported)
+        nested = next(call for call in calls if '--privileged' in call)
+        self.assertIn('HOMECLOUD_E2E_STUB_IMAGE_ID=' + identity, nested)
+        self.assertIn('HOMECLOUD_E2E_STUB_IMAGE=homecloud-restore-e2e-stub:local', nested)
+        source = (ROOT / 'scripts/ci/test-restore-e2e-local.sh').read_text()
+        self.assertLess(source.index('docker load'), source.index('Expected loaded stub image ID'))
+        self.assertLess(source.index('Expected loaded stub image ID'), source.index('=== NESTED RESOURCE LIMIT PREFLIGHT ==='))
+
+    def test_stub_tag_substitution_stops_before_build_or_run(self):
+        result, calls = self.invoke(HC_TEST_STUB_SUBSTITUTION='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] in ('build', 'run', 'save') for call in calls))
 
     def test_historical_mode_has_distinct_flag_and_does_not_select_encrypted(self):
         result, calls = self.invoke(("--historical-schema-only",))

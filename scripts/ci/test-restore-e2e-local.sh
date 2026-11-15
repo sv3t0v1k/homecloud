@@ -102,6 +102,9 @@ done
 
 test "$READY" = 1
 docker load
+test "$(docker image inspect "$HOMECLOUD_E2E_STUB_IMAGE" --format '{{.Id}}')" = "${HOMECLOUD_E2E_STUB_IMAGE_ID:?Expected loaded stub image ID}"
+test "$(docker image inspect "$HOMECLOUD_E2E_STUB_IMAGE" --format '{{.Os}}/{{.Architecture}}')" = "$HOMECLOUD_E2E_PLATFORM"
+echo "PASS: nested stub image matches exact exported ID $HOMECLOUD_E2E_STUB_IMAGE_ID"
 
 echo "=== NESTED RESOURCE LIMIT PREFLIGHT ==="
 # Exercise the same resource controls that restore's isolated PostgreSQL and

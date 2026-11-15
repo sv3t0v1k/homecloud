@@ -63,7 +63,7 @@ BACKEND_IMAGE=fixture
 RECOVERY_STORAGE_TARGET="$2"
 recovery_storage_assert_clean
 '''
-        with tempfile.TemporaryDirectory(dir='/private/tmp') as tmp:
+        with tempfile.TemporaryDirectory(prefix='hc-restore-storage-') as tmp:
             directory=Path(tmp)
             run=lambda:subprocess.run(['bash','-c',shim,'fixture',str(helper),tmp],capture_output=True,text=True)
             self.assertEqual(run().returncode,0)

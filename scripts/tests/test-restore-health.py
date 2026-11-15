@@ -79,7 +79,7 @@ STORAGE_VOLUME=fixture; BACKEND_IMAGE=fixture
         self.assertIsNotNone(match)
         # The actual probe runs with a module shim, never a network connection.
         stub="const Module=require('module'),events=require('events');const old=Module._load;Module._load=function(id,...args){if(id==='http')return {get(){const pending=setInterval(()=>{},1000);const q=new events.EventEmitter();q.setTimeout=()=>q;q.destroy=error=>{clearInterval(pending);q.emit('error',error);};return q;}};return old.call(this,id,...args);};"
-        with tempfile.TemporaryDirectory(dir='/private/tmp') as tmp:
+        with tempfile.TemporaryDirectory(prefix='hc-restore-health-') as tmp:
             module=Path(tmp)/'http-fixture.cjs';module.write_text(stub)
             start=time.monotonic()
             try:

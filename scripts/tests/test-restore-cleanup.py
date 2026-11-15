@@ -10,7 +10,7 @@ class Cleanup(unittest.TestCase):
  def test_owned_only_and_read_only_zero_docker(self):
   text=(ROOT/'scripts/tests/test-restore-safety.sh').read_text()
   start=text.index('OWNED_TEST_VOLUMES=()');end=text.index('trap cleanup EXIT',start)
-  with tempfile.TemporaryDirectory(dir='/private/tmp') as tmp:
+  with tempfile.TemporaryDirectory(prefix='hc-restore-cleanup-') as tmp:
    p=Path(tmp);log=p/'calls';fake=p/'docker'
    fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$MOCK_LOG"\ncase "$*" in "volume ls"*) echo unrelated-sentinel-volume;; esac\n');fake.chmod(0o700)
    env=dict(os.environ,PATH=tmp+':'+os.environ['PATH'],MOCK_LOG=str(log))

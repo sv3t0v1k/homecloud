@@ -85,3 +85,16 @@ test('both PR fast tests and full qualification execute this routing regression'
     assert.match(runs, /node --test scripts\/ci\/test-recovery-workflow\.cjs/);
   }
 });
+
+test('clean CI builds real production modules before spawning unit and PG crash workers', () => {
+  for (const filename of ['ci-v2-fast.yml', 'ci.yml']) {
+    const jobs = read(filename).jobs;
+    for (const name of ['pr-fast-backend', 'backend']) {
+      const steps = jobs[name].steps;
+      const compile = steps.findIndex(step => step.run === 'npm run build' && step['working-directory'] === 'backend');
+      const tests = steps.findIndex(step => (step.run || '').includes('npm test -- --runInBand'));
+      assert.ok(compile >= 0 && compile < tests, `${filename}/${name}: real compiled crash-worker dependency missing`);
+      assert.equal(steps[compile]['continue-on-error'], undefined);
+    }
+  }
+});

@@ -32,6 +32,13 @@ for image in postgres:16-alpine "$STUB_IMAGE"; do
   docker image inspect "$image" >/dev/null
   test "$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')" = "$PLATFORM"
 done
+# Docker save/load preserves RepoTags, not registry digest references. Pin the
+# exact inspected config ID behind a fixture tag before crossing into DinD.
+STUB_IMAGE_ID="$(docker image inspect "$STUB_IMAGE" --format '{{.Id}}')"
+[[ "$STUB_IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]]
+docker tag "$STUB_IMAGE_ID" homecloud-restore-e2e-stub:local
+STUB_IMAGE=homecloud-restore-e2e-stub:local
+test "$(docker image inspect "$STUB_IMAGE" --format '{{.Id}}')" = "$STUB_IMAGE_ID"
 # Own the fixture base build so a preceding AMD qualification cannot leave a
 # stale/emulated DinD base behind. This does not build another product image.
 docker build --platform "$TOOL_PLATFORM" -t homecloud-restore-e2e-runner:local \
@@ -68,6 +75,7 @@ docker save homecloud-restore-e2e-backend:local postgres:16-alpine "$STUB_IMAGE"
   | docker run --rm -i --privileged --cgroupns=private --network none \
       --platform "$TOOL_PLATFORM" \
       -e "HOMECLOUD_E2E_STUB_IMAGE=$STUB_IMAGE" \
+      -e "HOMECLOUD_E2E_STUB_IMAGE_ID=$STUB_IMAGE_ID" \
       -e "HOMECLOUD_E2E_ENCRYPTED=$ENCRYPTED" \
       -e "HOMECLOUD_E2E_HISTORICAL_SCHEMA=$HISTORICAL_SCHEMA" \
       -e "HOMECLOUD_E2E_FAULT_CASE=$FAULT_CASE" \

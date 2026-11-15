@@ -56,6 +56,9 @@ jobs:
       - run: python3 scripts/ci/test-test-routing.py
       - name: Route all unit suites, including critical smoke
         run: python3 scripts/ci/test-routing.py list unit > backend-unit-suites.txt
+      - name: Compile production code for real crash workers
+        run: npm run build
+        working-directory: backend
       - name: Run unit suites without PostgreSQL or bench suites
         shell: bash
         working-directory: backend
@@ -68,8 +71,6 @@ jobs:
       - run: npm run lint
         working-directory: backend
       - run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
-        working-directory: backend
-      - run: npm run build
         working-directory: backend
       - run: node test/file-type-compiled-runtime.cjs
         working-directory: backend
@@ -120,6 +121,9 @@ jobs:
         working-directory: backend
       - name: Route PostgreSQL, concurrency, filesystem and bench suites
         run: python3 scripts/ci/test-routing.py list integration > backend-integration-suites.txt
+      - name: Compile production code for real crash workers
+        run: npm run build
+        working-directory: backend
       - name: Integration suites as unprivileged user
         shell: bash
         run: |
