@@ -120,7 +120,7 @@ jobs:
               nginx -v
               packages="$(apk info -v)"
               printf "%s\n" "$packages"
-              for expected in brotli-libs-1.2.1-r0 curl-8.23.0-r0 libcurl-8.23.0-r0 libx11-1.8.14-r0 libexpat-2.10.0-r0 pcre2-10.49-r0 tiff-4.7.2-r0; do
+              for expected in brotli-libs-1.2.1-r0 curl-8.23.0-r0 libcurl-8.23.0-r0 libx11-1.8.14-r0 libexpat-2.10.0-r0 libxslt-1.1.43-r4 pcre2-10.49-r0 tiff-4.7.2-r0; do
                 printf "%s\n" "$packages" | grep -Fx "$expected" >/dev/null
               done' 2>&1 | tee evidence/runtime-versions.txt
 
