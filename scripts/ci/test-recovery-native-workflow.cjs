@@ -268,3 +268,62 @@ test('native recovery binds the requested source to the PR event before checkout
     assert.doesNotMatch(result.stdout, /PASS:/, name);
   }
 });
+
+
+test('native recovery verifies exact backend context immediately before build', () => {
+  const context = steps.find(step => step.id === 'context');
+  const build = steps.find(step => step.id === 'offline');
+  const source = steps.find(step => step.id === 'source');
+  const builder = steps.find(
+    step => (step.uses || '').startsWith('docker/setup-buildx-action@')
+  );
+
+  assert.ok(context);
+  assert.ok(build);
+  assert.ok(source);
+  assert.ok(builder);
+
+  assert.equal(context.name, 'Verify exact backend context before build');
+  assert.equal(context.shell, 'bash');
+  assert.equal(context.if, undefined);
+  assert.equal(context['continue-on-error'], undefined);
+
+  assert.equal(
+    context.env.EXPECTED_SOURCE_SHA,
+    '${{ github.event.pull_request.head.sha }}'
+  );
+
+  assert.equal(
+    build.with.context,
+    './backend'
+  );
+
+  assert.ok(steps.indexOf(source) < steps.indexOf(context));
+  assert.ok(steps.indexOf(builder) < steps.indexOf(context));
+  assert.equal(steps.indexOf(context) + 1, steps.indexOf(build));
+
+  assert.match(context.run, /set -euo pipefail/);
+  assert.match(context.run, /python3 -B scripts\/ci\/verify-recovery-context\.py/);
+  assert.match(context.run, /--commit "\$EXPECTED_SOURCE_SHA"/);
+  assert.match(context.run, /--output backend\.context\.binding\.json/);
+  assert.match(context.run, /test -s backend\.context\.binding\.json \|\| exit 1/);
+
+  const evidence = named('Verify recovery evidence files');
+  assert.match(evidence.run, /backend\.context\.binding\.json/);
+
+  const upload = steps.find(
+    step => (step.uses || '').startsWith('actions/upload-artifact@')
+  );
+
+  assert.ok(
+    upload.with.path.split('\n').includes('backend.context.binding.json')
+  );
+
+  assert.equal(upload.with['if-no-files-found'], 'error');
+
+  const commands = read('ci-v2-fast.yml')
+    .jobs['pr-fast-backend'].steps
+    .map(step => step.run || '').join('\n');
+
+  assert.match(commands, /python3 -B scripts\/ci\/test-recovery-context\.py/);
+});

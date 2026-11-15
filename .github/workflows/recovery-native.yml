@@ -79,6 +79,17 @@ jobs:
         with:
           version: v0.38.0
           driver-opts: image=moby/buildkit@sha256:98cc6a3fc46220d00f8224ae483f3274fc874e9be8d7dd1e2e2c5481209228b5
+      - name: Verify exact backend context before build
+        id: context
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 -B scripts/ci/verify-recovery-context.py \
+            --commit "$EXPECTED_SOURCE_SHA" \
+            --output backend.context.binding.json
+          test -s backend.context.binding.json || exit 1
       - name: Build offline OCI provenance candidate
         id: offline
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
@@ -178,6 +189,7 @@ jobs:
         shell: bash
         run: |
           for file in \
+            backend.context.binding.json \
             offline-backend.json \
             offline-backend-metadata.json \
             backend.native-host.json \
@@ -190,6 +202,7 @@ jobs:
         with:
           name: native-recovery-evidence-${{ github.run_attempt }}
           path: |
+            backend.context.binding.json
             offline-backend.json
             offline-backend-metadata.json
             backend.native-host.json
