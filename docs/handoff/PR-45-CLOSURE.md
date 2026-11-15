@@ -1,13 +1,13 @@
 # HomeCloud — технический handoff: завершение PR #45
 
-**Актуальный checkpoint (15 ноября 2026): NOT READY, раздел37; installed TEST plan — раздел35. Все6 source commits опубликованы ordinary push, HEAD c1673d7, PR DRAFT. Actual native AMD64/OCI run43608761566 завершился FAIL: native product primitives/maintenance/copy прошли, но выявлены CI fixture и security baseline failures. Подготовлены12-path fixes двумя группами, текущий manifest118. Для Git commits требуется обычный Terminal; normal push из sandbox уже подтверждён. Старый publication helper не повторять. Разрешение на последующие commits/push сохраняется; B01/B02 OPEN; merge/deploy/release запрещены.**
+**Актуальный checkpoint (15 ноября 2026): NOT READY, раздел38; installed TEST plan — раздел35. Опубликован HEAD7068d8d, PR DRAFT. Native Linux/AMD64: unit1149, integration427, plain/encrypted Backup→Restore, historical7/7 и fault7/7 PASS; product runtime/deps/builder images0 HIGH/CRITICAL, exact retained source/config/platform проверены. Все24 jobs run43666352040 завершены: overallFAIL, collectorCOVERED/errors0/NO_GO, required terminalFAIL. Configuration Python3.12 TLS defect исправлен локально; подготовлены verified Trivy0.76.2 и CI dependency/bootstrap fixes, manifest129. Эти dirty bytes ещё не CI-qualified. Next bounded publisher готов: раздел38.9, ordinary Terminal нужен из-за read-only Git metadata. Baseline PG/BuildKit/other tooling/rootfs BLOCKED; concrete архитектурный contract38.6 требует отдельного решения по17. Разрешение на обычные checkpoint commits/push сохраняется; B01/B02 OPEN; merge/deploy/release запрещены.**
 
 **Дата:** 12 ноября 2026 г.
 **Проект:** HomeCloud
 **Репозиторий:** `sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud`
 **Рабочая директория:** `~/Desktop/HomeCloud`
 **Рабочая ветка:** `миниатюры-файлов-v1`
-**Последний подтверждённый HEAD:** `ee84ddd6cb054725f06b396e6cb10ba5fe67d622`
+**Исходный HEAD security review:** `ee84ddd6cb054725f06b396e6cb10ba5fe67d622`; текущий опубликованный HEAD — раздел38.
 **PR:** #45 → `test`
 **Base предыдущего security review:** `85578280b40d485c2765e961e6ec4f591d43f02c`
 
@@ -2514,3 +2514,227 @@ Backend environment artifact14119785067 downloaded through GitHub app, ZIP SHA25
 - `51a9325f15dedff32e8887222f954cbac1261f04` Обновить уязвимые системные библиотеки образов
 
 Snapshot `287deb2427c58d7502370fa1aa8f067b7dc4b62dcae56d11be209c353b6766fd`; not final qualification; B01/B02 OPEN.
+
+## 38. Второй опубликованный checkpoint и фактическая квалификация (15 ноября)
+
+### 38.1. Публикация и scope
+
+Пользователь выполнил ordinary Terminal helper. Последовательность после c1673d7:
+
+| Commit | Назначение |
+|---|---|
+|`b9e68fd355ec046f95fb5720e3f277807dba83a8`|9 fixture/build-order paths |
+|`51a9325f15dedff32e8887222f954cbac1261f04`|3 production image/toolchain paths |
+|`7068d8dc08c7cc19b1c74701f0ae85193e5ac233`|Два handoff evidence файла |
+
+Actual local branch/HEAD и remote PR проверены; PR open/DRAFT, base85578280,35 commits/157 changed files. Все118 source files совпали одновременно с working bytes и HEAD Git blobs; snapshot `287deb2427c58d7502370fa1aa8f067b7dc4b62dcae56d11be209c353b6766fd`. Own postcommit JSON изменил только head/git/ci/resume/publication/cohort metadata. Index пуст; три прежних out-of-scope untracked файла сохранены и не включаются в commits. Оба старых helper уже выполнили свою задачу; не запускать их для новых dirty source bytes.
+
+### 38.2. Реальные Actions на HEAD7068d8d
+
+| Run | Состояние при checkpoint |
+|---|---|
+|`43666352040` Fast + Integration, including mandatory reusable qualification |IN_PROGRESS; configuration FAIL и baseline security failures уже подтверждены |
+|`43666351951` frontend runtime qualification |PASS |
+|`43666351944` ingress runtime qualification |PASS |
+|`43666351939` Phase3 host qualification/failure drills |PASS, synthetic/disposable supporting scope; full installed TEST NOT_RUN |
+
+Parent backend job132666477577: **33 suites/427 PostgreSQL integration PASS/0 SKIP**. Parent unit132666477615: **80 suites/1149 PASS/0 SKIP**. В reusable jobs132666477731/132666477692 те же427/1149 assertions прошли, затем jobs отказали на mandatory environment scan. Это устранило прежний dist-order runtime defect, но не означает успешный qualification gate.
+
+**Обновление live evidence:** backend job132666477696 успешно завершила `Load the exact OCI candidate`, production native dependencies, real copy recovery/maintenance и `Real Backup Restore in an isolated nested Docker daemon`. Все4 sequential modes этого step вернули0. Job перешла к actual retained image scan; detailed per-mode/matrix PASS будет подтверждён по полному логу после завершения job, а не только по зелёному step.
+
+Production frontend retained binding artifact14141663700: exact source7068d8d, linux/amd64, platform digest `sha256:779a35648ebd36631b98b73a4097dcd61ef05f7048d3290146052fb6004d0310`, config `sha256:7498c3a661f3c83feb01a3c1b918b86056a9adfda0ea617df3d4b01b31ba0e59`. Loaded binding/inspect и native-host evidence сохранены. Runtime image scan14141873164:0 HIGH/CRITICAL; deps/builder scans14142540535:по5 MEDIUM,0 HIGH/CRITICAL; cache proof `CACHED_RUNTIME_BUILD_OPERATIONS` обоих stages. Standalone frontend run имеет собственную сборку; её digest нельзя смешивать с reusable retained pair. Общий pair/production gate не принят.
+
+10 small evidence ZIPs downloaded, SHA256 каждого совпал с GitHub artifact digest. Raw metadata: `/tmp/homecloud-pr45-ci-7068d8d/<artifact-ID>/`. Это supporting cache; summary/evidence identity сохраняются в JSON, product archives повторно не собирались для доказательства binding.
+
+### 38.3. Новый runtime defect и локальные исправления
+
+Configuration132666477444 и nested132666477661 остановились на `test_cert_real_expiry_mapping_and_recovery`: ожидался warning exit1, получен invalid exit3. Причина подтверждена source и воспроизведена с actual Python3.14: `ssl.match_hostname` отсутствует,5 lifecycle tests ERROR до исправления. Python официально удалил API в3.12: `https://docs.python.org/3.12/whatsnew/3.12.html#ssl`.
+
+Production `certificate-lifecycle.py` использует OpenSSL `verify -verify_hostname`/`-verify_ip` вместе с прежними purpose/CA/expiry/private-key checks. Требуется SAN соответствующего типа, чтобы запретить CN fallback; partial-label wildcards отвергаются, разрешён full leftmost DNS wildcard. Никакого unverified hostname fallback. OpenSSL contract: `https://docs.openssl.org/3.0/man1/openssl-verification-options/`. macOS LibreSSL CLI не поддерживает эти verify flags: local positive tests выполнены с explicit Homebrew OpenSSL3 PATH, production Linux uses OpenSSL3. Legacy CLI отказывает fail-closed.
+
+Lifecycle regression:17/17 PASS отдельно на Python3.9 и3.14, реальные self-signed test certs, including wrong SAN/CN, IP-vs-DNS, wildcard boundary, expired/untrusted/mismatched-key. Lifecycle suite добавлена в mandatory recovery contracts. Установка real age перенесена до scheduled contracts в обоих CI routes: observed current CI age branch SKIP больше не должен возникать. Local loopback/scheduled runtime в sandbox не переобъявлен PASS; нужен следующий actual CI.
+
+Ещё6 host jobs reusable CI теперь до workload используют существующий checksum-pinned npm11.21.2 installer: configuration/image-build/provenance-pair/base-image-scan/secrets/support-images. Перед bootstrap выбран exact Node24.21.0 через уже применяемый pinned setup-node action, как в работающих frontend/security jobs; установка не полагается на writable system prefix или случайную provider Node version. Их actual executed global npm давал9 CRITICAL/210 HIGH; provider assurance не распространяется на этот отдельный component gate. Installed manifest/metadata не удаляются, scope scan не сокращается. Reusable secrets gate дополнительно проверяет excluded-path history и передаёт `--full-history --all`, как обязательный parent gate. YAML regressions8 PASS; severity/branch gates сохранены.
+
+### 38.4. Проверенный кандидат scanner и upstream baseline
+
+Official Trivy0.76.2 Linux release archive SHA256 `bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf` сверена с GitHub release API; actual downloaded bytes совпали. Official OCI index `sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb`, AMD64 child `sha256:6fa071ef8daa2e58b90cbf1710bedca91adbb3bf98693533226f442035b836a6`, config `sha256:52389f537db07a4dc0d289f61893ec791a3244d2f5cf21c819a2e874d72f3764`. Manifest/config/layer bytes SHA verified, config linux/amd64. OCI binary и release archive binary byte-for-byte identical; binary SHA256 `6a972c69606c7b3ea4c6bdcc6fc9332ea9ad38381624310c1e85cc77345909f3`.
+
+Build inventory: Go1.27.3, go-jose/v4.1.6, x/net0.62.0. Actual static Linux binary scan с independently checksum-verified official Darwin/ARM64 Trivy0.76.2 и fresh official DB:0 CRITICAL/0 HIGH/2 MEDIUM/2 UNKNOWN. Это **static preflight на Mac, не Linux execution qualification**. В9 source/test files согласованно обновлены download checksum, OCI digest и exact-version evidence gates; old0.76.0 explicitly refused. Installer10, scan-evidence10, environment28, skopeo35, policy15, archive-tamper1 tests PASS; npm6, secret-findings22, fast gate6, CI gate5, host-verifier18, root-boundary26 PASS. Шесть immutable host helper pins совпадают и unchanged; verifier/anchors не перепинены.
+
+Свежие официальные upstream candidates также actual scanned по verified linux/amd64 config/digests, без запуска контейнеров:
+
+| Candidate (не применён) | Exact AMD64 platform digest | Static security result |
+|---|---|---|
+|PostgreSQL16.16-alpine3.24 |`sha256:a2f7e20374cd8fd8ed4a588b79549e10589bea7b1686e77922f5ac741b80b8a1`|1 CRITICAL/25 HIGH, все в gosu Go1.24.6; OS0 HIGH |
+|BuildKitv0.35.0 |`sha256:a521fc1fd903a46c611c733dd692548512232fba2e0386d6055846a903d05a71`|96 HIGH:4 CNI binaries Go1.25.7, runc x/net0.55.0, buildkitd go-archive0.2.0 |
+
+Official Compose5.7.1 release binary (не применён), SHA256 `af426722a8af5de812fcee30cc1c39f0639f5f723cbadefb25e5d4db054064cf`, также скачан и digest verified. Static scan actual executable ELF:1 HIGH/3 MEDIUM/1 UNKNOWN; compilerGo1.27.4, но x/net0.60.0 остаётся уязвимым для CVE-2026-78661 (fixed0.62.0). Current Compose pin не изменён. Gitleaks release API latest всё ещё8.30.1; reusable secrets job132666477699 actual executed-tools aggregate (Trivy+Gitleaks) содержит1 CRITICAL/41 HIGH, отдельно global npm9 CRITICAL/210 HIGH. Secret content scan прошёл, эти tooling findings не исключены из severity policy.
+
+Новые tag names не устраняют gate; production/worker pins этих images не менялись. Existing gosu disposition не продлена и не расширена. Backend CI strict rootfs поactual wave2 остаётся6 CRITICAL/981 HIGH, tools3 HIGH. Применять provider assurance к injected `/__t` внутри strict backend container или скрывать kernel-header/pkg inventory запрещено. Для custom rebuild/нового isolation contract требуется отдельный reviewable technical contract, как в37.4; до его исполнения baseline BLOCKED.
+
+### 38.5. Текущий checkpoint и следующий шаг
+
+Новые fixes ещё dirty и не выполнялись Actions. Manifest129: `a9cf174ed730a05c19f108f0019dbf30715b9a254d15ae9ce329ef943baf99a2`; published118 сохранён отдельно. Actual wave2 native Backup/Restore и final gates ещё нужно дочитать до завершения; не останавливать run ради публикации, если это потеряет current evidence. Подготовить следующий bounded Terminal helper только после анализа итогового runtime result; разрешение на ordinary commits/push уже дано. Git metadata read-only; повторная sandbox escalation и альтернативная object database не применяются. Local `test-check-excluded-history.py`:5 PASS/1 ERROR на actual `git hash-object -w` из-за read-only main `.git`; unchanged published parent/full-history checks фактически PASS.
+
+Installed TEST: plan35 остаётся NOT_RUN; approval на установку/initial adoption отсутствует. Все new operational bytes должны отвергаться старым verifier. B01/B02 OPEN до mandatory qualification и independent exact-final-HEAD review. Никаких merge, undraft, deploy, release или новых рабочих копий.
+
+### 38.6. Reviewable contract для оставшегося baseline remediation
+
+Это проект следующей технической работы, **не новый waiver и не выполненная квалификация**. Current upstream PG16.16 и BuildKit0.35.0 были проверены и не прошли strict severity policy; простое обновление tags не является решением.
+
+1. **PostgreSQL candidate:** исходный official16.16-alpine3.24 digest/config выше, unchanged PostgreSQL engine/entrypoint; отдельно воспроизводимо собрать exact gosu1.19 source revision с verified Go1.27.3 toolchain и полной go.sum/vendor closure. Сохранить исходные package/build metadata, старый и новый binary SHA, source/provenance/SBOM. Не удалять gosu/stdlib build info. Требуются0 HIGH/CRITICAL raw image scan, actual user-switch/signal/entrypoint tests, fresh DB/migrations, plain/encrypted/historical/fault Restore. Candidate пока не создан; никакой registry publication или production pin replacement не выполнены.
+2. **BuildKit candidate:** exact official source0.35.0, reviewable минимальный dependency patch go-archive>=0.3.0 и runc x/net>=0.62.0; заново собрать также все4 CNI binaries с fixed compiler, а не только buildkitd. Полная dependency/source closure и все resulting binary SHA обязательны; vendored metadata остаётся в scan scope. Нужны current raw scan0 HIGH/CRITICAL, rootful native AMD64 worker self-tests, реальная OCI/provenance export, полный stage graph/cache proof, негативные повтор/пропуск RUN/COPY и соответствие retained candidate runtime. Existing worker pin не менять до квалификации нового точного artifact.
+3. **Controlled backend CI rootfs:** текущие GHA job containers содержат provider-injected `/__t`, хотя строгая policy рассматривает их как часть controlled container. Предпочтительный новый execution contract — isolated child runner только с reviewed source/dependencies/test data/report outputs, без inherited Docker socket/toolcache/actions credentials; unprivileged unit/integration/native child workload и actual post-workload scan внутри той же immutable closure. Host rootfs по-прежнему имеет полное raw evidence и существующую provider identity assurance. Требуются реальный inventory/mount/process/tool evidence,0 HIGH/CRITICAL strict child OS/components/tools, retained source/image/run binding; удаление `/__t` из skip list без изменения execution isolation не допускается. Для compiler headers без FixedVersion нужен реально patched package/distro либо отдельный независимый exact-package exposure decision; не ignore-unfixed.
+4. **Other executed tools:** Trivy candidate подготовлен; current Compose/Gitleaks binaries отдельно остаются в strict executed-tool scan. Если latest publisher binary всё ещё содержит vulnerable Go deps, нужен отдельный reproducible tool candidate source/build contract; zero severity verdict по имени latest недопустим. Host jobs сначала обновляют actual used npm из verified existing archive, затем исполняют workload, затем сохраняют full actual inventories и scans. Version mismatch, stale DB, missing tool/OS inventory должны отказать как прежде.
+5. **Admission/publication:** custom candidates до независимого artifact review могут существовать только как disposable retained CI evidence. Переход на новые production/worker pins — отдельный reviewable source commit с bindings, без deploy/release. Operational host boundary остаётся immutable: old verifier должен отклонить изменение, separate manual qualification/install35 требует отдельного согласования. Current PR checkpoint не считается owner-approved vulnerability disposition.
+
+Отдельная owner/reviewer оценка нужна для выбора custom artifact и нового CI execution contract; предложенные изменения gate semantics/host verifier не включены в dirty fixes. До actual qualification этот пункт остаётся BLOCKED, не PASS по плану.
+
+### 38.7. Локальная верификация новых исправлений
+
+| Команда | PASS/FAIL/SKIP |
+|---|---|
+|`PATH=/opt/homebrew/opt/openssl@3/bin:$PATH /usr/bin/python3 -B scripts/tests/test-certificate-lifecycle.py`|17/0/0 |
+|`PATH=/opt/homebrew/opt/openssl@3/bin:$PATH /opt/homebrew/bin/python3.14 -B scripts/tests/test-certificate-lifecycle.py`|17/0/0 |
+|`node --test scripts/ci/test-recovery-workflow.cjs`|8/0/0 |
+|`python3 -B scripts/ci/test-install-oci-scanner.py`|10/0/0 |
+|`python3 -B scripts/ci/test-scan-evidence.py`|10/0/0 |
+|`python3 -B scripts/ci/test-environment-evidence.py`|28/0/0 |
+|`python3 -B scripts/ci/test-skopeo-closure.py`|35/0/0 |
+|`python3 -B scripts/ci/test-policy-coverage.py`|15/0/0 |
+|`python3 -B scripts/ci/test-trivy-archive.py`|1/0/0 |
+|`python3 -B scripts/ci/test-install-npm.py`|6/0/0 |
+|`python3 -B scripts/ci/test-secret-findings.py`|22/0/0 |
+|`python3 -B scripts/ci/test-ci-v2-fast-gate.py`|6/0/0 |
+|`python3 -B scripts/ci/test-ci-gate.py`|5/0/0 |
+|`python3 -B scripts/ci/test-update-host-verify.py`|18/0/0 |
+|`python3 -B scripts/ci/test-root-boundary.py`|26/0/0 |
+|`python3 -B scripts/ci/test-test-routing.py`|5/0/0 |
+|`python3 -B scripts/ci/test-check-excluded-history.py`|5 PASS/1 ERROR/0 SKIP; main `.git` write denied, не кодовый regression и не PASS |
+|`python3 -B /tmp/homecloud-pr45-publish-wave3.py --self-test`|5/0/0 |
+|`python3 -B /tmp/homecloud-pr45-publish-wave3.py --verify`|Read-only PASS:129 SHA,15-path scope, index/history, out-of-scope hashes |
+|`bash -n scripts/ci/install-trivy.sh scripts/ci/install-oci-scanner.sh scripts/ci/test-recovery-contracts.sh`; `git diff --check`|PASS,0 errors |
+
+Проверки времени до исправления не скрыты: initial Python3.14 lifecycle10 tests имели5 ERROR на removed API; после исправления suite расширена до17 PASS. Первоначальный parallel candidate BuildKit scan отказал на cache lock без пригодного report; повтор с отдельным DB/cache дал BLOCKED96 HIGH. Первоначальный static Compose scan без executable mode дал INVALID/missing inventory; с нормальным executable mode тот же checksum-verified binary дал BLOCKED1 HIGH. Эти retries не меняли severity/ignore flags и не являются native execution.
+
+Все новые исходники ограничены15 tracked paths:2 TLS script/tests,9 scanner pin/evidence/tests,4 CI/workflow/contract paths. Полный список и3 Russian logical commit groups — `next_checkpoint_groups` JSON. Дополнительно изменены только2 handoff files;3 старых untracked файла не затронуты. New source snapshot129 указан в38.5. В текущей сессии Git commits ещё не созданы: `.git` read-only. Перед следующим push helper требует recorded final Actions conclusion и actual remote run completion, затем повторяет remote/DRAFT/protection/fetch/scope/hash checks; обычный push единственной текущей ветки, без force/tags.
+
+### 38.8. Полный native AMD64 лог: функциональная квалификация PASS
+
+Backend job132666477696 завершилась FAIL **только** на `Mandatory actual CI environment qualification`. Весь native workload, retained runtime scan и cached deps/builder stage qualification прошли. Full decoded job log скачан через GitHub app: `/tmp/homecloud-pr45-native-wave2.log`,878432 bytes, SHA256 `f76e3305542c28cf2dbb7664f2d51cb95bdbe8abb739a5d2ff23368f6b626eea`. Лог сохранён с точным исходным числом UTF-16 characters и trailing LF, не обрезан. Validator `/tmp/homecloud-pr45-validate-wave2-log.py` проверил actual output markers/JSON records, а не echoed shell commands; summary сохранён в JSON evidence.
+
+| Обязательный реальный workload | Результат на7068d8d |
+|---|---|
+|Plain Backup→Restore и historical root identity archive |PASS, actual API/download bytes/absence post-backup file, target marker dev/ino preserved |
+|Encrypted production Backup→Offsite→Restore |PASS, real age/keygen/coordinator, plaintext cleanup и completion markers |
+|Historical migration-prefix DB restore |7/7 PASS:7/8/9/10/11/13/15 tables→current17→actual API |
+|Restore fault matrix |7/7 PASS, включая5 kernel SIGKILL с exit-9 |
+|Maintenance supervisor, production image |5/5 PASS |
+|Offline copy recovery, actual PostgreSQL/production image |5/5 PASS |
+|Shared recovery SQL guards |8/8 PASS |
+|Actual restore validator/pg_dump/psql |7/7 PASS |
+|Native inherited/orphan/operator fence (unprivileged compiled-source CI) |13 PASS/0 FAIL/SKIP, parent job132666477615 |
+|Compiled dependency security/Sharp thumbnail runtime |7 PASS/0 FAIL/SKIP, тот же parent job |
+|Full backend unit / real PG+bench integration |1149 /427 PASS,0 SKIP; integration19 PG suites317 +14 bench suites110 |
+|Frontend actual CI unit/build/lint |434 PASS/0 FAIL/SKIP,37 files; FileThumbnail13 и thumbnailUrlBudget5 включены в эти434 |
+
+Все10 E2E launcher invocations имели один exact backend config `sha256:0842e631e90aec4322f688783a52e0d741484e1503d66cd2430ac36aa61d8497`; все10 подтвердили nested stub config binding и kernel-applied seccomp/memory/CPU/PID limits. Host — native Ubuntu24.04.5/x86_64, rootful Docker28.0.4, не Desktop/emulation. Production NAPI root/directory/devino/flock actual functional preflight PASS. Отдельный raw C syscall probe недоступен в slim runtime из-за отсутствия cc/ENOENT; его PASS не заявляется.
+
+| Fault | Durable phase | Retained phase | Restore exit | DB/storage file counts |
+|---|---|---|---|---|
+|partial-stop |INHIBITED |INHIBITED |1 |2/2 |
+|staged |STORAGE_STAGED |STORAGE_STAGED |-9 |2/2 |
+|db-restored |DB_RESTORED |DB_RESTORED |-9 |1/2 |
+|reconciled |RECONCILED |RECONCILED |-9 |1/1 |
+|ready-before-clear |READY |READY |-9 |1/1 |
+|ready-after-clear |READY |RESTART_FAILED |-9 |1/1 |
+|foreign-writer |INHIBITED |INHIBITED |1 |2/2 |
+
+Во всех7 actual records: ordinary new backend startup и conflicting readmission отказали, receipt/root/identity сохранены, DB quota/journal consistency подтверждена. `DB_RESTORED`1/2 — retained intermediate generation с inhibitor, не завершённый restore. Source helper SHA во всех7 совпал с actual HEAD file `eec0937a357884a7a927997f567274a0b11d563692fe431ab89d938de702aff9`; fault fixture helper затем восстановлен. Hardware powercut, TCP proxy fault и complete installed-host operator resume этими tests не квалифицируются.
+
+Backend production binding artifact14143109481, scan14143650947, stages14143925000 downloaded ZIP SHA matched API. Manifest `sha256:ac66bed763f1bcb997cb6df947d72f62994bad1eda1df044b071e9415e6ee7d8`; source7068d8d/config0842/LinuxAMD64 совпали с actual loaded inspect. Runtime4 MEDIUM, deps6 MEDIUM, builder13 MEDIUM/2 LOW, **0 HIGH/CRITICAL во всех3**. Обе cache proofs `CACHED_RUNTIME_BUILD_OPERATIONS`. Frontend binding/zero-HIGH stages —38.2. Это functional/native и exact-image evidence; общий production qualification остаётся NO_GO из-за отдельных открытых mandatory gates.
+
+Последующий image-build environment scan: executed tools6 HIGH и global npm9 CRITICAL/210 HIGH, jobFAIL. Host raw267 CRITICAL/5863 HIGH retained с существующей PLATFORM_ASSURANCE, не выдан как zero-findings gate. Provenance-pair job132678402065 после body перешла к своему mandatory environment scan; итоговые collector/required terminal ещё ожидаются. Source fixes15 paths уже подготовлены и проверены, итоговый run надо дочитать перед следующим ordinary checkpoint push.
+
+### 38.9. Итог фактического CI и готовая следующая публикация
+
+Run43666352040 полностью завершён **FAIL**:24 jobs,4 success/17 failure/3 expected skipped. Отдельные runs43666351951(frontend),43666351944(ingress),43666351939(host drills) завершены PASS. Все IDs относятся к7068d8d; текущий remote PR повторно проверен: open/DRAFT, base85578280,35 commits/157 changed files. Branch protection unchanged: required `ci-v2-fast-terminal`+`qualify`, strict/admin enforcement=true, force push=false.
+
+В таблице `R/` означает `recovery-qualification / qualify /`:
+
+| Job ID | Job | Итог |
+|---|---|---|
+|132666477444 |configuration |FAIL, scheduled cert1 failure/1 age skip |
+|132666477577 |backend |PASS,427 integration assertions |
+|132666477604 |frontend |PASS,434 assertions/build/lint |
+|132666477606 |secrets |PASS, full reachable Git history scan |
+|132666477615 |pr-fast-backend |PASS,1149 unit+13 fence+7 dependency runtime |
+|132666477661 |R/configuration |FAIL, scheduled cert и environment |
+|132666477692 |R/pr-fast-backend |FAIL только environment;1149/13/7 PASS |
+|132666477696 |R/image-build backend |FAIL только environment; весь native E2E/image/stage workload PASS |
+|132666477699 |R/secrets |FAIL только environment/tooling |
+|132666477713 |R/security frontend |FAIL только environment/tooling |
+|132666477719 |R/security backend |FAIL только environment/tooling |
+|132666477726 |R/frontend |FAIL только environment/tooling;434 assertions/build/lint PASS |
+|132666477731 |R/backend |FAIL только environment;427 assertions PASS |
+|132666477742 |R/image-build frontend |FAIL только environment; runtime/stages0 HIGH/CRITICAL |
+|132666477745 |R/support ingress |FAIL только environment; image scan PASS |
+|132666477768 |R/support postgres |FAIL, production scan/disposition/environment |
+|132666477772 |R/support buildkit |FAIL, worker scan/environment |
+|132666478764 |R/base-image-scan |SKIP, existing PR profile optional raw-base diagnostic |
+|132678402065 |R/provenance-pair |FAIL только environment; non-release pair manifest verified |
+|132681844354 |R/policy-coverage |FAIL, COVERED/errors0, security BLOCKED |
+|132682028188 |R/gate |FAIL, failed prerequisite propagated |
+|132682064621 |ci-v2-fast-terminal |FAIL, обязательный PR gate не обойдён |
+|132682094187 |test-pair |SKIP, публикация разрешена только protected test push |
+|132682094309 |test-image |SKIP, тот же write-only-on-test contract |
+
+Collector artifact14144251975 (ZIP SHA `02cb5aecf6975367e4db0c8949a5a145e3edd63df249b4a8e8c7498d13b9b085`) и pair collector14144341721 (`ab010b1a08a36122398b148178d6cf635bd3cdd6a0eabd2d8986e996a9d60999`) downloaded и SHA matched API. Actual `production-qualification.json`: source7068d8d, profilepull-request, policy`OWNER_APPROVED_NO_CVE_EXCEPTIONS`, coverage`COVERED`, errors[], status`BLOCKED`, production`NO_GO`. Все required artifact/environment inventories имеются; отказ не подменён missing-evidence объяснением. Полные summaries/pair manifest сохранены в JSON `ci.actual_wave2_collector`. Standalone green qualifies не подменяют failed required terminal.
+
+После source review подготовлены3 small logical commits (пока не созданы):
+
+1. **Сохранить проверку сертификатов в новых версиях Python** —2 TLS paths.
+2. **Обновить проверенный Trivy и сохранить строгую проверку доказательств** —9 scanner/evidence/test paths.
+3. **Подключить TLS и шифрование к обязательной квалификации** —4 CI/workflow/contract paths, включая early age, exact Node/npm и full-history secrets gate.
+
+Затем отдельный handoff evidence commit. Все15 actual source paths и129-file SHA manifest проверены; helper5 guard tests/readonly verification PASS, cached index empty, full diff-check PASS. Helper `/tmp/homecloud-pr45-publish-wave3.py` (не Git source) SHA256 `9c69a17aa23ca55221033a92bb5cf9ed79681e945b32ab93c504a9cfc5912b42`; dependency helper checksum закреплён. Он требует recorded final wave2 conclusion/actual completion, заново делает normal fetch/remote conflict/DRAFT/protection checks, проверяет source hashes/scope/history, создаёт Russian commits, сохраняет SHA/snapshot mapping, checked evidence index и ordinary push единственного refspec. Force/reset/clean/new refs/tags/PR undraft/deploy/release отсутствуют. Возможен безопасный resume только собственной записанной цепочки commits, без потери текущих файлов.
+
+Уже разрешённая публикация через обычный Terminal MacBook:
+
+```bash
+(
+  set -euo pipefail
+  cd ~/Desktop/HomeCloud
+  python3 -B /tmp/homecloud-pr45-publish-wave3.py --publish
+)
+```
+
+Команда не является финальной приёмкой. После неё нужны actual new HEAD Actions и разбор оставшихся runtime failures, если они появятся. `.git` agent sandbox остаётся read-only; прежняя стандартная fetch escalation автоматически отвергнута policy, повтор/обход не выполняются. Все разрешённые source/evidence fixes и publisher подготовлены до передачи этой конкретной операции обычному Terminal.
+
+Отдельное согласование требуется именно для архитектурного baseline этапа38.6: reproducible fixed PG/BuildKit/other tool candidates и изоляция controlled CI runner. Основание —17: «Если дальнейшее исправление требует архитектурного решения, расширения scope … запросить согласование». Никакого implicit approval на custom artifact contract, изменение severity/provider policy, root verifier, provisioning/adoption или installed TEST установку из checkpoint push не следует. Installed TEST остаётся NOT_RUN; B01/B02 OPEN. Current worktree:17 modified tracked files (15 source+2 handoff),3 прежних out-of-scope untracked, index empty. Ни один новый commit этой сессией ещё не создан; опубликованные b9e68fd/51a9325/7068d8d сохранены.
+
+### 38.10. B01/B02 и точный scope следующего checkpoint
+
+| Finding | Реализация и основные файлы | Доказательства и открытый статус |
+|---|---|---|
+|B01: durable copy admission/ambiguous COMMIT |`backend/src/files/file-copy-admission.service.ts`, `files.service.ts`, offline recovery/CLI, migration1792831300000 |Real PG317+bench110,37 relevant COMMIT/SIGKILL/orphan cases, production copy recovery5/SQL guards8 PASS. **OPEN** до mandatory CI security qualification, installed TEST и independent exact-final-HEAD review |
+|B02: единая writer boundary |`backend/src/uploads/secure-filesystem.ts`, `inherited-root-fence.ts`, `backend/docker/copy-root-fence-supervisor.cjs`, entrypoint, deployment maintenance/writer helpers |Native inherited/orphan/operator13, production maintenance5, full E2E/historical7/fault7 PASS. **OPEN** по тем же remaining gates; root verifier не ослаблен |
+
+Все15 uncommitted source paths, отдельно от129-file cumulative manifest:
+
+- TLS: `scripts/certificate-lifecycle.py`, `scripts/tests/test-certificate-lifecycle.py`.
+- Scanner: `scripts/ci/install-trivy.sh`, `scripts/ci/install-oci-scanner.sh`, `scripts/ci/scan-evidence.py`, `scripts/ci/environment-evidence.py`, `scripts/ci/test-install-oci-scanner.py`, `scripts/ci/test-scan-evidence.py`, `scripts/ci/test-environment-evidence.py`, `scripts/ci/test-skopeo-closure.py`, `scripts/ci/test-policy-coverage.py`.
+- CI: `.github/workflows/ci-v2-fast.yml`, `.github/workflows/ci.yml`, `scripts/ci/test-recovery-contracts.sh`, `scripts/ci/test-recovery-workflow.cjs`.
+- Evidence отдельно: `docs/handoff/PR-45-CLOSURE.md`, `docs/handoff/PR-45-CLOSURE-CHECKS.json`.
+
+Открыты current pinned PostgreSQL1 CRITICAL/47 HIGH, BuildKit8 CRITICAL/132 HIGH, strict backend rootfs6 CRITICAL/981 HIGH и actual executed tools/global npm findings (см38.4/JSON). Static latest upstream PG/BuildKit/Compose scans по точным digest/checksum также BLOCKED; новая архитектура/tool rebuild ещё не утверждены и не выполнены. Trivy/npm/TLS source fixes не объявляются qualified до следующего actual HEAD CI. Installed TEST, physical two-disk topology, hardware powercut/TCP proxy faults и полный operator resume всех фаз остаются непроверенными. No merge/undraft/force-push/deploy/release, no production data/servers и no extra branches/worktrees/clones; все предыдущие исправления сохранены.
+
+
+### Wave3 checkpoint source commits
+
+Snapshot `a9cf174ed730a05c19f108f0019dbf30715b9a254d15ae9ce329ef943baf99a2`; CI pending; B01/B02 OPEN.
+
+- `151829dc3f2f2fa040efeb2ea822d54eff754a8f` Сохранить проверку сертификатов в новых версиях Python
+- `04f7f608367a6c50051b814356ba3edb6fae61c0` Обновить проверенный Trivy и сохранить строгую проверку доказательств
+- `e59683b83577a21156dd803ef089464db790ff3f` Подключить TLS и шифрование к обязательной квалификации
