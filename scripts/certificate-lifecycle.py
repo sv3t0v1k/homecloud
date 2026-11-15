@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """External TLS snapshots, guarded nginx activation and expiry signaling."""
-import argparse, datetime, fcntl, hashlib, json, os, pathlib, re, shutil, socket, ssl, subprocess, sys, time, uuid
+import argparse, datetime, fcntl, hashlib, ipaddress, json, os, pathlib, re, shutil, socket, ssl, subprocess, sys, time, uuid
 
 def run(*args):
     p = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -15,12 +15,21 @@ def validate(cert,key,host,ca=None):
     run('openssl','x509','-in',str(cert),'-checkend','0','-noout')
     decoded=ssl._ssl._test_decode_cert(str(cert))
     if not decoded.get('subjectAltName'): raise ValueError('certificate requires SAN')
-    ssl.match_hostname(decoded,host)
+    # Python 3.12 removed ssl.match_hostname. Require the relevant SAN type so
+    # OpenSSL cannot fall back to a matching CN when only other SANs exist.
+    try: ipaddress.ip_address(host); identity_type,identity_option='IP Address','-verify_ip'
+    except ValueError: identity_type,identity_option='DNS','-verify_hostname'
+    identities=[value for kind,value in decoded['subjectAltName'] if kind==identity_type]
+    if not identities: raise ValueError('certificate requires matching SAN type')
+    # Retain Python's full-leftmost-label-only wildcard policy. OpenSSL's
+    # default host flags can otherwise accept partial label wildcards.
+    if identity_type=='DNS' and any('*' in value and (not value.startswith('*.') or value.count('*')!=1) for value in identities):
+        raise ValueError('certificate contains unsupported DNS wildcard')
     if ssl.cert_time_to_seconds(decoded['notBefore']) > time.time(): raise ValueError('certificate not yet valid')
     pub=run('openssl','x509','-in',str(cert),'-pubkey','-noout')
     keypub=run('openssl','pkey','-in',str(key),'-pubout')
     if pub != keypub: raise ValueError('certificate/key mismatch')
-    verify=['openssl','verify','-purpose','sslserver','-untrusted',str(cert)]
+    verify=['openssl','verify','-purpose','sslserver',identity_option,host,'-untrusted',str(cert)]
     if ca: verify += ['-CAfile',str(ca)]
     run(*verify,str(cert))
     return fingerprint(cert)
