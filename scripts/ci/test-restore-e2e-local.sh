@@ -102,6 +102,16 @@ done
 
 test "$READY" = 1
 docker load
+# Verify the retained backend before any storage or product workload.
+EXPECTED_BACKEND_ID="${HOMECLOUD_E2E_BACKEND_IMAGE_ID:?Expected loaded backend image ID}"
+test "${#EXPECTED_BACKEND_ID}" -eq 71 || exit 1
+case "$EXPECTED_BACKEND_ID" in sha256:*) ;; *) exit 1 ;; esac
+case "${EXPECTED_BACKEND_ID#sha256:}" in
+  *[!0123456789abcdef]*) exit 1 ;;
+esac
+test "$(docker image inspect "$EXPECTED_BACKEND_ID" --format '{{.Id}}')" = "$EXPECTED_BACKEND_ID" || exit 1
+test "$(docker image inspect "$EXPECTED_BACKEND_ID" --format '{{.Os}}/{{.Architecture}}')" = "$HOMECLOUD_E2E_PLATFORM" || exit 1
+echo "PASS: nested backend image matches exact exported ID $EXPECTED_BACKEND_ID"
 test "$(docker image inspect "$HOMECLOUD_E2E_STUB_IMAGE" --format '{{.Id}}')" = "${HOMECLOUD_E2E_STUB_IMAGE_ID:?Expected loaded stub image ID}"
 test "$(docker image inspect "$HOMECLOUD_E2E_STUB_IMAGE" --format '{{.Os}}/{{.Architecture}}')" = "$HOMECLOUD_E2E_PLATFORM"
 echo "PASS: nested stub image matches exact exported ID $HOMECLOUD_E2E_STUB_IMAGE_ID"
@@ -192,7 +202,7 @@ docker run --rm --pull=never --network none \
   --user 1001:65533 \
   --mount type=bind,src=/mnt/hc-e2e/storage,dst=/storage \
   --entrypoint node \
-  homecloud-restore-e2e-backend:local \
+  "$EXPECTED_BACKEND_ID" \
   -e "require('./dist/storage/storage-mount-registry.js').bootstrapLegacyMarker('/storage')"
 
 test "$(stat -c "%u:%g:%a" /mnt/hc-e2e/storage/.homecloud-storage-identity)" = "1001:65533:600"
@@ -211,7 +221,7 @@ export REDIS_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24)
 
 export STORAGE_PATH=/storage
 export BACKUP_DIR="$WORK/backups"
-export BACKEND_IMAGE=homecloud-restore-e2e-backend:local
+export BACKEND_IMAGE="$EXPECTED_BACKEND_ID"
 export BACKUP_WRITE_BARRIER_CONFIRMED=1
 
 echo "=== COMPOSE FIXTURE ==="
@@ -324,6 +334,10 @@ chmod 600 "$COMPOSE_FILE"
 echo "=== START REAL DATABASE AND BACKEND ==="
 
 docker compose up -d --wait --wait-timeout 180
+BACKEND_CONTAINER_ID="$(docker compose ps -q backend)"
+test -n "$BACKEND_CONTAINER_ID" || exit 1
+test "$(docker inspect --format '{{.Image}}' "$BACKEND_CONTAINER_ID")" = "$EXPECTED_BACKEND_ID" || exit 1
+echo "PASS: running backend container uses exact retained image ID"
 docker compose ps
 
 test "$(docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U fixture -d fixture -At \

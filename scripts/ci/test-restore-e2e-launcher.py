@@ -106,7 +106,7 @@ class LauncherTests(unittest.TestCase):
         result, calls = self.invoke(HOMECLOUD_E2E_BACKEND_IMAGE="retained-candidate")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any(call[0] == "build" and call[-1] == "backend" for call in calls))
-        self.assertIn(["tag", "retained-candidate", "homecloud-restore-e2e-backend:local"], calls)
+        self.assertIn(["tag", "sha256:" + "1" * 64, "homecloud-restore-e2e-backend:local"], calls)
 
     def test_digest_stub_crosses_save_load_as_exact_id_checked_tag(self):
         reference = 'node:qualified@sha256:' + 'a' * 64
@@ -151,6 +151,150 @@ class LauncherTests(unittest.TestCase):
         result, calls = self.invoke(HOMECLOUD_E2E_BACKEND_IMAGE="retained-candidate", HC_TEST_SUBSTITUTION="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(call[0] == "run" for call in calls))
+
+
+    def test_expected_backend_id_is_used_for_run_save_and_nested(self):
+        identity = "sha256:" + "1" * 64
+
+        result, calls = self.invoke(
+            HOMECLOUD_E2E_BACKEND_IMAGE=identity,
+            HOMECLOUD_E2E_BACKEND_IMAGE_ID=identity,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        native = next(
+            call for call in calls
+            if call[0] == "run" and "--strict" in call
+        )
+
+        self.assertIn(identity, native)
+        self.assertIn("--pull=never", native)
+        self.assertNotIn("homecloud-restore-e2e-backend:local", native)
+
+        exported = next(call for call in calls if call[0] == "save")
+        self.assertIn(identity, exported)
+        self.assertNotIn("homecloud-restore-e2e-backend:local", exported)
+
+        nested = next(call for call in calls if "--privileged" in call)
+        self.assertIn("HOMECLOUD_E2E_BACKEND_IMAGE_ID=" + identity, nested)
+
+    def test_expected_backend_id_mismatch_stops_before_runtime(self):
+        result, calls = self.invoke(
+            HOMECLOUD_E2E_BACKEND_IMAGE="retained-candidate",
+            HOMECLOUD_E2E_BACKEND_IMAGE_ID="sha256:" + "2" * 64,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(
+            any(call[0] in ("run", "save") for call in calls)
+        )
+
+    def test_invalid_expected_backend_ids_are_refused_before_docker(self):
+        for invalid in (
+            "sha256:invalid",
+            "sha256:" + "A" * 64,
+            "sha256:" + "1" * 63,
+            "sha256:" + "1" * 65,
+            "sha256:" + "1" * 63 + "g",
+            "other:" + "1" * 64,
+        ):
+            with self.subTest(invalid=invalid):
+                result, calls = self.invoke(
+                    HOMECLOUD_E2E_BACKEND_IMAGE="retained-candidate",
+                    HOMECLOUD_E2E_BACKEND_IMAGE_ID=invalid,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls, [])
+
+    def test_expected_backend_id_cannot_request_local_rebuild(self):
+        result, calls = self.invoke(
+            HOMECLOUD_E2E_BACKEND_IMAGE_ID="sha256:" + "1" * 64,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, [])
+
+    def test_nested_backend_guard_blocks_wrong_loaded_identity(self):
+        source = (
+            ROOT / "scripts/ci/test-restore-e2e-local.sh"
+        ).read_text()
+
+        start = source.index("# Verify the retained backend")
+        end = source.index(
+            'test "$(docker image inspect "$HOMECLOUD_E2E_STUB_IMAGE"',
+            start,
+        )
+
+        guard = source[start:end]
+        identity = "sha256:" + "1" * 64
+
+        with tempfile.TemporaryDirectory(
+            prefix="hc-nested-id-fixture-"
+        ) as directory:
+            path = Path(directory)
+            docker = path / "docker"
+
+            docker.write_text("#!" + sys.executable + "\n" + FAKE)
+            docker.chmod(0o755)
+
+            env = {
+                k: v for k, v in os.environ.items()
+                if not k.startswith(("HOMECLOUD_E2E_", "HC_TEST_"))
+            }
+
+            env.update(
+                PATH=str(path) + os.pathsep + env["PATH"],
+                HC_TEST_DOCKER_LOG=str(path / "calls.jsonl"),
+                HOMECLOUD_E2E_PLATFORM="linux/arm64",
+                HOMECLOUD_E2E_BACKEND_IMAGE_ID=identity,
+            )
+
+            def execute(**overrides):
+                return subprocess.run(
+                    ["bash", "-c", guard],
+                    env=dict(env, **overrides),
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+
+            accepted = execute()
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+            for overrides in (
+                {
+                    "HOMECLOUD_E2E_BACKEND_IMAGE_ID":
+                        "sha256:" + "2" * 64
+                },
+                {"HOMECLOUD_E2E_BACKEND_IMAGE_ID": ""},
+                {"HOMECLOUD_E2E_BACKEND_IMAGE_ID": "invalid"},
+                {"HC_TEST_IMAGE_ARCH": "amd64"},
+            ):
+                rejected = execute(**overrides)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertNotIn("PASS:", rejected.stdout)
+
+        self.assertLess(
+            source.index("docker load"),
+            source.index("# Verify the retained backend"),
+        )
+
+        self.assertLess(
+            source.index("# Verify the retained backend"),
+            source.index("=== NESTED RESOURCE LIMIT PREFLIGHT ==="),
+        )
+
+        self.assertIn(
+            'export BACKEND_IMAGE="$EXPECTED_BACKEND_ID"',
+            source,
+        )
+
+        self.assertIn(
+            'docker inspect --format \'{{.Image}}\' "$BACKEND_CONTAINER_ID"',
+            source,
+        )
+
 
     def test_unknown_mode_is_refused_before_docker(self):
         result, calls = self.invoke(("--unknown",))

@@ -18,6 +18,21 @@ test "$#" -le 2
 # DinD/runc must run natively; an emulated daemon cannot qualify this E2E.
 TOOL_PLATFORM="$PLATFORM"
 STUB_IMAGE="${HOMECLOUD_E2E_STUB_IMAGE:-alpine:latest}"
+EXPECTED_BACKEND_ID="${HOMECLOUD_E2E_BACKEND_IMAGE_ID:-}"
+
+valid_image_id() {
+  local value="$1"
+  test "${#value}" -eq 71 || return 1
+  case "$value" in sha256:*) ;; *) return 1 ;; esac
+  case "${value#sha256:}" in
+    *[!0123456789abcdef]*) return 1 ;;
+  esac
+}
+
+if [ -n "$EXPECTED_BACKEND_ID" ]; then
+  valid_image_id "$EXPECTED_BACKEND_ID" || exit 1
+  test -n "${HOMECLOUD_E2E_BACKEND_IMAGE:-}" || exit 1
+fi
 case "$PLATFORM" in linux/arm64|linux/amd64) ;; *) exit 1 ;; esac
 
 # No host socket/data/source bind mounts are passed into the test container.
@@ -48,16 +63,30 @@ test "$(docker image inspect homecloud-restore-e2e-runner:local --format '{{.Os}
 if [ -n "${HOMECLOUD_E2E_BACKEND_IMAGE:-}" ]; then
   # CI tests the retained OCI candidate, never a second rebuild.
   candidate_id="$(docker image inspect "$HOMECLOUD_E2E_BACKEND_IMAGE" --format '{{.Id}}')"
-  docker tag "$HOMECLOUD_E2E_BACKEND_IMAGE" homecloud-restore-e2e-backend:local
-  test "$(docker image inspect homecloud-restore-e2e-backend:local --format '{{.Id}}')" = "$candidate_id"
+  valid_image_id "$candidate_id" || exit 1
+
+  if [ -n "$EXPECTED_BACKEND_ID" ]; then
+    test "$candidate_id" = "$EXPECTED_BACKEND_ID" || exit 1
+  fi
+
+  docker tag "$candidate_id" homecloud-restore-e2e-backend:local
+  test "$(docker image inspect homecloud-restore-e2e-backend:local --format '{{.Id}}')" = "$candidate_id" || exit 1
 else
   docker build --pull=false --platform "$PLATFORM" \
     -t homecloud-restore-e2e-backend:local backend
+  candidate_id="$(docker image inspect homecloud-restore-e2e-backend:local --format '{{.Id}}')"
+  valid_image_id "$candidate_id" || exit 1
 fi
-test "$(docker image inspect homecloud-restore-e2e-backend:local --format '{{.Os}}/{{.Architecture}}')" = "$PLATFORM"
-docker image inspect homecloud-restore-e2e-backend:local --format 'E2E backend: {{.Id}}'
+
+# From this point forward, do not use a mutable backend tag.
+BACKEND_IMAGE_ID="$candidate_id"
+test "$(docker image inspect "$BACKEND_IMAGE_ID" --format '{{.Id}}')" = "$BACKEND_IMAGE_ID" || exit 1
+test "$(docker image inspect "$BACKEND_IMAGE_ID" --format '{{.Os}}/{{.Architecture}}')" = "$PLATFORM" || exit 1
+
+echo "PASS: outer backend image ID $BACKEND_IMAGE_ID"
+
 docker run --rm --pull=never --platform "$PLATFORM" --network none --cap-drop ALL \
-  --security-opt no-new-privileges --entrypoint node homecloud-restore-e2e-backend:local \
+  --security-opt no-new-privileges --entrypoint node "$BACKEND_IMAGE_ID" \
   -e "$(cat scripts/ci/native-boundary-preflight.cjs)" -- --strict
 
 # Allowlist source files: no Git metadata, env files, keys or user data.
@@ -71,11 +100,12 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
   --platform "$TOOL_PLATFORM" --entrypoint python3 homecloud-restore-e2e-runtime:local \
   -B /opt/homecloud/scripts/ci/restore-runtime-preflight.py
 
-docker save homecloud-restore-e2e-backend:local postgres:16-alpine "$STUB_IMAGE" \
+docker save "$BACKEND_IMAGE_ID" postgres:16-alpine "$STUB_IMAGE" \
   | docker run --rm -i --privileged --cgroupns=private --network none \
       --platform "$TOOL_PLATFORM" \
       -e "HOMECLOUD_E2E_STUB_IMAGE=$STUB_IMAGE" \
       -e "HOMECLOUD_E2E_STUB_IMAGE_ID=$STUB_IMAGE_ID" \
+      -e "HOMECLOUD_E2E_BACKEND_IMAGE_ID=$BACKEND_IMAGE_ID" \
       -e "HOMECLOUD_E2E_ENCRYPTED=$ENCRYPTED" \
       -e "HOMECLOUD_E2E_HISTORICAL_SCHEMA=$HISTORICAL_SCHEMA" \
       -e "HOMECLOUD_E2E_FAULT_CASE=$FAULT_CASE" \

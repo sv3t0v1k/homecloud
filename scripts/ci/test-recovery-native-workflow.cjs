@@ -99,10 +99,22 @@ test('the exact retained image reaches real recovery tests', () => {
 
   assert.equal(commands.length, 4);
 
-  const exactImage =
-    'HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}"';
+  const exactImage = '${{ steps.image.outputs.image_id }}';
 
-  assert.ok(commands.every(line => line.includes(exactImage)));
+  assert.deepEqual(recovery.env, {
+    HOMECLOUD_E2E_BACKEND_IMAGE: exactImage,
+    HOMECLOUD_E2E_BACKEND_IMAGE_ID: exactImage,
+  });
+
+  assert.ok(commands.every(
+    line => !line.includes('HOMECLOUD_E2E_BACKEND_IMAGE=')
+  ));
+
+  const binding = steps.find(step => step.id === 'image');
+
+  assert.ok(binding);
+  assert.equal(steps.indexOf(runtime) + 1, steps.indexOf(binding));
+  assert.ok(steps.indexOf(binding) < steps.indexOf(native));
   assert.ok(commands.some(line => line.includes('--encrypted-only')));
   assert.ok(commands.some(line => line.includes('--historical-schema-only')));
   assert.ok(commands.some(line => line.includes('run-restore-fault-e2e-local.sh')));
@@ -326,4 +338,129 @@ test('native recovery verifies exact backend context immediately before build', 
     .map(step => step.run || '').join('\n');
 
   assert.match(commands, /python3 -B scripts\/ci\/test-recovery-context\.py/);
+});
+
+
+test('runtime OCI binding rejects substituted images', () => {
+  const guard = steps.find(step => step.id === 'image');
+  const runtime = steps.find(step => step.id === 'runtime');
+  const identity = '${{ steps.image.outputs.image_id }}';
+
+  assert.ok(guard);
+  assert.equal(steps.indexOf(guard), steps.indexOf(runtime) + 1);
+  assert.equal(guard.if, undefined);
+  assert.equal(guard['continue-on-error'], undefined);
+
+  assert.equal(
+    guard.env.EXPECTED_SOURCE_SHA,
+    '${{ github.event.pull_request.head.sha }}'
+  );
+
+  const smoke = named(
+    'Backend production image native dependencies, without mounts or startup'
+  );
+
+  const native = named(
+    'Real copy recovery and maintenance admission on the production image'
+  );
+
+  const architecture = named('Verify runtime image architecture');
+
+  for (const step of [smoke, native, architecture]) {
+    assert.equal(step.env.IMAGE, identity);
+    assert.ok(steps.indexOf(guard) < steps.indexOf(step));
+  }
+
+  assert.match(smoke.run, /docker run --rm --pull=never/);
+  assert.match(native.run, /docker run --rm --pull=never/);
+  assert.match(architecture.run, /--format '\{\{\.Id\}\}'/);
+
+  const { spawnSync } = require('node:child_process');
+  const os = require('node:os');
+
+  // Execute the real Python guard embedded in the workflow.
+  const sections = guard.run.split("python3 - <<'PY'\n");
+  assert.equal(sections.length, 2);
+
+  const code = sections[1].split('\nPY')[0];
+
+  const temporary = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'hc-runtime-binding-fixture-')
+  );
+
+  try {
+    const commit = 'a'.repeat(40);
+    const imageId = 'sha256:' + '1'.repeat(64);
+    const output = path.join(temporary, 'output.txt');
+    const docker = path.join(temporary, 'docker');
+
+    fs.writeFileSync(
+      docker,
+      '#!/bin/sh\n' +
+      'printf "%s %s\\n" "$HC_FAKE_ID" "$HC_FAKE_PLATFORM"\n',
+      { mode: 0o755 }
+    );
+
+    const proof = {
+      role: 'backend',
+      source_commit: commit,
+      config_digest: imageId,
+      binding: 'LOADED_EXACT_OCI_CONFIG_AND_FILESYSTEM',
+    };
+
+    function execute(changes = {}, envChanges = {}) {
+      fs.writeFileSync(
+        path.join(temporary, 'backend.loaded.binding.json'),
+        JSON.stringify({ ...proof, ...changes })
+      );
+
+      fs.writeFileSync(output, '');
+
+      const result = spawnSync('python3', ['-c', code], {
+        cwd: temporary,
+        env: {
+          ...process.env,
+          PATH: temporary + path.delimiter + process.env.PATH,
+          EXPECTED_SOURCE_SHA: commit,
+          GITHUB_OUTPUT: output,
+          HC_FAKE_ID: imageId,
+          HC_FAKE_PLATFORM: 'linux/amd64',
+          ...envChanges,
+        },
+        encoding: 'utf8',
+        timeout: 10000,
+      });
+
+      assert.ifError(result.error);
+      assert.equal(result.signal, null);
+
+      return {
+        status: result.status,
+        output: fs.readFileSync(output, 'utf8'),
+      };
+    }
+
+    const accepted = execute();
+
+    assert.equal(accepted.status, 0);
+    assert.equal(accepted.output, 'image_id=' + imageId + '\n');
+
+    const rejected = [
+      [{ role: 'frontend' }, {}],
+      [{ source_commit: 'b'.repeat(40) }, {}],
+      [{ binding: 'UNVERIFIED' }, {}],
+      [{ config_digest: 'invalid' }, {}],
+      [{ config_digest: 'sha256:' + 'A'.repeat(64) }, {}],
+      [{}, { HC_FAKE_ID: 'sha256:' + '2'.repeat(64) }],
+      [{}, { HC_FAKE_PLATFORM: 'linux/arm64' }],
+    ];
+
+    for (const [changes, envChanges] of rejected) {
+      const result = execute(changes, envChanges);
+      assert.notEqual(result.status, 0);
+      assert.equal(result.output, '');
+    }
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 });

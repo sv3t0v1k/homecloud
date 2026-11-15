@@ -141,11 +141,59 @@ jobs:
           skopeo copy --override-os linux --override-arch amd64 "oci-archive:$RUNNER_TEMP/backend.oci.tar" "docker-daemon:homecloud-ci-backend:${{ steps.source.outputs.commit }}"
           docker image inspect "homecloud-ci-backend:${{ steps.source.outputs.commit }}" > "backend.loaded.inspect.json"
           python3 scripts/ci/oci-scan-binding.py --archive "$RUNNER_TEMP/backend.oci.tar" --loaded-inspect "backend.loaded.inspect.json" --role "backend" --source "$(git rev-parse HEAD)" --output "backend.loaded.binding.json"
+      - name: Bind all runtime tests to verified OCI image ID
+        id: image
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          proof = json.loads(
+              Path("backend.loaded.binding.json").read_bytes()
+          )
+          expected = os.environ["EXPECTED_SOURCE_SHA"]
+          image_id = proof.get("config_digest")
+
+          if (
+              proof.get("role") != "backend"
+              or proof.get("source_commit") != expected
+              or not re.fullmatch("[a-f0-9]{40}", expected)
+              or proof.get("binding") != "LOADED_EXACT_OCI_CONFIG_AND_FILESYSTEM"
+              or not isinstance(image_id, str)
+              or not re.fullmatch("sha256:[a-f0-9]{64}", image_id)
+          ):
+              raise SystemExit("BLOCKED: invalid OCI runtime binding")
+
+          observed = subprocess.check_output(
+              [
+                  "docker", "image", "inspect",
+                  "--format", "{{.Id}} {{.Os}}/{{.Architecture}}",
+                  image_id,
+              ],
+              text=True,
+              timeout=30,
+          ).strip()
+
+          if observed != image_id + " linux/amd64":
+              raise SystemExit("BLOCKED: loaded runtime identity mismatch")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("image_id=" + image_id + "\n")
+
+          print("PASS: runtime image bound to verified OCI config ID", image_id)
+          PY
       - name: Backend production image native dependencies, without mounts or startup
         env:
-          IMAGE: homecloud-ci-backend:${{ steps.source.outputs.commit }}
+          IMAGE: ${{ steps.image.outputs.image_id }}
         run: |
-          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --entrypoint node "$IMAGE" -e '
+          docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --entrypoint node "$IMAGE" -e '
           const assert=require("node:assert/strict");
           const fs=require("node:fs");
           const {spawnSync}=require("node:child_process");
@@ -165,26 +213,31 @@ jobs:
           .catch(error=>{console.error(error.message);process.exitCode=1;});'
       - name: Real copy recovery and maintenance admission on the production image
         env:
-          IMAGE: homecloud-ci-backend:${{ steps.source.outputs.commit }}
+          IMAGE: ${{ steps.image.outputs.image_id }}
         run: |
           docker run --rm --pull=never --platform linux/amd64 --network none --cap-drop ALL --security-opt no-new-privileges --entrypoint node "$IMAGE" -e "$(cat scripts/ci/native-boundary-preflight.cjs)" -- --strict
           bash scripts/ci/test-maintenance-supervisor.sh "$IMAGE" linux/amd64
           bash scripts/ci/test-copy-recovery-e2e.sh "$IMAGE" linux/amd64
       - name: Real Backup Restore in an isolated nested Docker daemon
+        env:
+          HOMECLOUD_E2E_BACKEND_IMAGE: ${{ steps.image.outputs.image_id }}
+          HOMECLOUD_E2E_BACKEND_IMAGE_ID: ${{ steps.image.outputs.image_id }}
         run: |
           pg_image=$(python3 -c 'import json; print(json.load(open("scripts/ci/production-images.lock.json"))["postgres"])')
           stub_image=$(python3 -c 'import json; print(json.load(open("scripts/ci/images.lock.json"))["node"])')
           docker pull --platform linux/amd64 "$pg_image"
           docker tag "$pg_image" postgres:16-alpine
           docker pull --platform linux/amd64 "$stub_image"
-          HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}" HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64
-          HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}" HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 --encrypted-only
-          HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}" HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 --historical-schema-only
-          HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}" HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-fault-e2e-local.sh linux/amd64
+          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64
+          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 --encrypted-only
+          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 --historical-schema-only
+          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-fault-e2e-local.sh linux/amd64
       - name: Verify runtime image architecture
         env:
-          IMAGE: homecloud-ci-backend:${{ steps.source.outputs.commit }}
-        run: test "$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          IMAGE: ${{ steps.image.outputs.image_id }}
+        run: |
+          test "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$IMAGE" || exit 1
+          test "$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64 || exit 1
       - name: Verify recovery evidence files
         shell: bash
         run: |
