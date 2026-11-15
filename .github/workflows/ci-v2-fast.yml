@@ -30,6 +30,7 @@ jobs:
         working-directory: backend
       - run: sh native/build.sh
         working-directory: backend
+      - run: node --test scripts/ci/test-recovery-native-workflow.cjs
       - run: python3 scripts/ci/test-ci-v2-fast-gate.py
       - run: python3 scripts/ci/test-ci-v2-candidate.py
       - run: python3 scripts/ci/test-test-channel.py
@@ -229,8 +230,10 @@ jobs:
           set -euo pipefail
           sh scripts/ci/install-oci-scanner.sh gitleaks "$RUNNER_TEMP/gitleaks"
           mkdir "$RUNNER_TEMP/gitleaks-evidence"
+          history_opts='--full-history --all --diff-merges=first-parent -- . :(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md'
+          python3 -B scripts/ci/test-gitleaks-merge-history.py --scanner "$RUNNER_TEMP/gitleaks" --log-opts="$history_opts"
           set +e
-          "$RUNNER_TEMP/gitleaks" git --redact=100 --exit-code 42 --report-format json --report-path "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --log-opts="--full-history --all -- . :(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md" .
+          "$RUNNER_TEMP/gitleaks" git --redact=100 --exit-code 42 --report-format json --report-path "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --log-opts="$history_opts" .
           scanner_result=$?
           set -e
           python3 scripts/ci/secret-findings.py --report "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --scanner-exit "$scanner_result" --output "$RUNNER_TEMP/gitleaks-evidence/classification.json"
