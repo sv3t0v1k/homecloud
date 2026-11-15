@@ -1,0 +1,164 @@
+name: HomeCloud Native Recovery Qualification
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  native-recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Remove unused hosted .NET SDK before workload; retain evidence
+        run: python3 scripts/ci/minimize-runner.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Upgrade global npm from the verified archive before workload
+        run: python3 scripts/ci/install-npm.py
+      - id: bases
+        run: |
+          python3 -c 'import json,os; d=json.load(open("scripts/ci/images.lock.json")); f=open(os.environ["GITHUB_OUTPUT"],"a"); [f.write(k+"="+v+"\n") for k,v in d.items()]'
+      - id: source
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git diff --quiet HEAD -- . ':(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md'
+          test -z "$(git ls-files --others --exclude-standard -- backend frontend)"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "repository=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          version: v0.38.0
+          driver-opts: image=moby/buildkit@sha256:98cc6a3fc46220d00f8224ae483f3274fc874e9be8d7dd1e2e2c5481209228b5
+      - name: Build offline OCI provenance candidate
+        id: offline
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        env:
+          BUILDX_GIT_CHECK_DIRTY: 'false'
+          BUILDX_GIT_INFO: 'true'
+          BUILDX_GIT_LABELS: 'false'
+        with:
+          context: ./backend
+          platforms: linux/amd64
+          push: false
+          load: false
+          outputs: type=oci,dest=${{ runner.temp }}/backend.oci.tar
+          provenance: mode=max,version=v0.2
+          tags: ghcr.io/${{ steps.source.outputs.repository }}/backend:dry-run
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ steps.source.outputs.repository }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.commit }}
+            org.opencontainers.image.version=dry-run
+            io.homecloud.role=backend
+            io.homecloud.pair=${{ steps.source.outputs.commit }}
+          build-args: |
+            NODE_IMAGE=${{ steps.bases.outputs.node }}
+            NGINX_IMAGE=${{ steps.bases.outputs.nginx }}
+      - name: Verify offline OCI digest, source and attestation
+        env:
+          BUILD_METADATA: ${{ steps.offline.outputs.metadata }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+          REPOSITORY: ${{ steps.source.outputs.repository }}
+        run: |
+          python3 -c 'import os; open("offline-backend-metadata.json", "w").write(os.environ["BUILD_METADATA"])'
+          python3 scripts/ci/provenance.py dry-run --archive "$RUNNER_TEMP/backend.oci.tar" --metadata "offline-backend-metadata.json" --component "backend" --version "dry-run" --commit "$SOURCE_COMMIT" --repository "$REPOSITORY" --output "offline-backend.json"
+      - name: Load the exact OCI candidate for runtime smoke
+        id: runtime
+        run: |
+          uname -a
+          test "$(uname -s)/$(uname -m)" = Linux/x86_64
+          docker info --format '{"os":{{json .OSType}},"arch":{{json .Architecture}},"operating_system":{{json .OperatingSystem}},"version":{{json .ServerVersion}}}' > "backend.native-host.json"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          host = json.loads(Path('backend.native-host.json').read_text())
+          assert host['os'] == 'linux' and host['arch'] in ('x86_64', 'amd64')
+          assert 'desktop' not in host['operating_system'].lower()
+          print('NATIVE_AMD64_HOST:', json.dumps(host, sort_keys=True))
+          PY
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+          skopeo copy --override-os linux --override-arch amd64 "oci-archive:$RUNNER_TEMP/backend.oci.tar" "docker-daemon:homecloud-ci-backend:${{ steps.source.outputs.commit }}"
+          docker image inspect "homecloud-ci-backend:${{ steps.source.outputs.commit }}" > "backend.loaded.inspect.json"
+          python3 scripts/ci/oci-scan-binding.py --archive "$RUNNER_TEMP/backend.oci.tar" --loaded-inspect "backend.loaded.inspect.json" --role "backend" --source "$(git rev-parse HEAD)" --output "backend.loaded.binding.json"
+      - name: Backend production image native dependencies, without mounts or startup
+        env:
+          IMAGE: homecloud-ci-backend:${{ steps.source.outputs.commit }}
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --entrypoint node "$IMAGE" -e '
+          const assert=require("node:assert/strict");
+          const fs=require("node:fs");
+          const {spawnSync}=require("node:child_process");
+          const sharp=require("sharp");
+          assert.equal(process.getuid(),1001);
+          assert.equal(process.version,"v24.21.0");
+          for(const path of ["/usr/local/lib/node_modules/npm","/usr/local/bin/npm","/usr/local/bin/npx"]){assert.equal(fs.existsSync(path),false);}
+          for(const path of ["/storage","/storage/.tmp"]){const stat=fs.statSync(path);assert.equal(stat.uid,1001);assert.equal(stat.mode & 0o777,0o700);}
+          const cli=spawnSync(process.execPath,["./node_modules/typeorm/cli.js","migration:run","--help"],{encoding:"utf8",timeout:10000});
+          assert.ifError(cli.error);assert.equal(cli.status,0);assert.match(cli.stdout,/transaction/);
+          assert.equal(sharp.versions.sharp,"0.35.5");
+          require("./native/secure-fs.node");
+          sharp({create:{width:20,height:10,channels:3,background:"#336699"}}).jpeg().toBuffer()
+          .then(input=>sharp(input).resize(10,10,{fit:"inside"}).png().toBuffer())
+          .then(output=>sharp(output).metadata())
+          .then(meta=>{assert.equal(meta.width,10);assert.equal(meta.height,5);console.log("PASS: linux/amd64 musl native addon and image decoder");})
+          .catch(error=>{console.error(error.message);process.exitCode=1;});'
+      - name: Real copy recovery and maintenance admission on the production image
+        env:
+          IMAGE: homecloud-ci-backend:${{ steps.source.outputs.commit }}
+        run: |
+          docker run --rm --pull=never --platform linux/amd64 --network none --cap-drop ALL --security-opt no-new-privileges --entrypoint node "$IMAGE" -e "$(cat scripts/ci/native-boundary-preflight.cjs)" -- --strict
+          bash scripts/ci/test-maintenance-supervisor.sh "$IMAGE" linux/amd64
+          bash scripts/ci/test-copy-recovery-e2e.sh "$IMAGE" linux/amd64
+      - name: Real Backup Restore in an isolated nested Docker daemon
+        run: |
+          pg_image=$(python3 -c 'import json; print(json.load(open("scripts/ci/production-images.lock.json"))["postgres"])')
+          stub_image=$(python3 -c 'import json; print(json.load(open("scripts/ci/images.lock.json"))["node"])')
+          docker pull --platform linux/amd64 "$pg_image"
+          docker tag "$pg_image" postgres:16-alpine
+          docker pull --platform linux/amd64 "$stub_image"
+          HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}" HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64
+          HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}" HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 --encrypted-only
+          HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}" HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 --historical-schema-only
+          HOMECLOUD_E2E_BACKEND_IMAGE="homecloud-ci-backend:${{ steps.source.outputs.commit }}" HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-fault-e2e-local.sh linux/amd64
+      - name: Verify runtime image architecture
+        env:
+          IMAGE: homecloud-ci-backend:${{ steps.source.outputs.commit }}
+        run: test "$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+      - name: Verify recovery evidence files
+        shell: bash
+        run: |
+          for file in \
+            offline-backend.json \
+            offline-backend-metadata.json \
+            backend.native-host.json \
+            backend.loaded.inspect.json \
+            backend.loaded.binding.json
+          do
+            test -s "$file"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-recovery-evidence-${{ github.run_attempt }}
+          path: |
+            offline-backend.json
+            offline-backend-metadata.json
+            backend.native-host.json
+            backend.loaded.inspect.json
+            backend.loaded.binding.json
+          if-no-files-found: error
+          retention-days: 14

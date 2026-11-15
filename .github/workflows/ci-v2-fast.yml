@@ -30,6 +30,7 @@ jobs:
         working-directory: backend
       - run: sh native/build.sh
         working-directory: backend
+      - run: node --test scripts/ci/test-recovery-native-workflow.cjs
       - run: python3 scripts/ci/test-ci-v2-fast-gate.py
       - run: python3 scripts/ci/test-ci-v2-candidate.py
       - run: python3 scripts/ci/test-test-channel.py
