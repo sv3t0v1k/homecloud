@@ -15,17 +15,44 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
+      - name: Verify trusted PR source before checkout
+        shell: bash
+        env:
+          CALLER_EVENT_NAME: ${{ github.event_name }}
+          CALLER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CALLER_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$CALLER_EVENT_NAME" = pull_request || exit 1
+          test "${#CALLER_HEAD_SHA}" -eq 40 || exit 1
+          case "$CALLER_HEAD_SHA" in
+            *[!0123456789abcdef]*) exit 1 ;;
+          esac
+          test "${#REQUESTED_SOURCE_SHA}" -eq 40 || exit 1
+          case "$REQUESTED_SOURCE_SHA" in
+            *[!0123456789abcdef]*) exit 1 ;;
+          esac
+          test "$REQUESTED_SOURCE_SHA" = "$CALLER_HEAD_SHA" || exit 1
+          test -n "$EXPECTED_REPOSITORY" || exit 1
+          test "$CALLER_BASE_REPOSITORY" = "$EXPECTED_REPOSITORY" || exit 1
+          echo "PASS: recovery source bound to the PR event"
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.source_sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Verify exact checkout before candidate code
         shell: bash
         env:
-          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test "${#EXPECTED_SOURCE_SHA}" -eq 40 || exit 1
+          case "$EXPECTED_SOURCE_SHA" in
+            *[!0123456789abcdef]*) exit 1 ;;
+          esac
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA" || exit 1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.21.0'
@@ -37,10 +64,13 @@ jobs:
       - id: source
         shell: bash
         env:
-          EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test "${#EXPECTED_SOURCE_SHA}" -eq 40 || exit 1
+          case "$EXPECTED_SOURCE_SHA" in
+            *[!0123456789abcdef]*) exit 1 ;;
+          esac
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA" || exit 1
           git diff --quiet HEAD -- . ':(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md'
           test -z "$(git ls-files --others --exclude-standard -- backend frontend)"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"

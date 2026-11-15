@@ -39,13 +39,14 @@ test('recovery checks exact source and builds offline AMD64 OCI', () => {
   const checkout = steps.find(
     step => (step.uses || '').startsWith('actions/checkout@')
   );
-  assert.equal(checkout.with.ref, '${{ inputs.source_sha }}');
+  assert.equal(checkout.with.repository, '${{ github.repository }}');
+  assert.equal(checkout.with.ref, '${{ github.event.pull_request.head.sha }}');
   assert.equal(checkout.with['persist-credentials'], false);
 
   const verify = named('Verify exact checkout before candidate code');
 
   assert.ok(verify);
-  assert.equal(verify.env.EXPECTED_SOURCE_SHA, '${{ inputs.source_sha }}');
+  assert.equal(verify.env.EXPECTED_SOURCE_SHA, '${{ github.event.pull_request.head.sha }}');
   assert.match(verify.run, /git rev-parse HEAD.*EXPECTED_SOURCE_SHA/);
   assert.equal(steps.indexOf(verify), steps.indexOf(checkout) + 1);
 
@@ -58,7 +59,7 @@ test('recovery checks exact source and builds offline AMD64 OCI', () => {
   assert.doesNotMatch(runs, /minimize-runner\.py/);
 
   const source = steps.find(step => step.id === 'source');
-  assert.equal(source.env.EXPECTED_SOURCE_SHA, '${{ inputs.source_sha }}');
+  assert.equal(source.env.EXPECTED_SOURCE_SHA, '${{ github.event.pull_request.head.sha }}');
   assert.match(source.run, /git rev-parse HEAD.*EXPECTED_SOURCE_SHA/);
 
   const build = steps.find(step => step.id === 'offline');
@@ -146,5 +147,124 @@ test('fast CI executes the new routing regression', () => {
     'frontend', 'configuration', 'secrets',
   ]) {
     assert.ok(gate.needs.includes(name), name);
+  }
+});
+
+
+test('native recovery binds the requested source to the PR event before checkout', () => {
+  const guard = named('Verify trusted PR source before checkout');
+  const checkout = steps.find(
+    step => (step.uses || '').startsWith('actions/checkout@')
+  );
+
+  assert.ok(guard);
+  assert.equal(steps[0], guard);
+  assert.equal(steps[1], checkout);
+  assert.equal(guard.shell, 'bash');
+
+  assert.deepEqual(guard.env, {
+    CALLER_EVENT_NAME: '${{ github.event_name }}',
+    CALLER_HEAD_SHA: '${{ github.event.pull_request.head.sha }}',
+    CALLER_BASE_REPOSITORY: '${{ github.event.pull_request.base.repo.full_name }}',
+    EXPECTED_REPOSITORY: '${{ github.repository }}',
+    REQUESTED_SOURCE_SHA: '${{ inputs.source_sha }}',
+  });
+
+  assert.equal(guard.if, undefined);
+  assert.equal(guard['continue-on-error'], undefined);
+
+  const { spawnSync } = require('node:child_process');
+  const sha = 'a'.repeat(40);
+  const repo = 'fixture/repository';
+
+  const valid = {
+    CALLER_EVENT_NAME: 'pull_request',
+    CALLER_HEAD_SHA: sha,
+    CALLER_BASE_REPOSITORY: repo,
+    EXPECTED_REPOSITORY: repo,
+    REQUESTED_SOURCE_SHA: sha,
+  };
+
+  function execute(overrides) {
+    const result = spawnSync('bash', ['-c', guard.run], {
+      env: {
+        ...process.env,
+        ...valid,
+        ...overrides,
+      },
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+
+    assert.ifError(result.error);
+    assert.equal(result.signal, null);
+    return result;
+  }
+
+  assert.equal(execute({}).status, 0);
+
+  const rejected = [
+    ['different valid SHA', {
+      REQUESTED_SOURCE_SHA: 'b'.repeat(40),
+    }],
+    ['missing caller HEAD', {
+      CALLER_HEAD_SHA: '',
+    }],
+    ['malformed requested SHA', {
+      REQUESTED_SOURCE_SHA: 'not-a-commit',
+    }],
+    ['malformed matching SHAs', {
+      CALLER_HEAD_SHA: 'invalid',
+      REQUESTED_SOURCE_SHA: 'invalid',
+    }],
+    ['matching SHA too short', {
+      CALLER_HEAD_SHA: 'a'.repeat(39),
+      REQUESTED_SOURCE_SHA: 'a'.repeat(39),
+    }],
+    ['matching SHA too long', {
+      CALLER_HEAD_SHA: 'a'.repeat(41),
+      REQUESTED_SOURCE_SHA: 'a'.repeat(41),
+    }],
+    ['matching SHA with non-hex character', {
+      CALLER_HEAD_SHA: 'a'.repeat(39) + 'g',
+      REQUESTED_SOURCE_SHA: 'a'.repeat(39) + 'g',
+    }],
+    ['matching SHA with newline', {
+      CALLER_HEAD_SHA: 'a'.repeat(39) + '\n',
+      REQUESTED_SOURCE_SHA: 'a'.repeat(39) + '\n',
+    }],
+    ['matching SHA with space', {
+      CALLER_HEAD_SHA: 'a'.repeat(39) + ' ',
+      REQUESTED_SOURCE_SHA: 'a'.repeat(39) + ' ',
+    }],
+    ['uppercase SHA', {
+      CALLER_HEAD_SHA: sha.toUpperCase(),
+      REQUESTED_SOURCE_SHA: sha.toUpperCase(),
+    }],
+    ['empty requested SHA', {
+      REQUESTED_SOURCE_SHA: '',
+    }],
+    ['push event', {
+      CALLER_EVENT_NAME: 'push',
+    }],
+    ['dispatch event', {
+      CALLER_EVENT_NAME: 'workflow_dispatch',
+    }],
+    ['pull_request_target event', {
+      CALLER_EVENT_NAME: 'pull_request_target',
+    }],
+    ['wrong repository', {
+      CALLER_BASE_REPOSITORY: 'fixture/another-repository',
+    }],
+    ['missing repository', {
+      EXPECTED_REPOSITORY: '',
+      CALLER_BASE_REPOSITORY: '',
+    }],
+  ];
+
+  for (const [name, overrides] of rejected) {
+    const result = execute(overrides);
+    assert.notEqual(result.status, 0, name);
+    assert.doesNotMatch(result.stdout, /PASS:/, name);
   }
 });
