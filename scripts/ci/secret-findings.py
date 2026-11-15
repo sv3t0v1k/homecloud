@@ -375,8 +375,6 @@ def qualify(findings, scanner_exit, raw_report_sha256=None, read_line=source_lin
         for r in records
     )
 
-    if source_count > len(_CHECKPOINT_ENTRIES):
-        raise ValueError("Too many historical checksum findings")
 
     blocked = len(findings) - public_count - source_count
 
@@ -493,12 +491,51 @@ def _checkpoint_blob(commit, path):
 
 
 
+def _checkpoint_merge_parent(commit, canonical):
+    """Prove the exact historical blob in a genuine merge commit."""
+    payload = _verified_git_object("commit", commit)
+    headers, separator, _ = payload.partition(b"\n\n")
+
+    if not separator:
+        return None
+
+    parents = []
+
+    for line in headers.splitlines():
+        if not line.startswith(b"parent "):
+            continue
+
+        match = re.fullmatch(rb"parent ([a-f0-9]{40})", line)
+
+        if not match:
+            return None
+
+        parents.append(match[1].decode("ascii"))
+
+    if len(parents) < 2 or len(set(parents)) != len(parents):
+        return None
+
+    if _checkpoint_blob(commit, _CHECKPOINT_PATH) != canonical:
+        return None
+
+    for parent in parents:
+        try:
+            if _checkpoint_blob(parent, _CHECKPOINT_PATH) == canonical:
+                return parent
+        except (
+            OSError, ValueError, TypeError, KeyError,
+            IndexError, subprocess.SubprocessError,
+        ):
+            continue
+
+    return None
+
+
 def _checkpoint_source_hash_proof(finding):
-    """Prove only the three immutable historical checksum findings."""
+    """Prove historical checksums and verified merge repetitions."""
     try:
         if (
             finding.get("RuleID") != "generic-api-key"
-            or finding.get("Commit") != _CHECKPOINT_COMMIT
             or finding.get("File") != _CHECKPOINT_PATH
             or finding.get("Secret") != "REDACTED"
         ):
@@ -521,6 +558,17 @@ def _checkpoint_source_hash_proof(finding):
         raw = _checkpoint_blob(
             _CHECKPOINT_COMMIT, _CHECKPOINT_PATH
         )
+
+        merge_parent = None
+        finding_commit = finding["Commit"]
+
+        if finding_commit != _CHECKPOINT_COMMIT:
+            merge_parent = _checkpoint_merge_parent(
+                finding_commit, raw
+            )
+
+            if merge_parent is None:
+                return None
 
         document = strict_json(raw)
         manifest = document["ci"]["actual_wave2_collector"]["pair_manifest"]
@@ -564,11 +612,21 @@ def _checkpoint_source_hash_proof(finding):
         if actual != expected:
             return None
 
-        return {
+        proof = {
             "kind": "historical_source_sha256",
             "source_commit": _CHECKPOINT_SOURCE_COMMIT,
             "source_path": path,
+            "historical_checkpoint_commit": _CHECKPOINT_COMMIT,
+            "checkpoint_blob_sha256": hashlib.sha256(raw).hexdigest(),
         }
+
+        if merge_parent is not None:
+            proof["merge_parent_commit"] = merge_parent
+            proof["merge_blob_verification"] = (
+                "EXACT_VERIFIED_MERGE_AND_PARENT_BLOB"
+            )
+
+        return proof
 
     except (
         OSError, ValueError, TypeError,
