@@ -734,5 +734,168 @@ class HistoricalGitObjectTests(unittest.TestCase):
         self.assertEqual(self.classify(), "PASS")
 
 
+    def make_merge_commit(self, path, data, parents):
+        _, tree, _ = self.make_commit(path, data)
+
+        payload = (
+            b"tree " + tree.encode() + b"\n"
+            + b"".join(
+                b"parent " + parent.encode() + b"\n"
+                for parent in parents
+            )
+            + b"author Fixture <fixture@example.invalid> 0 +0000\n"
+            + b"committer Fixture <fixture@example.invalid> 0 +0000\n"
+            + b"\nsynthetic merge fixture\n"
+        )
+
+        return self.object("commit", payload)
+
+    def merge_finding(self, commit):
+        return dict(
+            self.finding,
+            Commit=commit,
+            Fingerprint=commit + ":synthetic-merge-proof",
+        )
+
+    def classify_merge_report(self, findings):
+        with patch.object(s, "_CHECKPOINT_COMMIT", self.checkpoint), \
+             patch.object(s, "_CHECKPOINT_SOURCE_COMMIT", self.commit), \
+             patch.object(s, "_CHECKPOINT_ENTRIES", self.entries):
+            return s.qualify(
+                findings, 42,
+                raw_report_sha256=REPORT_SHA,
+            )
+
+    def test_identical_merge_repetitions_are_proved_individually(self):
+        merged = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw,
+            (self.commit, self.checkpoint),
+        )
+
+        next_merge = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw,
+            (self.commit, merged),
+        )
+
+        result = self.classify_merge_report([
+            self.finding,
+            self.merge_finding(merged),
+            self.merge_finding(next_merge),
+        ])
+
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["raw_findings"], 3)
+        self.assertEqual(result["verified_source_hashes"], 3)
+        self.assertEqual(result["unresolved_findings"], 0)
+
+        proof = result["findings"][1]["proof"]
+
+        self.assertEqual(proof["checkpoint_commit"], merged)
+        self.assertEqual(
+            proof["historical_checkpoint_commit"], self.checkpoint
+        )
+        self.assertEqual(
+            proof["merge_parent_commit"], self.checkpoint
+        )
+        self.assertEqual(
+            proof["checkpoint_blob_sha256"],
+            hashlib.sha256(self.raw).hexdigest(),
+        )
+        self.assertEqual(
+            result["findings"][2]["proof"]["merge_parent_commit"],
+            merged,
+        )
+
+    def test_changed_merge_blob_is_blocked(self):
+        merged = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw + b" ",
+            (self.commit, self.checkpoint),
+        )
+
+        result = self.classify_merge_report([
+            self.merge_finding(merged)
+        ])
+
+        self.assertEqual(result["status"], "BLOCKED")
+
+    def test_identical_nonmerge_commit_is_blocked(self):
+        copied = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw,
+            (self.checkpoint,),
+        )
+
+        result = self.classify_merge_report([
+            self.merge_finding(copied)
+        ])
+
+        self.assertEqual(result["status"], "BLOCKED")
+
+    def test_merge_without_identical_parent_is_blocked(self):
+        unrelated, _, _ = self.make_commit(
+            s._CHECKPOINT_PATH, self.raw + b" "
+        )
+
+        merged = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw,
+            (self.commit, unrelated),
+        )
+
+        result = self.classify_merge_report([
+            self.merge_finding(merged)
+        ])
+
+        self.assertEqual(result["status"], "BLOCKED")
+
+    def test_corrupted_merge_object_is_blocked(self):
+        merged = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw,
+            (self.commit, self.checkpoint),
+        )
+
+        payload = self.git("cat-file", "commit", merged)
+        self.corrupt(merged, "commit", payload + b"tampered")
+
+        result = self.classify_merge_report([
+            self.merge_finding(merged)
+        ])
+
+        self.assertEqual(result["status"], "BLOCKED")
+
+    def test_corrupted_matching_parent_is_blocked(self):
+        copied = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw,
+            (self.checkpoint,),
+        )
+
+        merged = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw,
+            (self.commit, copied),
+        )
+
+        payload = self.git("cat-file", "commit", copied)
+        self.corrupt(copied, "commit", payload + b"tampered")
+
+        result = self.classify_merge_report([
+            self.merge_finding(merged)
+        ])
+
+        self.assertEqual(result["status"], "BLOCKED")
+
+    def test_same_merge_finding_cannot_be_duplicated(self):
+        merged = self.make_merge_commit(
+            s._CHECKPOINT_PATH, self.raw,
+            (self.commit, self.checkpoint),
+        )
+
+        finding = self.merge_finding(merged)
+
+        with self.assertRaises(ValueError):
+            self.classify_merge_report([
+                finding,
+                dict(finding, Fingerprint="different-fingerprint"),
+            ])
+
+
+
 if __name__=='__main__':
     unittest.main()
