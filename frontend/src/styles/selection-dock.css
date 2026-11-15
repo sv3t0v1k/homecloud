@@ -1,0 +1,495 @@
+
+
+/* UI foundation: liquid selection dock */
+
+.ux-v2 .selection-toolbar.liquid-selection-dock {
+  box-sizing: border-box;
+
+  position: fixed;
+  z-index: 32;
+
+  left: max(24px, env(safe-area-inset-left));
+  bottom: max(24px, env(safe-area-inset-bottom));
+
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+
+  gap: 7px;
+  padding: 8px;
+
+  max-width: min(720px, calc(100vw - 120px));
+  max-height: 40dvh;
+
+  border-radius: 28px;
+  border: 1px solid var(--border-strong);
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.085),
+    rgba(255,255,255,.008) 68%
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.20),
+    0 12px 36px rgba(0,0,0,.28);
+}
+
+@supports (
+  (backdrop-filter: blur(24px)) or
+  (-webkit-backdrop-filter: blur(24px))
+) {
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    background-color: color-mix(
+      in srgb,
+      var(--surface-elevated) 86%,
+      transparent
+    );
+
+    backdrop-filter: blur(24px) saturate(145%);
+    -webkit-backdrop-filter: blur(24px) saturate(145%);
+  }
+}
+
+/* Selection count: the dock's visual anchor. */
+.ux-v2 .selection-dock-count {
+  display: flex;
+  align-items: center;
+
+  gap: 9px;
+  padding-right: 4px;
+  min-width: 0;
+}
+
+.ux-v2 .selection-dock-number {
+  box-sizing: border-box;
+
+  display: grid;
+  place-items: center;
+
+  min-width: 44px;
+  height: 44px;
+  padding-inline: 9px;
+
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: var(--accent-soft);
+
+  background-image: radial-gradient(
+    circle at 35% 20%,
+    rgba(159,190,99,.23),
+    rgba(159,190,99,.025) 80%
+  );
+
+  color: var(--success);
+
+  font-size: 16px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.13);
+}
+
+.ux-v2 .selection-dock-caption {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.ux-v2 .selection-dock-divider {
+  display: block;
+  flex: 0 0 1px;
+  width: 1px;
+  height: 26px;
+  margin-inline: 1px;
+
+  background: var(--border-subtle);
+}
+
+/* Circular glass actions. */
+.ux-v2 .liquid-selection-dock
+.selection-dock-action {
+  box-sizing: border-box;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  flex: 0 0 auto;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 11px;
+
+  gap: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.075),
+    rgba(255,255,255,.005)
+  );
+
+  color: var(--text-secondary);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.085);
+
+  white-space: nowrap;
+
+  transition:
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    border-color 250ms ease,
+    background-color 250ms ease,
+    color 250ms ease,
+    box-shadow 250ms ease;
+}
+
+.ux-v2 .selection-dock-action > svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.ux-v2 .selection-dock-label {
+  display: block;
+  min-width: 0;
+  max-width: 0;
+
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+
+  font-size: 12px;
+  font-weight: 600;
+
+  transition:
+    max-width 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+.ux-v2 .selection-dock-action:not(:disabled):is(
+  :hover, :focus-visible
+) {
+  color: var(--text-primary);
+  background-color: var(--surface-secondary);
+
+  border-color: color-mix(
+    in srgb,
+    var(--border-strong) 75%,
+    white
+  );
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.18),
+    0 3px 12px rgba(0,0,0,.10);
+}
+
+.ux-v2 .selection-dock-action:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.ux-v2 .selection-dock-action:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+
+
+/* A destructive action gets a semantic hover accent.
+   Confirmation is still required before moving to Trash. */
+.ux-v2 .selection-dock-trash:not(:disabled):is(
+  :hover, :focus-visible
+) {
+  background-color: var(--danger-soft);
+  color: var(--danger);
+
+  border-color: color-mix(
+    in srgb,
+    var(--danger) 45%,
+    var(--border-subtle)
+  );
+}
+
+/* Do not cover the upload dock on narrower desktops. */
+@media (min-width: 901px) {
+  body:has(.liquid-upload-dock)
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    max-width: min(720px, calc(100vw - 520px));
+  }
+}
+
+/* Soft entrance, in the same rhythm as the toolbars. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .liquid-selection-dock {
+    animation: homecloud-selection-dock-appear
+      450ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-selection-dock-appear {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+/* No hover dependency on narrow screens or touch devices. */
+@media (max-width: 800px), (hover: none), (pointer: coarse) {
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    left: max(16px, env(safe-area-inset-left));
+    bottom: max(16px, env(safe-area-inset-bottom));
+
+    max-width: calc(100vw - 104px);
+    padding: 6px;
+    gap: 5px;
+    border-radius: 22px;
+  }
+
+  .ux-v2 .selection-dock-caption,
+  .ux-v2 .selection-dock-divider {
+    display: none;
+  }
+
+  .ux-v2 .selection-dock-count {
+    padding-right: 0;
+  }
+
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action {
+    height: auto;
+    min-height: 48px;
+    max-width: 110px;
+
+    flex-direction: column;
+    gap: 3px;
+    padding: 5px 8px;
+
+    border-radius: 14px;
+    white-space: normal;
+  }
+
+  .ux-v2 .selection-dock-label {
+    max-width: 100%;
+    opacity: 1;
+    overflow: visible;
+    white-space: normal;
+
+    font-size: 10px;
+    line-height: 1.3;
+    text-align: center;
+  }
+}
+
+/* When both docks are visible on a narrow screen,
+   move Upload Dock above the selection controls. */
+@media (max-width: 900px) {
+  body:has(.liquid-selection-dock) .liquid-upload-dock {
+    bottom: calc(
+      max(24px, env(safe-area-inset-bottom)) + 180px
+    );
+
+    max-height: calc(100dvh - 220px);
+    overflow-y: auto;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    background-color: var(--surface-elevated);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .liquid-selection-dock .selection-dock-action,
+  .ux-v2 .liquid-selection-dock .selection-dock-label {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid selection fixed motion */
+
+/* The dock is a stable instrument: no scaling,
+   no expanding buttons and no moving neighbours. */
+@media (hover: hover) and (pointer: fine)
+and (min-width: 801px) {
+  .ux-v2 .selection-toolbar.liquid-selection-dock {
+    overflow: visible;
+  }
+
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action {
+    position: static;
+
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    height: 44px;
+
+    flex: 0 0 44px;
+    padding: 0;
+    gap: 0;
+
+    transform: none;
+
+    transition:
+      background-color 250ms ease,
+      border-color 250ms ease,
+      color 250ms ease,
+      box-shadow 250ms ease;
+  }
+
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action:is(
+    :hover, :focus-visible, :active
+  ) {
+    gap: 0;
+    transform: none;
+  }
+
+  /* Shared caption position, above the entire dock.
+     Each button retains its own accessible name. */
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-label {
+    box-sizing: border-box;
+
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 12px);
+
+    transform: translateX(-50%);
+
+    width: min(210px, calc(100% - 12px));
+    max-width: none;
+    min-width: 0;
+
+    padding: 11px 14px;
+    margin: 0;
+
+    border-radius: 999px;
+    border: 1px solid var(--accent-muted);
+
+    background: var(--surface-elevated);
+
+    background-image: linear-gradient(
+      155deg,
+      rgba(159,190,99,.10),
+      rgba(255,255,255,.01) 72%
+    );
+
+    color: var(--text-primary);
+
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+    text-align: center;
+
+    white-space: normal;
+    overflow-wrap: anywhere;
+
+    box-shadow:
+      inset 0 1px 1px rgba(255,255,255,.14),
+      0 6px 22px rgba(0,0,0,.22);
+
+    z-index: 1;
+    pointer-events: none;
+
+    opacity: 0;
+    visibility: hidden;
+
+    transition: opacity 220ms ease;
+  }
+
+  /* Only one caption can be visible at a time. */
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action:not(:disabled):is(
+    :hover, :focus-visible
+  ) > .selection-dock-label {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Pointer hover takes priority when another
+     button retains keyboard focus. */
+  .ux-v2 .liquid-selection-dock:has(
+    .selection-dock-action:not(:disabled):hover
+  )
+  .selection-dock-action:not(:hover)
+  > .selection-dock-label {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  /* Soft green inner light, not physical movement. */
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action:not(:disabled):is(
+    :hover, :focus-visible
+  ) {
+    background-color: var(--accent-soft);
+    color: var(--success);
+
+    border-color: color-mix(
+      in srgb, var(--accent) 65%, var(--border-strong)
+    );
+
+    box-shadow:
+      inset 0 1px 2px rgba(255,255,255,.18),
+      inset 0 0 12px rgba(159,190,99,.08),
+      0 0 14px rgba(159,190,99,.10);
+  }
+
+  /* The same light language for destructive actions,
+     but with the existing semantic danger color. */
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-trash:not(:disabled):is(
+    :hover, :focus-visible
+  ) {
+    background-color: var(--danger-soft);
+    color: var(--danger);
+
+    border-color: color-mix(
+      in srgb, var(--danger) 50%, var(--border-strong)
+    );
+
+    box-shadow:
+      inset 0 1px 2px rgba(255,255,255,.14),
+      0 0 12px rgba(247,163,155,.08);
+  }
+
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-trash > .selection-dock-label {
+    border-color: color-mix(
+      in srgb, var(--danger) 40%, var(--border-strong)
+    );
+
+    color: var(--danger);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ux-v2 .liquid-selection-dock
+    .selection-dock-action,
+    .ux-v2 .liquid-selection-dock
+    .selection-dock-label {
+      transition: none;
+    }
+  }
+}
+
+/* On touch devices, keep the existing visible labels.
+   Give them enough width instead of forcing 44px. */
+@media (max-width: 800px), (hover: none), (pointer: coarse) {
+  .ux-v2 .liquid-selection-dock
+  .selection-dock-action {
+    width: auto;
+    min-width: 56px;
+    max-width: 110px;
+  }
+}
