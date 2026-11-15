@@ -6,7 +6,6 @@ const { test } = require('node:test');
 const yaml = require('../../backend/node_modules/js-yaml');
 const root = path.resolve(__dirname, '../..');
 const read = name => yaml.load(fs.readFileSync(path.join(root, '.github/workflows', name), 'utf8'));
-const caller = read('recovery-qualification.yml');
 const workflow = read('ci.yml');
 
 test('all actual environment qualification jobs bootstrap the pinned global npm', () => {
@@ -46,28 +45,48 @@ test('real age is installed before scheduled recovery contracts in both CI route
   }
 });
 
-test('every PR revision reaches read-only exact-HEAD offline qualification', () => {
+test('every PR revision reaches read-only exact-HEAD native recovery', () => {
   const parent = read('ci-v2-fast.yml');
-  assert.deepEqual(new Set(parent.on.pull_request.types), new Set(['opened', 'synchronize', 'reopened', 'ready_for_review']));
+
+  assert.deepEqual(
+    new Set(parent.on.pull_request.types),
+    new Set(['opened', 'synchronize', 'reopened', 'ready_for_review'])
+  );
+
   assert.deepEqual(Object.keys(parent.on.pull_request), ['types']);
+
   const invocation = parent.jobs['recovery-qualification'];
+
   assert.deepEqual(invocation, {
     if: "github.event_name == 'pull_request'",
-    uses: './.github/workflows/recovery-qualification.yml',
+    uses: './.github/workflows/recovery-native.yml',
     with: { source_sha: '${{ github.event.pull_request.head.sha }}' },
     permissions: { contents: 'read' },
   });
-  assert.deepEqual(caller.on, { workflow_call: { inputs: { source_sha: { type: 'string', required: true } } } });
-  assert.deepEqual(caller.permissions, { contents: 'read' });
-  assert.deepEqual(Object.keys(caller.jobs), ['qualify']);
-  const job = caller.jobs.qualify;
-  assert.deepEqual(Object.keys(job).sort(), ['permissions', 'uses', 'with']);
-  assert.equal(job.uses, './.github/workflows/ci.yml');
-  assert.deepEqual(job.permissions, { contents: 'read' });
-  assert.deepEqual(job.with, {
-    source_sha: '${{ inputs.source_sha }}',
-    candidate_version: 'dry-run', qualification_profile: 'pull-request',
+
+  const recovery = read('recovery-native.yml');
+
+  assert.deepEqual(recovery.on, {
+    workflow_call: {
+      inputs: {
+        source_sha: { type: 'string', required: true },
+      },
+    },
   });
+
+  assert.deepEqual(recovery.permissions, { contents: 'read' });
+  assert.deepEqual(Object.keys(recovery.jobs), ['native-recovery']);
+
+  const job = recovery.jobs['native-recovery'];
+
+  assert.equal(job.uses, undefined);
+  assert.equal(job['continue-on-error'], undefined);
+  assert.equal(job['runs-on'], 'ubuntu-24.04');
+
+  assert.equal(
+    job.steps[0].name,
+    'Verify trusted PR source before checkout'
+  );
 });
 
 test('native runtime tests use the retained candidate and mandatory aggregate gate', () => {

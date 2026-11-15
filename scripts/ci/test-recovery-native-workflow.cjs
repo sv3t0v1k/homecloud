@@ -157,6 +157,7 @@ test('fast CI executes the new routing regression', () => {
   for (const name of [
     'pr-fast-backend', 'backend',
     'frontend', 'configuration', 'secrets',
+    'recovery-qualification',
   ]) {
     assert.ok(gate.needs.includes(name), name);
   }
@@ -463,4 +464,38 @@ test('runtime OCI binding rejects substituted images', () => {
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+
+test('Fast CI invokes Native Recovery directly and only for pull requests', () => {
+  const fast = read('ci-v2-fast.yml');
+  const call = fast.jobs['recovery-qualification'];
+  const gate = fast.jobs['fast-integration-gate'];
+
+  assert.deepEqual(call, {
+    if: "github.event_name == 'pull_request'",
+    uses: './.github/workflows/recovery-native.yml',
+    with: {
+      source_sha: '${{ github.event.pull_request.head.sha }}',
+    },
+    permissions: { contents: 'read' },
+  });
+
+  assert.deepEqual(new Set(gate.needs), new Set([
+    'pr-fast-backend',
+    'backend',
+    'frontend',
+    'configuration',
+    'secrets',
+    'recovery-qualification',
+  ]));
+
+  assert.equal(gate.name, 'ci-v2-fast-terminal');
+  assert.equal(gate.if, 'always()');
+  assert.equal(gate['continue-on-error'], undefined);
+
+  const job = workflow.jobs['native-recovery'];
+
+  assert.equal(job.uses, undefined);
+  assert.equal(job['continue-on-error'], undefined);
 });
