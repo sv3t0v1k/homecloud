@@ -59,10 +59,16 @@ class SearchSession {
     this.changed()
   }
 
-  acquire(query: string, offset: number) {
+  acquire(query: string, offset: number, retryExpiredRateLimit = false) {
     const key = JSON.stringify([query, offset])
     this.leases.set(key, (this.leases.get(key) ?? 0) + 1)
-    this.load(query, offset)
+
+    const cached = this.pages.get(key)?.value
+    const retryRateLimit = retryExpiredRateLimit &&
+      cached?.error?.status === 429 &&
+      Date.now() >= this.cooldownUntil
+
+    this.load(query, offset, retryRateLimit)
     return () => {
       this.leases.set(key, Math.max(0, (this.leases.get(key) ?? 1) - 1))
       queueMicrotask(() => {
@@ -117,15 +123,19 @@ export function SearchSessionProvider({ ownerId, children }: { ownerId: number; 
   return createElement(SearchContext.Provider, { value: session }, children)
 }
 
-export function useGlobalSearch(query: string | null, offset: number) {
+export function useGlobalSearch(
+  query: string | null,
+  offset: number,
+  retryExpiredRateLimit = false,
+) {
   const session = useContext(SearchContext)
   if (!session) throw new Error('useGlobalSearch requires SearchSessionProvider')
   useSyncExternalStore(session.subscribe, session.getVersion, session.getVersion)
   const key = query === null ? null : JSON.stringify([query, offset])
   useEffect(() => {
     if (query === null) return
-    return session.acquire(query, offset)
-  }, [session, query, offset])
+    return session.acquire(query, offset, retryExpiredRateLimit)
+  }, [session, query, offset, retryExpiredRateLimit])
   return {
     ...session.snapshot(key),
     cooldownUntil: session.cooldownUntil,

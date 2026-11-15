@@ -42,7 +42,7 @@ export function GlobalSearchPage({
   const spotlightContent = useRef<HTMLDivElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const resultHeading = useRef<HTMLHeadingElement>(null)
-  const { status, data, error, retry, cooldownUntil } = useGlobalSearch(parsed.error ? null : committed, parsed.offset)
+  const { status, data, error, retry, cooldownUntil } = useGlobalSearch(parsed.error ? null : committed, parsed.offset, inline)
   const [now, setNow] = useState(Date.now())
   const [preview, setPreview] = useState<SearchFile | null>(null)
   const [share, setShare] = useState<ShareDialogTarget | null>(null)
@@ -153,19 +153,45 @@ export function GlobalSearchPage({
     }
 
     if (query === committed) return
-    if (Date.now() < cooldownUntil) return
 
-    const timer = window.setTimeout(() => {
-      if (Date.now() < cooldownUntil) return
+    // Keep the latest draft pending during Retry-After.
+    // Changing the draft or closing Spotlight cancels
+    // the previous timer.
+    function commitWhenAllowed() {
+      const wait = cooldownUntil - Date.now()
+
+      if (wait > 0) {
+        timer = window.setTimeout(commitWhenAllowed, wait)
+        return
+      }
+
       setInlineLocation({ query, offset: 0 })
-    }, 500)
+    }
+
+    let timer = window.setTimeout(
+      commitWhenAllowed,
+      Math.max(500, cooldownUntil - Date.now()),
+    )
 
     return () => window.clearTimeout(timer)
   }, [inline, draft, committed, cooldownUntil])
   useEffect(() => {
-    if (Math.max(cooldownUntil, path?.retryAt ?? 0) <= Date.now()) return
-    setNow(Date.now())
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    const deadline = Math.max(cooldownUntil, path?.retryAt ?? 0)
+    const current = Date.now()
+
+    setNow(current)
+
+    if (deadline <= current) return
+
+    const timer = window.setInterval(() => {
+      const current = Date.now()
+      setNow(current)
+
+      if (current >= deadline) {
+        window.clearInterval(timer)
+      }
+    }, 1000)
+
     return () => window.clearInterval(timer)
   }, [cooldownUntil, path?.retryAt])
   useEffect(() => {
@@ -208,6 +234,31 @@ export function GlobalSearchPage({
       return
     }
     navigate(`/files/search?${new URLSearchParams({ q: query })}`, { state: { returnTo, focusResults: true } })
+  }
+
+  function retrySearch() {
+    if (error?.status === 400) {
+      input.current?.focus()
+      return
+    }
+
+    if (Date.now() < cooldownUntil || busy) return
+
+    if (inline) {
+      const query = normalizeSearchQuery(draft)
+
+      if (!query) {
+        input.current?.focus()
+        return
+      }
+
+      if (query !== committed) {
+        setInlineLocation({ query, offset: 0 })
+        return
+      }
+    }
+
+    retry()
   }
 
   function navigateFromResult(result: Result, destination: string, extra: Record<string, unknown> = {}) {
@@ -355,7 +406,7 @@ export function GlobalSearchPage({
       : inline ? 'search-help sr-only' : 'search-help'} id="global-search-help" role={validation || parsed.error ? 'alert' : undefined}>{validation || parsed.error || (inline ? 'От 2 символов · Enter для поиска' : 'От 2 до 100 символов. Нажмите Enter, чтобы начать поиск.')}</p>
     </form>
     {actionNotice ? <p className="search-notice" role="status">{actionNotice}</p> : null}
-    {error && (!awaitingQuery || error.status === 429) ? <div className="search-error" role="alert"><Icon name="search" /><div><h2>{searchErrorTitle(error)}</h2><p>{error.status === 429 ? <><span>Запрос сохранён. </span><span aria-hidden="true">{remaining > 0 ? `Повторить через ${remaining} с.` : 'Можно повторить поиск.'}</span><span className="sr-only">{remaining > 0 ? 'Дождитесь окончания ограничения.' : 'Можно повторить поиск.'}</span></> : searchErrorDetail(error)}</p><button className="button button--ghost" type="button" onClick={() => { if (error.status === 400) input.current?.focus(); else retry() }} disabled={remaining > 0}>{error.status === 400 ? 'Изменить запрос' : 'Повторить'}</button></div></div> : null}
+    {error && (!awaitingQuery || error.status === 429) ? <div className="search-error" role="alert"><Icon name="search" /><div><h2>{searchErrorTitle(error)}</h2><p>{error.status === 429 ? <><span>Запрос сохранён. </span><span aria-hidden="true">{remaining > 0 ? `Повторить через ${remaining} с.` : 'Можно повторить поиск.'}</span><span className="sr-only">{remaining > 0 ? 'Дождитесь окончания ограничения.' : 'Можно повторить поиск.'}</span></> : searchErrorDetail(error)}</p><button className="button button--ghost" type="button" onClick={retrySearch} disabled={remaining > 0}>{error.status === 400 ? 'Изменить запрос' : 'Повторить'}</button></div></div> : null}
     <div className="search-results" aria-busy={busy} style={busy && data && !inline ? { minHeight: Math.max(300, count * 82) } : undefined}>
       <div className="search-results-heading"><h2 ref={resultHeading} tabIndex={-1}>{committed ? <>Результаты для «{committed}»</> : 'Найдите нужное в своём облаке'}</h2>{data && count > 0 && !awaitingQuery ? <span className="mono">{parsed.offset + 1}–{parsed.offset + count}</span> : null}</div>
       <p className="sr-only" role="status">{busy ? 'Поиск выполняется' : status === 'ready' ? count ? `На странице результатов: ${count}` : 'Совпадений не найдено' : ''}</p>

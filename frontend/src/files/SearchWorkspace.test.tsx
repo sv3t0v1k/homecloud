@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
-import { AxiosHeaders, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
+import { AxiosError, AxiosHeaders, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { apiClient, sessionClient } from '../api/client'
@@ -15,6 +15,7 @@ let calls: InternalAxiosRequestConfig[]
 let discoveredSessions: unknown[]
 let searchResult: SearchPage
 let filePresent: boolean
+let searchHandler: ((config: InternalAxiosRequestConfig) => AxiosResponse) | null
 
 beforeEach(() => {
   localStorage.clear()
@@ -24,13 +25,17 @@ beforeEach(() => {
   discoveredSessions = []
   searchResult = { files: [], folders: [], offset: 0, limit: 20, hasMore: false }
   filePresent = true
+  searchHandler = null
   sessionClient.defaults.adapter = async config => ok(config, { accessToken: 'fresh-access', refreshToken: 'fresh-refresh' })
   apiClient.defaults.adapter = async config => {
     calls.push(config)
     if (config.url === '/users/me') return ok(config, { id: 1, name: 'Owner', email: 'owner@example.test', isActive: true, storageQuota: '10000', storageUsed: '0' })
     if (config.url === '/auth/login') return ok(config, { accessToken: 'login-access', refreshToken: 'login-refresh' })
     if (config.url === '/uploads/sessions') return ok(config, discoveredSessions)
-    if (config.url === '/files/search') return ok(config, { ...searchResult, offset: Number(config.params?.offset ?? 0) })
+    if (config.url === '/files/search') {
+      if (searchHandler) return searchHandler(config)
+      return ok(config, { ...searchResult, offset: Number(config.params?.offset ?? 0) })
+    }
     if (config.url === '/files/folders/7') return ok(config, folder())
     if (config.url === '/files/folders') return ok(config, config.params?.parentId ? [] : [folder()])
     if (config.url === '/files') return ok(config, config.params?.parentId === 7 && filePresent ? [file()] : [])
@@ -43,6 +48,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   localStorage.clear()
   tokenStorage.clear()
   apiClient.defaults.adapter = originalApi
@@ -59,7 +65,220 @@ function renderWorkspace(path: string) {
   return render(<MemoryRouter initialEntries={[path]}><SessionProvider><NavigationProbe /><App /></SessionProvider></MemoryRouter>)
 }
 
+function searchCalls() {
+  return calls.filter(call => call.url === '/files/search')
+}
+
+function limitFirstSearch(retryAfter = '10') {
+  let rejected = false
+
+  searchHandler = config => {
+    if (!rejected) {
+      rejected = true
+
+      throw new AxiosError(
+        'rate limited',
+        undefined,
+        config,
+        undefined,
+        {
+          config,
+          status: 429,
+          statusText: 'Too Many Requests',
+          headers: new AxiosHeaders({
+            'Retry-After': retryAfter,
+          }),
+          data: {
+            statusCode: 429,
+            message: 'Search temporarily limited',
+          },
+        },
+      )
+    }
+
+    return ok(config, {
+      ...searchResult,
+      offset: Number(config.params?.offset ?? 0),
+    })
+  }
+}
+
+async function beginRateLimitedSearch(retryAfter = '10') {
+  limitFirstSearch(retryAfter)
+  renderWorkspace('/files')
+
+  const user = userEvent.setup()
+
+  await screen.findByRole('heading', {
+    name: 'Мои файлы',
+  })
+
+  await user.click(screen.getByRole('button', {
+    name: 'Поиск во всех файлах',
+  }))
+
+  const input = await screen.findByRole('searchbox', {
+    name: 'Название файла или папки',
+  })
+
+  await user.type(input, 'report{Enter}')
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Поиск временно ограничен',
+  )
+
+  expect(searchCalls()).toHaveLength(1)
+
+  return input
+}
+
+async function advanceSearchTime(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+}
+
 describe('global search in the shared authenticated workspace', () => {
+
+  it('automatically searches only the latest draft after Retry-After and can revisit a cached 429', async () => {
+    const input = await beginRateLimitedSearch()
+
+    vi.useFakeTimers()
+
+    fireEvent.change(input, {
+      target: { value: 'first draft' },
+    })
+
+    await advanceSearchTime(1000)
+
+    fireEvent.change(input, {
+      target: { value: 'photo' },
+    })
+
+    await advanceSearchTime(8000)
+
+    // No request may escape the server cooldown.
+    expect(searchCalls()).toHaveLength(1)
+
+    await advanceSearchTime(2000)
+
+    expect(searchCalls().map(call => call.params?.q)).toEqual([
+      'report',
+      'photo',
+    ])
+
+    expect(screen.getByRole('heading', {
+      name: 'Результаты для «photo»',
+    })).toBeInTheDocument()
+
+    // The previous query still has a cached 429.
+    // After cooldown it must be searchable again.
+    fireEvent.change(input, {
+      target: { value: 'report' },
+    })
+
+    await advanceSearchTime(600)
+
+    expect(searchCalls().map(call => call.params?.q)).toEqual([
+      'report',
+      'photo',
+      'report',
+    ])
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('resumes a new search after reopening Spotlight during an active cooldown', async () => {
+    await beginRateLimitedSearch()
+
+    vi.useFakeTimers()
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Закрыть поиск',
+    }))
+
+    await advanceSearchTime(1000)
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    const input = screen.getByRole('searchbox', {
+      name: 'Название файла или папки',
+    })
+
+    fireEvent.change(input, {
+      target: { value: 'photo' },
+    })
+
+    await advanceSearchTime(8000)
+    expect(searchCalls()).toHaveLength(1)
+
+    await advanceSearchTime(2000)
+
+    expect(searchCalls().map(call => call.params?.q)).toEqual([
+      'report',
+      'photo',
+    ])
+
+    expect(screen.getByRole('heading', {
+      name: 'Результаты для «photo»',
+    })).toBeInTheDocument()
+  })
+
+  it('cancels the pending draft when Spotlight closes during cooldown', async () => {
+    const input = await beginRateLimitedSearch()
+
+    vi.useFakeTimers()
+
+    fireEvent.change(input, {
+      target: { value: 'photo' },
+    })
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Закрыть поиск',
+    }))
+
+    await advanceSearchTime(11000)
+
+    expect(searchCalls().map(call => call.params?.q)).toEqual([
+      'report',
+    ])
+
+    expect(screen.queryByRole('searchbox', {
+      name: 'Название файла или папки',
+    })).not.toBeInTheDocument()
+  })
+
+  it('retries the current Spotlight draft instead of the previous committed query', async () => {
+    const input = await beginRateLimitedSearch('0')
+
+    vi.useFakeTimers()
+
+    fireEvent.change(input, {
+      target: { value: 'photo' },
+    })
+
+    const retryButton = screen.getByRole('button', {
+      name: 'Повторить',
+    })
+
+    expect(retryButton).toBeEnabled()
+
+    fireEvent.click(retryButton)
+
+    await advanceSearchTime(600)
+
+    expect(searchCalls().map(call => call.params?.q)).toEqual([
+      'report',
+      'photo',
+    ])
+
+    expect(screen.getByRole('heading', {
+      name: 'Результаты для «photo»',
+    })).toBeInTheDocument()
+  })
+
   it('preserves deep-search query and page through an anonymous login roundtrip', async () => {
     tokenStorage.clear()
     searchResult.files = [file()]
