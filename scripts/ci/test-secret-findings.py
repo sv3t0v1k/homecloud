@@ -339,7 +339,10 @@ class CheckpointSourceHashTests(unittest.TestCase):
             if '"' + self.path + '"' in value
         )
 
-        self.entries = {line: (24, 110, self.path)}
+        raw_line = self.raw.decode().splitlines()[line - 1]
+        self.start = raw_line.index('"') + 2
+        self.end = len(raw_line) + 1
+        self.entries = {line: (self.start, self.end, self.path)}
 
         self.finding = {
             "RuleID": "generic-api-key",
@@ -347,8 +350,8 @@ class CheckpointSourceHashTests(unittest.TestCase):
             "File": s._CHECKPOINT_PATH,
             "StartLine": line,
             "EndLine": line,
-            "StartColumn": 24,
-            "EndColumn": 110,
+            "StartColumn": self.start,
+            "EndColumn": self.end,
             "Secret": "REDACTED",
             "Fingerprint": "checkpoint-fixture",
         }
@@ -393,12 +396,14 @@ class CheckpointSourceHashTests(unittest.TestCase):
             ("Commit", "b" * 40),
             ("File", "other.json"),
             ("RuleID", "github-pat"),
-            ("StartColumn", 25),
-            ("EndColumn", 111),
+            ("StartColumn", self.start + 1),
+            ("EndColumn", self.end + 1),
             ("StartLine", 100),
         ):
             finding = dict(self.finding)
             finding[key] = value
+            if key == 'StartLine':
+                finding['EndLine'] = value
 
             with self.subTest(key=key):
                 self.assertEqual(
@@ -420,6 +425,313 @@ class CheckpointSourceHashTests(unittest.TestCase):
         self.assertEqual(result["verified_source_hashes"], 1)
         self.assertEqual(result["unresolved_findings"], 1)
 
+
+
+
+
+    def test_same_coordinates_different_fingerprint_rejected(self):
+        duplicate = dict(
+            self.finding, Fingerprint="different-fingerprint"
+        )
+        with self.assertRaises(ValueError):
+            self.evaluate(extra=(duplicate,))
+
+    def test_duplicate_fingerprint_rejected(self):
+        other = dict(self.finding, RuleID="github-pat")
+        with self.assertRaises(ValueError):
+            self.evaluate(extra=(other,))
+
+    def test_malformed_and_missing_coordinates_rejected(self):
+        keys = (
+            "StartLine", "EndLine", "StartColumn", "EndColumn",
+        )
+
+        for key in keys:
+            for value in (
+                float(self.finding[key]),
+                True, None, "1", 0, -1,
+            ):
+                with self.subTest(key=key, value=value):
+                    finding = dict(self.finding)
+                    finding[key] = value
+                    with self.assertRaises(ValueError):
+                        self.evaluate(finding)
+
+            missing = dict(self.finding)
+            missing.pop(key)
+
+            with self.subTest(missing=key):
+                with self.assertRaises(ValueError):
+                    self.evaluate(missing)
+
+    def test_digest_outside_finding_span_blocks(self):
+        number = self.finding["StartLine"]
+        line = self.raw.decode().splitlines()[number - 1]
+        short_end = line.index('":') + 2
+
+        finding = dict(self.finding, EndColumn=short_end)
+
+        self.entries = {
+            number: (self.start, short_end, self.path),
+        }
+
+        result = self.evaluate(finding)
+
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["verified_source_hashes"], 0)
+
+
+class StrictScannerReportTests(unittest.TestCase):
+
+    def test_duplicate_keys_and_invalid_constants(self):
+        cases = (
+            b'{"a":1,"a":2}',
+            b'[{"outer":{"a":1,"a":2}}]',
+            b'{"a":NaN}',
+            b'{"a":Infinity}',
+            b'{"a":-Infinity}',
+        )
+
+        for raw in cases:
+            with self.subTest(raw=raw):
+                with self.assertRaises(ValueError):
+                    s.strict_json(raw)
+
+    def test_source_hash_counter_always_present(self):
+        result = s.qualify([], 0)
+
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["verified_source_hashes"], 0)
+        self.assertEqual(result["unresolved_findings"], 0)
+
+    def test_bool_and_float_exit_codes_rejected(self):
+        for value in (False, True, 0.0, 42.0):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    s.qualify([], value)
+
+    def test_cli_rejects_duplicate_json_keys(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory(
+            prefix="hc-report-fixture-"
+        ) as directory:
+            report = Path(directory) / "report.json"
+            output = Path(directory) / "classification.json"
+
+            report.write_bytes(b'[{"RuleID":"a","RuleID":"b"}]')
+
+            result = s.subprocess.run(
+                [
+                    s.sys.executable,
+                    "-B",
+                    str(Path(s.__file__).resolve()),
+                    "--report", str(report),
+                    "--scanner-exit", "42",
+                    "--output", str(output),
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+
+            self.assertEqual(result.returncode, 1)
+
+            evidence = json.loads(output.read_bytes())
+            self.assertEqual(evidence["status"], "BLOCKED")
+            self.assertIn("error", evidence)
+
+
+class HistoricalGitObjectTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        # Synthetic objects only; never a copy of HomeCloud.
+        temp = tempfile.TemporaryDirectory(prefix="hc-proof-fixture-")
+        self.addCleanup(temp.cleanup)
+        self.repo = Path(temp.name)
+
+        clean_env = {
+            k: v for k, v in os.environ.items()
+            if not k.startswith("GIT_")
+        }
+        environment = patch.dict(os.environ, clean_env, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+
+        old = Path.cwd()
+        os.chdir(self.repo)
+        self.addCleanup(os.chdir, old)
+
+        self.git("init", "--bare", "--object-format=sha1", "-q")
+
+        self.source_path = "scripts/ci/fixture.py"
+        self.content = b"original source fixture\n"
+
+        self.commit, self.tree, self.blob = self.make_commit(
+            self.source_path, self.content
+        )
+
+        document = {
+            "ci": {
+                "actual_wave2_collector": {
+                    "pair_manifest": {
+                        "commit": self.commit,
+                        "source_files": {
+                            self.source_path:
+                                hashlib.sha256(self.content).hexdigest(),
+                        },
+                    },
+                },
+            },
+        }
+
+        self.raw = json.dumps(document, indent=2).encode()
+
+        self.checkpoint, _, self.checkpoint_blob = self.make_commit(
+            s._CHECKPOINT_PATH, self.raw
+        )
+
+        number, line = next(
+            (n, line)
+            for n, line in enumerate(self.raw.decode().splitlines(), 1)
+            if '"' + self.source_path + '"' in line
+        )
+
+        start = line.index('"') + 2
+        end = len(line) + 1
+
+        self.entries = {
+            number: (start, end, self.source_path),
+        }
+
+        self.finding = dict(
+            RuleID="generic-api-key",
+            Commit=self.checkpoint,
+            File=s._CHECKPOINT_PATH,
+            Secret="REDACTED",
+            Fingerprint="synthetic-object-proof",
+            StartLine=number,
+            EndLine=number,
+            StartColumn=start,
+            EndColumn=end,
+        )
+
+    def git(self, *args, data=None):
+        return s.subprocess.check_output(
+            ["git", "-C", str(self.repo), *args],
+            input=data,
+            stderr=s.subprocess.PIPE,
+        )
+
+    def object(self, kind, data):
+        return self.git(
+            "hash-object", "-w", "-t", kind, "--stdin",
+            data=data,
+        ).decode().strip()
+
+    def make_commit(self, path, data):
+        blob = self.object("blob", data)
+        oid, mode = blob, b"100644"
+
+        for part in reversed(path.split("/")):
+            raw = (
+                mode + b" " + part.encode() + b"\0"
+                + bytes.fromhex(oid)
+            )
+            oid = self.object("tree", raw)
+            mode = b"40000"
+
+        tree = oid
+
+        payload = (
+            b"tree " + tree.encode() + b"\n"
+            b"author Fixture <fixture@example.invalid> 0 +0000\n"
+            b"committer Fixture <fixture@example.invalid> 0 +0000\n"
+            b"\nsynthetic fixture\n"
+        )
+
+        return self.object("commit", payload), tree, blob
+
+    def loose(self, oid):
+        return self.repo / "objects" / oid[:2] / oid[2:]
+
+    def corrupt(self, oid, kind, data):
+        import zlib
+
+        path = self.loose(oid)
+        self.assertTrue(path.is_file())
+        path.chmod(0o600)
+
+        header = (
+            kind.encode() + b" "
+            + str(len(data)).encode() + b"\0"
+        )
+
+        path.write_bytes(zlib.compress(header + data))
+
+    def classify(self):
+        with patch.object(s, "_CHECKPOINT_COMMIT", self.checkpoint), \
+             patch.object(s, "_CHECKPOINT_SOURCE_COMMIT", self.commit), \
+             patch.object(s, "_CHECKPOINT_ENTRIES", self.entries):
+            return s.qualify(
+                [self.finding], 42,
+                raw_report_sha256=REPORT_SHA,
+            )["status"]
+
+    def test_real_git_object_chain(self):
+        self.assertEqual(
+            s._checkpoint_blob(self.commit, self.source_path),
+            self.content,
+        )
+        self.assertEqual(self.classify(), "PASS")
+
+    def test_corrupted_blob_blocks(self):
+        self.corrupt(self.blob, "blob", b"wrong contents\n")
+        self.assertEqual(self.classify(), "BLOCKED")
+
+    def test_corrupted_commit_blocks(self):
+        raw = self.git("cat-file", "commit", self.commit)
+        self.corrupt(self.commit, "commit", raw + b"changed\n")
+        self.assertEqual(self.classify(), "BLOCKED")
+
+    def test_corrupted_tree_blocks(self):
+        raw = self.git("cat-file", "tree", self.tree)
+        replacement = self.object("tree", b"")
+        tampered = raw[:-20] + bytes.fromhex(replacement)
+
+        self.corrupt(self.tree, "tree", tampered)
+        self.assertEqual(self.classify(), "BLOCKED")
+
+    def test_coordinated_substitution_blocks(self):
+        replacement = b"coordinated replacement source\n"
+
+        old = hashlib.sha256(self.content).hexdigest().encode()
+        new = hashlib.sha256(replacement).hexdigest().encode()
+
+        self.assertIn(old, self.raw)
+
+        self.corrupt(self.blob, "blob", replacement)
+        self.corrupt(
+            self.checkpoint_blob,
+            "blob",
+            self.raw.replace(old, new),
+        )
+
+        self.assertEqual(self.classify(), "BLOCKED")
+
+    def test_missing_object_blocks(self):
+        self.loose(self.blob).unlink()
+        self.assertEqual(self.classify(), "BLOCKED")
+
+    def test_replace_ref_cannot_change_proof(self):
+        replacement = self.object("blob", b"replacement\n")
+        self.git("replace", self.blob, replacement)
+
+        self.assertEqual(
+            s._checkpoint_blob(self.commit, self.source_path),
+            self.content,
+        )
+        self.assertEqual(self.classify(), "PASS")
 
 
 if __name__=='__main__':
