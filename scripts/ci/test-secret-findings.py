@@ -311,5 +311,116 @@ class Tests(unittest.TestCase):
             run.assert_not_called()
 
 
+class CheckpointSourceHashTests(unittest.TestCase):
+
+    def setUp(self):
+        self.path = "scripts/ci/fixture.py"
+        self.content = b"source fixture\n"
+
+        digest = hashlib.sha256(self.content).hexdigest()
+
+        document = {
+            "ci": {
+                "actual_wave2_collector": {
+                    "pair_manifest": {
+                        "commit": s._CHECKPOINT_SOURCE_COMMIT,
+                        "source_files": {self.path: digest},
+                    },
+                },
+            },
+        }
+
+        self.raw = json.dumps(document, indent=2).encode()
+
+        line = next(
+            i for i, value in enumerate(
+                self.raw.decode().splitlines(), 1
+            )
+            if '"' + self.path + '"' in value
+        )
+
+        self.entries = {line: (24, 110, self.path)}
+
+        self.finding = {
+            "RuleID": "generic-api-key",
+            "Commit": s._CHECKPOINT_COMMIT,
+            "File": s._CHECKPOINT_PATH,
+            "StartLine": line,
+            "EndLine": line,
+            "StartColumn": 24,
+            "EndColumn": 110,
+            "Secret": "REDACTED",
+            "Fingerprint": "checkpoint-fixture",
+        }
+
+    def evaluate(self, finding=None, content=None, extra=()):
+        if finding is None:
+            finding = self.finding
+
+        if content is None:
+            content = self.content
+
+        def fake_blob(commit, path):
+            if path == s._CHECKPOINT_PATH:
+                return self.raw
+            if path == self.path:
+                return content
+            raise ValueError("unexpected path")
+
+        with patch.object(s, "_CHECKPOINT_ENTRIES", self.entries), \
+             patch.object(s, "_checkpoint_blob", side_effect=fake_blob):
+
+            return s.qualify(
+                [finding, *extra], 42,
+                raw_report_sha256=REPORT_SHA,
+                read_line=lambda _: "",
+            )
+
+    def test_exact_checksum_proof(self):
+        result = self.evaluate()
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["verified_public_references"], 0)
+        self.assertEqual(result["verified_source_hashes"], 1)
+        self.assertEqual(result["raw_findings"], 1)
+        self.assertEqual(result["unresolved_findings"], 0)
+
+    def test_modified_source_remains_blocked(self):
+        result = self.evaluate(content=b"modified source")
+        self.assertEqual(result["status"], "BLOCKED")
+
+    def test_wrong_commit_path_rule_or_coordinates_blocked(self):
+        for key, value in (
+            ("Commit", "b" * 40),
+            ("File", "other.json"),
+            ("RuleID", "github-pat"),
+            ("StartColumn", 25),
+            ("EndColumn", 111),
+            ("StartLine", 100),
+        ):
+            finding = dict(self.finding)
+            finding[key] = value
+
+            with self.subTest(key=key):
+                self.assertEqual(
+                    self.evaluate(finding)["status"],
+                    "BLOCKED",
+                )
+
+    def test_other_unresolved_findings_still_block(self):
+        other = dict(
+            self.finding,
+            Fingerprint="other-fixture",
+            RuleID="github-pat",
+        )
+
+        result = self.evaluate(extra=(other,))
+
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["raw_findings"], 2)
+        self.assertEqual(result["verified_source_hashes"], 1)
+        self.assertEqual(result["unresolved_findings"], 1)
+
+
+
 if __name__=='__main__':
     unittest.main()

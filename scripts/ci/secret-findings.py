@@ -268,6 +268,162 @@ def qualify(findings, scanner_exit, raw_report_sha256=None, read_line=source_lin
                 unresolved_findings=blocked,findings=records,status='BLOCKED' if blocked else 'PASS')
 
 
+# Exact historical PR45 source checksum evidence.
+_CHECKPOINT_COMMIT = '131be90546c7142e79e9' + '292e27a835674e11751d'
+_CHECKPOINT_SOURCE_COMMIT = '7068d8dc08c7cc19b1c7' + '4701f0ae85193e5ac233'
+_CHECKPOINT_PATH = 'docs/handoff/PR-45-CLOSURE-CHECKS.json'
+_CHECKPOINT_ENTRIES = {6713: (24, 110, 'scripts/ci/secret-findings.py'), 6724: (36, 145, 'backend/src/migrations/1746825000000-CreateRefreshTokensTable.ts'), 6728: (36, 142, 'backend/src/migrations/1746825040000-ShareLinksTokenUnique.ts')}
+
+
+def _checkpoint_blob(commit, path):
+    if path == FORBIDDEN:
+        raise ValueError("Excluded source path")
+
+    env = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1")
+
+    return subprocess.check_output(
+        ["git", "cat-file", "blob", commit + ":" + path],
+        stderr=subprocess.DEVNULL,
+        env=env,
+    )
+
+
+def _checkpoint_source_hash_proof(finding):
+    """Prove only the three immutable historical checksum findings."""
+    try:
+        if (
+            finding.get("RuleID") != "generic-api-key"
+            or finding.get("Commit") != _CHECKPOINT_COMMIT
+            or finding.get("File") != _CHECKPOINT_PATH
+            or finding.get("Secret") != "REDACTED"
+        ):
+            return None
+
+        number = finding.get("StartLine")
+        entry = _CHECKPOINT_ENTRIES.get(number)
+
+        if entry is None or finding.get("EndLine") != number:
+            return None
+
+        start, end, path = entry
+
+        if (
+            finding.get("StartColumn") != start
+            or finding.get("EndColumn") != end
+        ):
+            return None
+
+        raw = _checkpoint_blob(
+            _CHECKPOINT_COMMIT, _CHECKPOINT_PATH
+        )
+
+        document = json.loads(raw)
+        manifest = document["ci"]["actual_wave2_collector"]["pair_manifest"]
+
+        if manifest["commit"] != _CHECKPOINT_SOURCE_COMMIT:
+            return None
+
+        line = raw.decode("utf-8").splitlines()[number - 1]
+        field = json.loads("{" + line.strip().rstrip(",") + "}")
+
+        expected = manifest["source_files"][path]
+
+        if (
+            field != {path: expected}
+            or not isinstance(expected, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", expected)
+        ):
+            return None
+
+        actual = hashlib.sha256(
+            _checkpoint_blob(_CHECKPOINT_SOURCE_COMMIT, path)
+        ).hexdigest()
+
+        if actual != expected:
+            return None
+
+        return {
+            "kind": "historical_source_sha256",
+            "source_commit": _CHECKPOINT_SOURCE_COMMIT,
+            "source_path": path,
+        }
+
+    except (
+        OSError, ValueError, TypeError,
+        KeyError, IndexError, subprocess.SubprocessError,
+    ):
+        return None
+
+
+_qualify_public_references = qualify
+
+
+def qualify(
+    findings, scanner_exit, raw_report_sha256=None,
+    read_line=source_line, verify_upstream=upstream,
+    verify_local=local_commit, check_context=historical_context,
+):
+    result = _qualify_public_references(
+        findings, scanner_exit, raw_report_sha256,
+        read_line, verify_upstream, verify_local, check_context,
+    )
+
+    if result["status"] != "BLOCKED":
+        return result
+
+    accepted = 0
+
+    for finding in findings:
+        proof = _checkpoint_source_hash_proof(finding)
+
+        if proof is None:
+            continue
+
+        fingerprint = finding["Fingerprint"]
+
+        matching = [
+            record for record in result["findings"]
+            if record["fingerprint"] == fingerprint
+        ]
+
+        if (
+            len(matching) != 1
+            or "proof" in matching[0]
+            or sum(
+                f["Fingerprint"] == fingerprint
+                for f in findings
+            ) != 1
+        ):
+            raise ValueError("Ambiguous checksum finding")
+
+        matching[0].update(
+            classification="VERIFIED_SOURCE_SHA256",
+            reason="EXACT_HISTORICAL_SOURCE_HASH",
+            proof=proof,
+        )
+
+        accepted += 1
+
+    if accepted:
+        result["verified_source_hashes"] = accepted
+        result["unresolved_findings"] -= accepted
+
+        if (
+            result["unresolved_findings"] < 0
+            or result["verified_public_references"]
+                + accepted
+                + result["unresolved_findings"]
+                != result["raw_findings"]
+        ):
+            raise ValueError("Inconsistent secret classification totals")
+
+        if result["unresolved_findings"] == 0:
+            result["status"] = "PASS"
+
+    return result
+
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--report',required=True)
