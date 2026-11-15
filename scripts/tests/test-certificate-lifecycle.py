@@ -22,6 +22,35 @@ class LifecycleTests(unittest.TestCase):
  def test_wrong_hostname_rejected(self):
   self.args.hostname='wrong.invalid'
   with self.assertRaises(Exception): m.install(self.args)
+ def certificate(self,san=None,cn='test.invalid'):
+  argv=['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(self.key),'-out',str(self.cert),'-days','45','-subj','/CN='+cn]
+  if san is not None: argv+=['-addext','subjectAltName='+san]
+  subprocess.run(argv,check=True,capture_output=True); self.key.chmod(0o600)
+ def test_removed_python_hostname_api_not_required(self):
+  with patch.object(m.ssl,'match_hostname',None,create=True):
+   m.install(self.args)
+ def test_san_required_even_with_matching_cn(self):
+  self.certificate()
+  with self.assertRaisesRegex(ValueError,'requires SAN'): m.install(self.args)
+ def test_wrong_dns_san_cannot_use_matching_cn(self):
+  self.certificate('DNS:wrong.invalid')
+  with self.assertRaises(ValueError): m.install(self.args)
+ def test_ip_only_san_cannot_use_matching_dns_cn(self):
+  self.certificate('IP:127.0.0.1')
+  with self.assertRaisesRegex(ValueError,'SAN type'): m.install(self.args)
+ def test_full_label_wildcard_and_subdomain_boundary(self):
+  self.certificate('DNS:*.test.invalid'); self.args.hostname='one.test.invalid'
+  m.install(self.args)
+  self.args.hostname='two.one.test.invalid'
+  with self.assertRaises(ValueError): m.install(self.args)
+ def test_partial_label_wildcard_rejected(self):
+  self.certificate('DNS:t*.invalid')
+  with self.assertRaisesRegex(ValueError,'wildcard'): m.install(self.args)
+ def test_ip_san_checked_as_ip(self):
+  self.certificate('IP:127.0.0.1'); self.args.hostname='127.0.0.1'
+  m.install(self.args)
+  self.args.hostname='127.0.0.2'
+  with self.assertRaises(ValueError): m.install(self.args)
  def test_missing_key_rejected(self):
   self.key.unlink()
   with self.assertRaises(Exception): m.install(self.args)
