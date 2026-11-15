@@ -88,7 +88,7 @@
 
 .liquid-upload-dock .upload-dismiss {
   min-height: 36px;
-  border-radius: 999px;
+  border-radius: var(--liquid-close-radius);
   font-size: 12px;
 }
 
@@ -449,7 +449,7 @@
 .liquid-upload-dock .upload-dismiss-slot {
   display: flex;
   justify-content: flex-end;
-  flex: 0 0 44px;
+  flex: 0 0 var(--liquid-close-size);
 }
 
 .liquid-upload-dock .upload-dismiss {
@@ -459,22 +459,18 @@
   align-items: center;
   justify-content: center;
 
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
 
   gap: 0;
   padding: 0 10px;
 
   border: 1px solid var(--border-subtle);
-  border-radius: 999px;
+  border-radius: var(--liquid-close-radius);
 
   background: var(--surface-primary);
-  background-image: linear-gradient(
-    150deg,
-    rgba(255,255,255,.10),
-    rgba(255,255,255,.01)
-  );
+  background-image: var(--liquid-close-glass);
 
   box-shadow:
     inset 0 1px 2px rgba(255,255,255,.10);
@@ -483,15 +479,15 @@
   white-space: nowrap;
 
   transition:
-    width 450ms cubic-bezier(.4,0,.3,1),
-    gap 450ms cubic-bezier(.4,0,.3,1),
-    border-color 350ms ease,
-    background-color 350ms ease;
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
 }
 
 .liquid-upload-dock .upload-dismiss > svg {
-  width: 20px;
-  height: 20px;
+  width: var(--liquid-close-icon-size);
+  height: var(--liquid-close-icon-size);
   flex-shrink: 0;
 }
 
@@ -509,26 +505,24 @@
   font-weight: 650;
 
   transition:
-    max-width 450ms cubic-bezier(.4,0,.3,1),
-    opacity 350ms ease;
+    max-width var(--liquid-close-expand-motion),
+    opacity var(--liquid-close-fade-motion);
 }
 
 @media (hover: hover) and (pointer: fine)
 and (min-width: 601px) {
   .liquid-upload-dock .upload-dismiss-slot {
-    flex-basis: 116px;
+    flex-basis: var(--liquid-close-upload-width);
   }
 
   .liquid-upload-dock
   .upload-dismiss:is(:hover, :focus-visible) {
-    width: 116px;
+    width: var(--liquid-close-upload-width);
     gap: 7px;
 
     background-color: var(--surface-elevated);
 
-    border-color: color-mix(
-      in srgb, var(--border-strong) 65%, white
-    );
+    border-color: var(--liquid-close-hover-border);
   }
 
   .liquid-upload-dock

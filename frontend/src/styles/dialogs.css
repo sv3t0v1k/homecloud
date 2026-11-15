@@ -386,23 +386,19 @@
   align-items: center;
   justify-content: center;
 
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
   padding: 0 12px;
   gap: 0;
 
-  border-radius: 999px;
+  border-radius: var(--liquid-close-radius);
   overflow: hidden;
   white-space: nowrap;
   flex-shrink: 0;
 
   background: var(--surface-primary);
-  background-image: linear-gradient(
-    150deg,
-    rgba(255,255,255,.10),
-    rgba(255,255,255,.01)
-  );
+  background-image: var(--liquid-close-glass);
 
   border: 1px solid var(--border-subtle);
 
@@ -411,16 +407,16 @@
     0 2px 8px rgba(0,0,0,.08);
 
   transition:
-    width 450ms cubic-bezier(.4,0,.3,1),
-    gap 450ms cubic-bezier(.4,0,.3,1),
-    border-color 350ms ease,
-    box-shadow 350ms ease,
-    background-color 350ms ease;
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    box-shadow var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
 }
 
 .ux-v2 .liquid-close-button > svg {
-  width: 20px;
-  height: 20px;
+  width: var(--liquid-close-icon-size);
+  height: var(--liquid-close-icon-size);
   flex-shrink: 0;
 }
 
@@ -436,8 +432,8 @@
   font-weight: 650;
 
   transition:
-    max-width 450ms cubic-bezier(.4,0,.3,1),
-    opacity 350ms ease;
+    max-width var(--liquid-close-expand-motion),
+    opacity var(--liquid-close-fade-motion);
 }
 
 /* Reserve space so the title never moves. */
@@ -456,16 +452,12 @@ and (min-width: 601px) {
 
   .ux-v2 .trash-dialog > .dialog-header
   > .liquid-close-button:is(:hover, :focus-visible) {
-    width: 128px;
+    width: var(--liquid-close-expanded-width);
     gap: 8px;
 
     background-color: var(--surface-elevated);
 
-    border-color: color-mix(
-      in srgb,
-      var(--border-strong) 65%,
-      white
-    );
+    border-color: var(--liquid-close-hover-border);
 
     box-shadow:
       inset 0 1px 2px rgba(255,255,255,.22),
@@ -475,7 +467,7 @@ and (min-width: 601px) {
   .ux-v2 .liquid-close-button:is(
     :hover, :focus-visible
   ) > .liquid-close-label {
-    max-width: 85px;
+    max-width: var(--liquid-close-label-width);
     opacity: 1;
   }
 }
@@ -538,23 +530,19 @@ and (min-width: 601px) {
   justify-self: end;
 
   box-sizing: border-box;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
 
   padding: 0 12px;
   gap: 0;
 
-  border-radius: 999px;
+  border-radius: var(--liquid-close-radius);
   border: 1px solid var(--border-subtle);
 
   background: var(--surface-primary);
 
-  background-image: linear-gradient(
-    150deg,
-    rgba(255,255,255,.10),
-    rgba(255,255,255,.01)
-  );
+  background-image: var(--liquid-close-glass);
 
   box-shadow:
     inset 0 1px 2px rgba(255,255,255,.10);
@@ -563,10 +551,10 @@ and (min-width: 601px) {
   overflow: hidden;
 
   transition:
-    width 450ms cubic-bezier(.4,0,.3,1),
-    gap 450ms cubic-bezier(.4,0,.3,1),
-    border-color 350ms ease,
-    background-color 350ms ease;
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
 }
 
 @media (hover: hover) and (pointer: fine)
@@ -577,14 +565,12 @@ and (min-width: 601px) {
 
   .ux-v2 .preview-dialog > .dialog-header
   > .liquid-close-button:is(:hover, :focus-visible) {
-    width: 128px;
+    width: var(--liquid-close-expanded-width);
     gap: 8px;
 
     background-color: var(--surface-elevated);
 
-    border-color: color-mix(
-      in srgb, var(--border-strong) 65%, white
-    );
+    border-color: var(--liquid-close-hover-border);
   }
 }
 
@@ -861,22 +847,18 @@ and (min-width: 601px) {
   justify-self: end;
 
   box-sizing: border-box;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
   padding: 0 10px;
   gap: 0;
 
-  border-radius: 999px;
+  border-radius: var(--liquid-close-radius);
   border: 1px solid var(--border-subtle);
 
   background: var(--surface-primary);
 
-  background-image: linear-gradient(
-    150deg,
-    rgba(255,255,255,.10),
-    rgba(255,255,255,.01)
-  );
+  background-image: var(--liquid-close-glass);
 
   box-shadow:
     inset 0 1px 2px rgba(255,255,255,.10);
@@ -885,10 +867,10 @@ and (min-width: 601px) {
   white-space: nowrap;
 
   transition:
-    width 450ms cubic-bezier(.4,0,.3,1),
-    gap 450ms cubic-bezier(.4,0,.3,1),
-    border-color 350ms ease,
-    background-color 350ms ease;
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
 }
 
 @media (hover: hover) and (pointer: fine)
@@ -900,14 +882,12 @@ and (min-width: 601px) {
   .ux-v2 .liquid-operation-dialog
   > .dialog-header
   > .liquid-close-button:is(:hover, :focus-visible) {
-    width: 128px;
+    width: var(--liquid-close-expanded-width);
     gap: 8px;
 
     background-color: var(--surface-elevated);
 
-    border-color: color-mix(
-      in srgb, var(--border-strong) 65%, white
-    );
+    border-color: var(--liquid-close-hover-border);
   }
 }
 
@@ -1084,22 +1064,18 @@ and (min-width: 601px) {
   justify-content: center;
   justify-self: end;
 
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
   padding: 0 10px;
   gap: 0;
 
-  border-radius: 999px;
+  border-radius: var(--liquid-close-radius);
   border: 1px solid var(--border-subtle);
 
   background: var(--surface-primary);
 
-  background-image: linear-gradient(
-    150deg,
-    rgba(255,255,255,.10),
-    rgba(255,255,255,.01)
-  );
+  background-image: var(--liquid-close-glass);
 
   box-shadow:
     inset 0 1px 2px rgba(255,255,255,.10);
@@ -1108,15 +1084,15 @@ and (min-width: 601px) {
   overflow: hidden;
 
   transition:
-    width 450ms cubic-bezier(.4,0,.3,1),
-    gap 450ms cubic-bezier(.4,0,.3,1),
-    border-color 350ms ease,
-    background-color 350ms ease;
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
 }
 
 .liquid-settings-dialog .liquid-close-button > svg {
-  width: 20px;
-  height: 20px;
+  width: var(--liquid-close-icon-size);
+  height: var(--liquid-close-icon-size);
   flex-shrink: 0;
 }
 
@@ -1132,8 +1108,8 @@ and (min-width: 601px) {
   font-weight: 650;
 
   transition:
-    max-width 450ms cubic-bezier(.4,0,.3,1),
-    opacity 350ms ease;
+    max-width var(--liquid-close-expand-motion),
+    opacity var(--liquid-close-fade-motion);
 }
 
 @media (hover: hover) and (pointer: fine)
@@ -1146,21 +1122,19 @@ and (min-width: 601px) {
   > .liquid-close-button:not(:disabled):is(
     :hover, :focus-visible
   ) {
-    width: 128px;
+    width: var(--liquid-close-expanded-width);
     gap: 8px;
 
     background-color: var(--surface-elevated);
 
-    border-color: color-mix(
-      in srgb, var(--border-strong) 65%, white
-    );
+    border-color: var(--liquid-close-hover-border);
   }
 
   .liquid-settings-dialog
   .liquid-close-button:not(:disabled):is(
     :hover, :focus-visible
   ) > .liquid-close-label {
-    max-width: 85px;
+    max-width: var(--liquid-close-label-width);
     opacity: 1;
   }
 }
