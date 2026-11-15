@@ -42,6 +42,21 @@ test('recovery checks exact source and builds offline AMD64 OCI', () => {
   assert.equal(checkout.with.ref, '${{ inputs.source_sha }}');
   assert.equal(checkout.with['persist-credentials'], false);
 
+  const verify = named('Verify exact checkout before candidate code');
+
+  assert.ok(verify);
+  assert.equal(verify.env.EXPECTED_SOURCE_SHA, '${{ inputs.source_sha }}');
+  assert.match(verify.run, /git rev-parse HEAD.*EXPECTED_SOURCE_SHA/);
+  assert.equal(steps.indexOf(verify), steps.indexOf(checkout) + 1);
+
+  const bootstrap = steps.find(
+    step => step.run === 'python3 scripts/ci/install-npm.py'
+  );
+
+  assert.ok(bootstrap);
+  assert.ok(steps.indexOf(verify) < steps.indexOf(bootstrap));
+  assert.doesNotMatch(runs, /minimize-runner\.py/);
+
   const source = steps.find(step => step.id === 'source');
   assert.equal(source.env.EXPECTED_SOURCE_SHA, '${{ inputs.source_sha }}');
   assert.match(source.run, /git rev-parse HEAD.*EXPECTED_SOURCE_SHA/);
