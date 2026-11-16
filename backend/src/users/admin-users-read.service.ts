@@ -46,7 +46,7 @@ function invalidAccounting(): never {
   });
 }
 
-function validateActorIdentity(actor: AdminActor): void {
+export function validateActorIdentity(actor: AdminActor): void {
   if (
     !actor ||
     !Number.isSafeInteger(actor.userId) ||
@@ -234,6 +234,31 @@ const DETAIL_SQL = `
   WHERE u.id = $1::integer
 `;
 
+// Internal transaction-scoped reader. The calling operation
+// must authorize its actor before requesting the target data.
+export async function readAdminUser(
+  manager: EntityManager,
+  id: number,
+): Promise<AdminUserDto> {
+  const rows = await manager.query(
+    DETAIL_SQL,
+    [id],
+  ) as UserReadRow[];
+
+  if (rows.length === 0) {
+    throw new NotFoundException({
+      code: "USER_NOT_FOUND",
+      message: "User not found",
+    });
+  }
+
+  if (rows.length !== 1 || rows[0].id !== id) {
+    return invalidAccounting();
+  }
+
+  return presentAdminUser(rows[0]);
+}
+
 @Injectable()
 export class AdminUsersReadService {
   constructor(private readonly database: DataSource) {}
@@ -289,23 +314,7 @@ export class AdminUsersReadService {
 
         const id = parseAdminUserId(rawId);
 
-        const rows = await manager.query(
-          DETAIL_SQL,
-          [id],
-        ) as UserReadRow[];
-
-        if (rows.length === 0) {
-          throw new NotFoundException({
-            code: "USER_NOT_FOUND",
-            message: "User not found",
-          });
-        }
-
-        if (rows.length !== 1 || rows[0].id !== id) {
-          return invalidAccounting();
-        }
-
-        return presentAdminUser(rows[0]);
+        return readAdminUser(manager, id);
       },
     );
   }

@@ -9,6 +9,7 @@ import * as bcrypt from "bcryptjs";
 import request from "supertest";
 
 import { UsersModule } from "./users.module";
+import { AdminUsersWriteService } from "./admin-users-write.service";
 import { lockAdminTransactions } from "./admin-transaction-lock";
 import { UserEntity, UserRole } from "../entities/user.entity";
 import { RefreshTokenEntity } from "../entities/refresh-token.entity";
@@ -484,10 +485,6 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
 
     await request(app.getHttpServer())
       .patch(`${ENDPOINT}/${ordinary.id}`)
-      .set(headers).send({}).expect(404);
-
-    await request(app.getHttpServer())
-      .put(`${ENDPOINT}/${ordinary.id}/password`)
       .set(headers).send({}).expect(404);
 
     await request(app.getHttpServer())
@@ -1037,4 +1034,944 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     },
     30000,
   );
+
+  // ======================================================
+  // Administrative profile update, without exposing PATCH.
+  // The real production service is resolved from UsersModule.
+  // ======================================================
+
+  function updateService() {
+    return app.get(AdminUsersWriteService);
+  }
+
+  function administratorActor() {
+    return {
+      userId: administrator.id,
+      sessionVersion: "1",
+    };
+  }
+
+  it("denies unauthorized profile changes and rejects premature role or quota edits", async () => {
+    const users = db.getRepository(UserEntity);
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+
+    await expect(updateService().updateProfile(
+      {
+        userId: ordinary.id,
+        sessionVersion: before.sessionVersion,
+      },
+      String(ordinary.id),
+      { name: "Forbidden name" },
+    )).rejects.toMatchObject({
+      status: 403,
+      response: { code: "ADMIN_REQUIRED" },
+    });
+
+    await expect(updateService().updateProfile(
+      { ...administratorActor(), sessionVersion: "999" },
+      String(ordinary.id),
+      { name: "Stale actor" },
+    )).rejects.toMatchObject({ status: 401 });
+
+    for (const patch of [
+      {},
+      { role: UserRole.ADMIN },
+      { storageQuota: "0" },
+      { name: "Valid", role: UserRole.ADMIN },
+      { storageUsed: "0" },
+      { password: PASSWORD },
+      { isActive: false },
+      { sessionVersion: "999" },
+    ]) {
+      await expect(updateService().updateProfile(
+        administratorActor(),
+        String(ordinary.id),
+        patch,
+      )).rejects.toMatchObject({ status: 400 });
+    }
+
+    await expect(updateService().updateProfile(
+      administratorActor(),
+      "2147483647",
+      { name: "Missing user" },
+    )).rejects.toMatchObject({
+      status: 404,
+      response: { code: "USER_NOT_FOUND" },
+    });
+
+    expect(await users.findOneByOrFail({ id: ordinary.id }))
+      .toEqual(before);
+  });
+
+  it("changes only the name and preserves files, quota, password and sessions", async () => {
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+    const tokensBefore = await sessions.findBy({ userId: ordinary.id });
+
+    const filesBefore = await db.query(
+      'SELECT * FROM "files" WHERE "userId"=$1 ORDER BY id',
+      [ordinary.id],
+    );
+
+    const result = await updateService().updateProfile(
+      administratorActor(),
+      String(ordinary.id),
+      { name: "  Renamed Alice  " },
+    );
+
+    const after = await users.findOneByOrFail({ id: ordinary.id });
+
+    expect(after).toEqual({
+      ...before,
+      name: "Renamed Alice",
+      updatedAt: after.updatedAt,
+    });
+
+    expect(result).toMatchObject({
+      id: ordinary.id,
+      name: "Renamed Alice",
+      email: ordinary.email,
+      storageQuota: "1073741824",
+      storageUsed: "3072",
+      fileCount: 2,
+      folderCount: 1,
+    });
+
+    expect(result).not.toHaveProperty("password");
+    expect(result).not.toHaveProperty("sessionVersion");
+
+    expect(await sessions.findBy({ userId: ordinary.id }))
+      .toEqual(tokensBefore);
+
+    expect(await db.query(
+      'SELECT * FROM "files" WHERE "userId"=$1 ORDER BY id',
+      [ordinary.id],
+    )).toEqual(filesBefore);
+
+    expect((await get(ME, userToken)).status).toBe(200);
+
+    // Canonical same-value update: no timestamp or session change.
+    await updateService().updateProfile(
+      administratorActor(),
+      String(ordinary.id),
+      {
+        name: "Renamed Alice",
+        email: " ALICE@EXAMPLE.TEST ",
+      },
+    );
+
+    expect(await users.findOneByOrFail({ id: ordinary.id }))
+      .toEqual(after);
+  });
+
+  it("changes canonical email and atomically invalidates old access and refresh sessions", async () => {
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const issued = await login(ordinary.email);
+
+    // Set a verified test account to prove email verification
+    // does not survive an actual identity change.
+    await users.update(ordinary.id, { isEmailVerified: true });
+
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+
+    const result = await updateService().updateProfile(
+      administratorActor(),
+      String(ordinary.id),
+      {
+        name: "Alice updated",
+        email: " ALICE-UPDATED@Example.TEST ",
+      },
+    );
+
+    const after = await users.findOneByOrFail({ id: ordinary.id });
+
+    expect(after).toEqual({
+      ...before,
+      name: "Alice updated",
+      email: "alice-updated@example.test",
+      isEmailVerified: false,
+      sessionVersion: (
+        BigInt(before.sessionVersion) + 1n
+      ).toString(),
+      updatedAt: after.updatedAt,
+    });
+
+    expect(result).toMatchObject({
+      id: ordinary.id,
+      name: after.name,
+      email: after.email,
+      fileCount: 2,
+      folderCount: 1,
+      storageUsed: "3072",
+    });
+
+    expect(await sessions.countBy({
+      userId: ordinary.id,
+      revoked: false,
+    })).toBe(0);
+
+    expect(await sessions.countBy({
+      userId: ordinary.id,
+      revoked: true,
+    })).toBeGreaterThan(0);
+
+    await request(app.getHttpServer())
+      .get(ME)
+      .set("Authorization", `Bearer ${issued.accessToken}`)
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/refresh")
+      .send({ refreshToken: issued.refreshToken })
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/login")
+      .send({ email: ordinary.email, password: PASSWORD })
+      .expect(401);
+
+    const fresh = await login(after.email);
+    const profile = await get(ME, fresh.accessToken);
+
+    expect(profile.status).toBe(200);
+    expect(profile.body.data.id).toBe(ordinary.id);
+    expect(profile.body.data.email).toBe(after.email);
+  });
+
+  it("rejects a duplicate email without changing the name or revoking sessions", async () => {
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+    const tokensBefore = await sessions.findBy({ userId: ordinary.id });
+
+    await expect(updateService().updateProfile(
+      administratorActor(),
+      String(ordinary.id),
+      {
+        email: " ADMIN@EXAMPLE.TEST ",
+        name: "Must roll back",
+      },
+    )).rejects.toMatchObject({
+      status: 409,
+      response: { code: "EMAIL_ALREADY_EXISTS" },
+    });
+
+    expect(await users.findOneByOrFail({ id: ordinary.id }))
+      .toEqual(before);
+
+    expect(await sessions.findBy({ userId: ordinary.id }))
+      .toEqual(tokensBefore);
+  });
+
+  it("allows an administrator to edit their own name with a single user lock", async () => {
+    const users = db.getRepository(UserEntity);
+
+    const before = await users.findOneByOrFail({
+      id: administrator.id,
+    });
+
+    const result = await updateService().updateProfile(
+      administratorActor(),
+      String(administrator.id),
+      { name: "Administrator renamed" },
+    );
+
+    expect(result.id).toBe(administrator.id);
+    expect(result.name).toBe("Administrator renamed");
+
+    const after = await users.findOneByOrFail({
+      id: administrator.id,
+    });
+
+    expect(after).toEqual({
+      ...before,
+      name: "Administrator renamed",
+      updatedAt: after.updatedAt,
+    });
+
+    expect((await get(ME, adminToken)).status).toBe(200);
+  });
+
+  it("rolls back an email change if refresh session revocation fails", async () => {
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+    const tokensBefore = await sessions.findBy({ userId: ordinary.id });
+    const issued = await login(before.email);
+
+    const allTokensBefore = await sessions.findBy({
+      userId: ordinary.id,
+    });
+
+    expect(allTokensBefore.length).toBeGreaterThan(tokensBefore.length);
+
+    // Test-only trigger, isolated schema. Failure happens after
+    // the user update and sessionVersion update have succeeded.
+    await db.query(`
+      CREATE FUNCTION admin_profile_revocation_probe()
+      RETURNS trigger LANGUAGE plpgsql AS $fixture$
+      BEGIN
+        RAISE EXCEPTION 'fixture refresh revocation failure';
+      END;
+      $fixture$;
+    `);
+
+    try {
+      const table = db.getMetadata(RefreshTokenEntity).tableName;
+
+      // The table name comes from trusted entity metadata.
+      await db.query(`
+        CREATE TRIGGER admin_profile_revocation_probe
+        BEFORE UPDATE ON "${table}"
+        FOR EACH ROW
+        EXECUTE FUNCTION admin_profile_revocation_probe()
+      `);
+
+      await expect(updateService().updateProfile(
+        administratorActor(),
+        String(ordinary.id),
+        {
+          name: "Must roll back",
+          email: "rollback-email@example.test",
+        },
+      )).rejects.toThrow("fixture refresh revocation failure");
+
+      expect(await users.findOneByOrFail({ id: ordinary.id }))
+        .toEqual(before);
+
+      expect(await sessions.findBy({ userId: ordinary.id }))
+        .toEqual(allTokensBefore);
+
+      expect((await get(ME, issued.accessToken)).status).toBe(200);
+
+    } finally {
+      const table = db.getMetadata(RefreshTokenEntity).tableName;
+
+      await db.query(
+        `DROP TRIGGER IF EXISTS admin_profile_revocation_probe ON "${table}"`,
+      );
+
+      await db.query(
+        "DROP FUNCTION IF EXISTS admin_profile_revocation_probe()",
+      );
+    }
+  });
+
+  it("rechecks the administrator after a real concurrent session revocation", async () => {
+    const runner = db.createQueryRunner();
+    const users = db.getRepository(UserEntity);
+
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+
+    let pending:
+      Promise<PromiseSettledResult<
+        Awaited<ReturnType<AdminUsersWriteService["updateProfile"]>>
+      >[]> | undefined;
+
+    try {
+      await runner.connect();
+      await runner.startTransaction();
+      await lockAdminTransactions(runner.manager);
+
+      await runner.manager.update(
+        UserEntity,
+        administrator.id,
+        { sessionVersion: "2" },
+      );
+
+      pending = Promise.allSettled([
+        updateService().updateProfile(
+          administratorActor(),
+          String(ordinary.id),
+          { name: "Stale actor must not write" },
+        ),
+      ]);
+
+      await waitForCreateLock(1);
+      await runner.commitTransaction();
+
+      const [result] = await pending;
+
+      expect(result).toMatchObject({
+        status: "rejected",
+        reason: {
+          status: 401,
+          response: { code: "UNAUTHORIZED" },
+        },
+      });
+
+      expect(await users.findOneByOrFail({ id: ordinary.id }))
+        .toEqual(before);
+
+    } finally {
+      if (runner.isTransactionActive) {
+        await runner.rollbackTransaction();
+      }
+
+      if (pending) await pending;
+      await runner.release();
+
+      // Restore only the disposable administrator fixture.
+      await users.update(administrator.id, {
+        sessionVersion: "1",
+      });
+    }
+  }, 30000);
+
+  // ======================================================
+  // Administrative password change: real HTTP and PostgreSQL.
+  // ======================================================
+
+  const NEW_PASSWORD = "new-admin-assigned-password-2026";
+
+  async function passwordTarget(
+    email: string,
+    role: UserRole = UserRole.USER,
+  ) {
+    const created = await create({
+      ...createBody(email),
+      role,
+    });
+
+    if (created.status !== 201) {
+      throw new Error("Password test fixture creation failed");
+    }
+
+    const user = await db.getRepository(UserEntity)
+      .findOneByOrFail({ email });
+
+    const credentials = await login(email);
+
+    return { user, credentials };
+  }
+
+  async function resetPassword(
+    id: number | string,
+    body: Record<string, unknown>,
+    token = adminToken,
+  ) {
+    return request(app.getHttpServer())
+      .put(`${ENDPOINT}/${id}/password`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(body);
+  }
+
+  it("requires ADMIN and validates password requests without mutation", async () => {
+    const { user, credentials } = await passwordTarget(
+      "password-denied@example.test",
+    );
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: user.id });
+    const tokensBefore = await sessions.findBy({ userId: user.id });
+
+    const body = { newPassword: NEW_PASSWORD };
+
+    const missing = await request(app.getHttpServer())
+      .put(`${ENDPOINT}/${user.id}/password`)
+      .send(body);
+
+    expect(missing.status).toBe(401);
+    expect(missing.body.code).toBe("UNAUTHORIZED");
+
+    const denied = await resetPassword(
+      user.id, body, credentials.accessToken,
+    );
+
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe("ADMIN_REQUIRED");
+
+    const forged = app.get(JwtService).sign({
+      sub: user.id,
+      email: user.email,
+      sv: user.sessionVersion,
+      tokenUse: "access",
+      role: UserRole.ADMIN,
+    }, {
+      secret: ACCESS_SECRET,
+      algorithm: "HS256",
+      expiresIn: "5m",
+    });
+
+    const forgedResponse = await resetPassword(
+      user.id, body, forged,
+    );
+
+    expect(forgedResponse.status).toBe(403);
+    expect(forgedResponse.body.code).toBe("ADMIN_REQUIRED");
+
+    for (const invalid of [
+      {},
+      { newPassword: "short" },
+      { newPassword: "я".repeat(37) },
+      { newPassword: NEW_PASSWORD, sessionVersion: "99" },
+      { newPassword: NEW_PASSWORD, role: UserRole.ADMIN },
+      { newPassword: NEW_PASSWORD, password: PASSWORD },
+    ]) {
+      const response = await resetPassword(user.id, invalid);
+
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe("VALIDATION_ERROR");
+    }
+
+    const raw = JSON.stringify({
+      newPassword: NEW_PASSWORD,
+      ...JSON.parse('{"__proto__":{"role":"ADMIN"}}'),
+    });
+
+    expect(raw).toContain('"__proto__"');
+
+    const polluted = await request(app.getHttpServer())
+      .put(`${ENDPOINT}/${user.id}/password`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .set("Content-Type", "application/json")
+      .send(raw);
+
+    expect(polluted.status).toBe(400);
+    expect(polluted.body.code).toBe("VALIDATION_ERROR");
+
+    const invalidId = await resetPassword("01", body);
+    expect(invalidId.status).toBe(400);
+
+    const unknown = await resetPassword(2147483647, body);
+
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.code).toBe("USER_NOT_FOUND");
+
+    expect(await users.findOneByOrFail({ id: user.id }))
+      .toEqual(before);
+
+    expect(await sessions.findBy({ userId: user.id }))
+      .toEqual(tokensBefore);
+
+    expect((await get(ME, credentials.accessToken)).status)
+      .toBe(200);
+  });
+
+  it("atomically replaces the password and revokes all old sessions", async () => {
+    const { user, credentials } = await passwordTarget(
+      "password-change@example.test",
+    );
+
+    const second = await login(user.email);
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: user.id });
+
+    const response = await resetPassword(user.id, {
+      newPassword: NEW_PASSWORD,
+    });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body).toEqual({
+      success: true,
+      data: {
+        passwordChanged: true,
+        sessionsRevoked: true,
+      },
+    });
+
+    expect(JSON.stringify(response.body)).not.toContain(NEW_PASSWORD);
+
+    const after = await users.findOneByOrFail({ id: user.id });
+
+    expect(after).toEqual({
+      ...before,
+      password: after.password,
+      sessionVersion: (
+        BigInt(before.sessionVersion) + 1n
+      ).toString(),
+      updatedAt: after.updatedAt,
+    });
+
+    expect(after.password).not.toBe(before.password);
+    expect(after.password).toMatch(/^\$2[aby]\$12\$/);
+
+    expect(await bcrypt.compare(NEW_PASSWORD, after.password))
+      .toBe(true);
+
+    expect(await bcrypt.compare(PASSWORD, after.password))
+      .toBe(false);
+
+    expect(await sessions.countBy({
+      userId: user.id,
+      revoked: false,
+    })).toBe(0);
+
+    expect(await sessions.countBy({
+      userId: user.id,
+      revoked: true,
+    })).toBe(2);
+
+    for (const old of [credentials, second]) {
+      await request(app.getHttpServer())
+        .get(ME)
+        .set("Authorization", `Bearer ${old.accessToken}`)
+        .expect(401);
+
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/refresh")
+        .send({ refreshToken: old.refreshToken })
+        .expect(401);
+    }
+
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password: PASSWORD })
+      .expect(401);
+
+    const fresh = await request(app.getHttpServer())
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password: NEW_PASSWORD })
+      .expect(200);
+
+    const me = await get(ME, fresh.body.data.accessToken);
+
+    expect(me.status).toBe(200);
+    expect(me.body.data.id).toBe(user.id);
+    expect(await sessions.countBy({
+      userId: user.id,
+      revoked: false,
+    })).toBe(1);
+  });
+
+  it("supports an administrator changing their own password and revokes that session", async () => {
+    const { user, credentials } = await passwordTarget(
+      "password-self-admin@example.test",
+      UserRole.ADMIN,
+    );
+
+    const response = await resetPassword(
+      user.id,
+      { newPassword: NEW_PASSWORD },
+      credentials.accessToken,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual({
+      passwordChanged: true,
+      sessionsRevoked: true,
+    });
+
+    expect((await get(ENDPOINT, credentials.accessToken)).status)
+      .toBe(401);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/refresh")
+      .send({ refreshToken: credentials.refreshToken })
+      .expect(401);
+
+    const fresh = await request(app.getHttpServer())
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password: NEW_PASSWORD })
+      .expect(200);
+
+    expect((await get(ENDPOINT, fresh.body.data.accessToken)).status)
+      .toBe(200);
+
+    const persisted = await db.getRepository(UserEntity)
+      .findOneByOrFail({ id: user.id });
+
+    expect(persisted.role).toBe(UserRole.ADMIN);
+    expect(persisted.isActive).toBe(true);
+    expect(persisted.sessionVersion).toBe("2");
+  });
+
+  it("rolls back the password and session version if refresh revocation fails", async () => {
+    const { user, credentials } = await passwordTarget(
+      "password-rollback@example.test",
+    );
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: user.id });
+    const tokensBefore = await sessions.findBy({ userId: user.id });
+
+    const table = db.getMetadata(RefreshTokenEntity).tableName;
+
+    await db.query(`
+      CREATE FUNCTION admin_password_rollback_probe()
+      RETURNS trigger LANGUAGE plpgsql AS $fixture$
+      BEGIN
+        RAISE EXCEPTION 'fixture password revocation failure';
+      END;
+      $fixture$;
+    `);
+
+    try {
+      await db.query(`
+        CREATE TRIGGER admin_password_rollback_probe
+        BEFORE UPDATE ON "${table}"
+        FOR EACH ROW
+        EXECUTE FUNCTION admin_password_rollback_probe()
+      `);
+
+      const response = await resetPassword(user.id, {
+        newPassword: NEW_PASSWORD,
+      });
+
+      expect(response.status).toBe(500);
+      expect(response.body).not.toHaveProperty("data");
+      expect(JSON.stringify(response.body)).not.toContain(NEW_PASSWORD);
+
+      expect(await users.findOneByOrFail({ id: user.id }))
+        .toEqual(before);
+
+      expect(await sessions.findBy({ userId: user.id }))
+        .toEqual(tokensBefore);
+
+      expect((await get(ME, credentials.accessToken)).status)
+        .toBe(200);
+
+    } finally {
+      await db.query(
+        `DROP TRIGGER IF EXISTS admin_password_rollback_probe ON "${table}"`,
+      );
+
+      await db.query(
+        "DROP FUNCTION IF EXISTS admin_password_rollback_probe()",
+      );
+    }
+
+    await login(user.email);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password: NEW_PASSWORD })
+      .expect(401);
+  });
+
+  it("denies password changes after concurrent administrator session revocation", async () => {
+    const { user } = await passwordTarget(
+      "password-actor-race@example.test",
+    );
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: user.id });
+    const tokensBefore = await sessions.findBy({ userId: user.id });
+
+    const runner = db.createQueryRunner();
+
+    let pending:
+      Promise<PromiseSettledResult<request.Response>[]> |
+      undefined;
+
+    try {
+      await runner.connect();
+      await runner.startTransaction();
+
+      await lockAdminTransactions(runner.manager);
+
+      await runner.manager.update(
+        UserEntity,
+        administrator.id,
+        { sessionVersion: "2" },
+      );
+
+      pending = Promise.allSettled([
+        resetPassword(user.id, { newPassword: NEW_PASSWORD }),
+      ]);
+
+      await waitForCreateLock(1);
+      await runner.commitTransaction();
+
+      const [result] = await pending;
+
+      expect(result).toMatchObject({
+        status: "fulfilled",
+        value: {
+          status: 401,
+          body: { code: "UNAUTHORIZED" },
+        },
+      });
+
+      expect(await users.findOneByOrFail({ id: user.id }))
+        .toEqual(before);
+
+      expect(await sessions.findBy({ userId: user.id }))
+        .toEqual(tokensBefore);
+
+    } finally {
+      if (runner.isTransactionActive) {
+        await runner.rollbackTransaction();
+      }
+
+      if (pending) await pending;
+      await runner.release();
+
+      await users.update(administrator.id, {
+        sessionVersion: "1",
+      });
+    }
+  }, 30000);
+
+  // Observe real blocked SQL statements instead of assuming that
+  // a sleep is sufficient to establish a concurrency interleaving.
+  async function waitForPasswordRace(
+    pattern: string,
+    expected: number,
+  ) {
+    const deadline = Date.now() + 10000;
+
+    while (Date.now() < deadline) {
+      const [row] = await adminConnection.query(`
+        SELECT count(*)::int AS count
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND application_name = $1
+          AND wait_event_type = 'Lock'
+          AND query ILIKE $2
+      `, [schema, pattern]);
+
+      if (row.count >= expected) return;
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    throw new Error("Expected password race lock was not observed");
+  }
+
+  it("rejects old-password login and refresh waiting behind a real password update", async () => {
+    const { user, credentials } = await passwordTarget(
+      "password-login-refresh-race@example.test",
+    );
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    // Hold an independent test-only advisory lock. The password
+    // UPDATE trigger pauses while production user locks are held.
+    const gate = db.createQueryRunner();
+
+    let resetPending:
+      Promise<PromiseSettledResult<request.Response>[]> |
+      undefined;
+
+    let authPending:
+      Promise<PromiseSettledResult<request.Response>[]> |
+      undefined;
+
+    await db.query(`
+      CREATE FUNCTION admin_password_race_probe()
+      RETURNS trigger LANGUAGE plpgsql AS $fixture$
+      BEGIN
+        IF NEW.password IS DISTINCT FROM OLD.password THEN
+          PERFORM pg_advisory_xact_lock(1212369985, 99);
+        END IF;
+        RETURN NEW;
+      END;
+      $fixture$;
+    `);
+
+    try {
+      await db.query(`
+        CREATE TRIGGER admin_password_race_probe
+        BEFORE UPDATE OF password ON "users"
+        FOR EACH ROW
+        EXECUTE FUNCTION admin_password_race_probe()
+      `);
+
+      await gate.connect();
+      await gate.startTransaction();
+
+      await gate.query(
+        "SELECT pg_advisory_xact_lock($1::integer, $2::integer)",
+        [1212369985, 99],
+      );
+
+      resetPending = Promise.allSettled([
+        resetPassword(user.id, { newPassword: NEW_PASSWORD }),
+      ]);
+
+      // The real password UPDATE is waiting inside its trigger.
+      await waitForPasswordRace("%UPDATE%password%", 1);
+
+      authPending = Promise.allSettled([
+        request(app.getHttpServer())
+          .post("/api/v1/auth/login")
+          .send({ email: user.email, password: PASSWORD }),
+
+        request(app.getHttpServer())
+          .post("/api/v1/auth/refresh")
+          .send({ refreshToken: credentials.refreshToken }),
+      ]);
+
+      // Both authentication requests must reach their actual
+      // user-row lock while the old version is still committed.
+      await waitForPasswordRace("%FOR UPDATE%", 2);
+
+      await gate.commitTransaction();
+
+      const [resetResult] = await resetPending;
+      const authenticationResults = await authPending;
+
+      expect(resetResult).toMatchObject({
+        status: "fulfilled",
+        value: { status: 200 },
+      });
+
+      expect(authenticationResults).toMatchObject([
+        {
+          status: "fulfilled",
+          value: { status: 401 },
+        },
+        {
+          status: "fulfilled",
+          value: { status: 401 },
+        },
+      ]);
+
+      const persisted = await users.findOneByOrFail({ id: user.id });
+
+      expect(persisted.sessionVersion).toBe("2");
+
+      expect(await sessions.countBy({
+        userId: user.id,
+        revoked: false,
+      })).toBe(0);
+
+      expect((await get(ME, credentials.accessToken)).status)
+        .toBe(401);
+
+    } finally {
+      if (gate.isTransactionActive) {
+        await gate.rollbackTransaction();
+      }
+
+      if (resetPending) await resetPending;
+      if (authPending) await authPending;
+
+      await gate.release();
+
+      await db.query(
+        'DROP TRIGGER IF EXISTS admin_password_race_probe ON "users"',
+      );
+
+      await db.query(
+        "DROP FUNCTION IF EXISTS admin_password_race_probe()",
+      );
+    }
+
+    const fresh = await request(app.getHttpServer())
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password: NEW_PASSWORD })
+      .expect(200);
+
+    expect((await get(ME, fresh.body.data.accessToken)).status)
+      .toBe(200);
+  }, 40000);
 });

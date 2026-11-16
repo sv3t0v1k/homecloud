@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -54,6 +55,18 @@ export class AdminUsersController {
         userId: request.user.userId,
         sessionVersion: request.user.sessionVersion,
       },
+      request.body,
+    );
+  }
+
+  @Put(":id/password")
+  async changePassword(@Req() request: AuthenticatedRequest) {
+    return this.writes.changePassword(
+      {
+        userId: request.user.userId,
+        sessionVersion: request.user.sessionVersion,
+      },
+      request.params.id,
       request.body,
     );
   }

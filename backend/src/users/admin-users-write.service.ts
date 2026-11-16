@@ -2,23 +2,34 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { isEmail } from "class-validator";
-import { DataSource } from "typeorm";
+import { DataSource, EntityManager } from "typeorm";
 import * as bcrypt from "bcryptjs";
 
 import { UserEntity } from "../entities/user.entity";
 import { isSessionVersion } from "../auth/session-token";
+import {
+  lockSessionUser,
+  revokeLockedUserSessions,
+} from "../auth/session-revocation";
 import { lockAdminTransactions } from "./admin-transaction-lock";
 import {
   AdminActor,
   assertAdminActor,
   presentAdminUser,
+  readAdminUser,
+  validateActorIdentity,
 } from "./admin-users-read.service";
 import {
   AdminUserDto,
+  AdminChangePasswordResultDto,
+  parseAdminChangePassword,
   parseAdminCreateUser,
+  parseAdminUpdateUser,
+  parseAdminUserId,
 } from "./dtos/admin-user.dto";
 import {
   isUserEmailConflict,
@@ -157,6 +168,211 @@ export class AdminUsersWriteService {
         // New accounts receive no sessions. They authenticate
         // later using the ordinary login endpoint.
         return result;
+      },
+    );
+  }
+
+  // Internal first part of the administrative PATCH operation.
+  // Role and quota changes are deliberately unavailable until
+  // their transaction invariants are implemented.
+  async updateProfile(
+    actor: AdminActor,
+    rawId: unknown,
+    rawBody: unknown,
+  ): Promise<AdminUserDto> {
+    validateActorIdentity(actor);
+
+    const current = await this.database.manager.findOne(
+      UserEntity,
+      {
+        select: AUTHORIZATION_FIELDS,
+        where: { id: actor.userId },
+      },
+    );
+
+    assertAdminActor(actor, current);
+
+    const id = parseAdminUserId(rawId);
+    const input = parseAdminUpdateUser(rawBody);
+
+    if (input.role !== undefined || input.storageQuota !== undefined) {
+      throw new BadRequestException({
+        code: "VALIDATION_ERROR",
+        message: "Invalid administrator request",
+      });
+    }
+
+    return this.database.transaction(
+      "READ COMMITTED",
+      async (manager) => {
+        const target = await this.lockMutationTarget(manager, actor, id);
+
+        // Explicit field allowlist, never arbitrary entity updates.
+        const changes: Partial<
+          Pick<UserEntity, "name" | "email" | "isEmailVerified">
+        > = {};
+
+        if (input.name !== undefined && input.name !== target.name) {
+          changes.name = input.name;
+        }
+
+        let emailChanged = false;
+
+        if (input.email !== undefined) {
+          let email: string;
+
+          try {
+            email = await normalizeUserEmail(manager, input.email);
+          } catch (error) {
+            if (error instanceof BadRequestException) {
+              throw new BadRequestException({
+                code: "VALIDATION_ERROR",
+                message: "Invalid administrator request",
+              });
+            }
+
+            throw error;
+          }
+
+          if (!isEmail(email)) {
+            throw new BadRequestException({
+              code: "VALIDATION_ERROR",
+              message: "Invalid administrator request",
+            });
+          }
+
+          if (email !== target.email) {
+            changes.email = email;
+            changes.isEmailVerified = false;
+            emailChanged = true;
+          }
+        }
+
+        // A canonical no-op does not change updatedAt or sessions.
+        if (Object.keys(changes).length > 0) {
+          try {
+            const updated = await manager.update(
+              UserEntity,
+              { id },
+              changes,
+            );
+
+            if (updated.affected !== 1) {
+              throw new Error("Administrative profile update failed");
+            }
+          } catch (error) {
+            if (isUserEmailConflict(error, manager)) {
+              throw new ConflictException({
+                code: "EMAIL_ALREADY_EXISTS",
+                message: "Email already exists",
+              });
+            }
+
+            throw error;
+          }
+        }
+
+        // The old identity and all refresh sessions are invalidated
+        // atomically with the actual email change.
+        if (emailChanged) {
+          await revokeLockedUserSessions(manager, target);
+        }
+
+        // Reuse the exact safe DTO and file statistics.
+        // Do not open a nested transaction or reacquire actor locks.
+        return readAdminUser(manager, id);
+      },
+    );
+  }
+
+  // Shared lock order for existing-account mutations:
+  // admin advisory lock -> ascending user IDs -> refresh rows.
+  private async lockMutationTarget(
+    manager: EntityManager,
+    actor: AdminActor,
+    id: number,
+  ): Promise<UserEntity> {
+    await lockAdminTransactions(manager);
+
+    const locked = new Map<number, UserEntity>();
+
+    const ids = [...new Set([actor.userId, id])]
+      .sort((a, b) => a - b);
+
+    for (const userId of ids) {
+      const user = await lockSessionUser(manager, userId);
+
+      if (user) {
+        locked.set(userId, user);
+      }
+    }
+
+    assertAdminActor(actor, locked.get(actor.userId) ?? null);
+
+    const target = locked.get(id);
+
+    if (!target) {
+      throw new NotFoundException({
+        code: "USER_NOT_FOUND",
+        message: "User not found",
+      });
+    }
+
+    return target;
+  }
+
+  async changePassword(
+    actor: AdminActor,
+    rawId: unknown,
+    rawBody: unknown,
+  ): Promise<AdminChangePasswordResultDto> {
+    validateActorIdentity(actor);
+
+    // Reject ordinary users before performing expensive bcrypt.
+    const current = await this.database.manager.findOne(
+      UserEntity,
+      {
+        select: AUTHORIZATION_FIELDS,
+        where: { id: actor.userId },
+      },
+    );
+
+    assertAdminActor(actor, current);
+
+    const id = parseAdminUserId(rawId);
+    const input = parseAdminChangePassword(rawBody);
+
+    // Hash outside the transaction; repeat authorization under
+    // the authoritative lock before modifying the account.
+    const passwordHash = await bcrypt.hash(input.newPassword, 12);
+
+    return this.database.transaction(
+      "READ COMMITTED",
+      async (manager) => {
+        const target = await this.lockMutationTarget(
+          manager,
+          actor,
+          id,
+        );
+
+        const updated = await manager.update(
+          UserEntity,
+          { id },
+          { password: passwordHash },
+        );
+
+        if (updated.affected !== 1) {
+          throw new Error("Administrative password update failed");
+        }
+
+        // Password, version increment, and refresh-token
+        // revocation must commit or roll back together.
+        await revokeLockedUserSessions(manager, target);
+
+        return {
+          passwordChanged: true,
+          sessionsRevoked: true,
+        };
       },
     );
   }
