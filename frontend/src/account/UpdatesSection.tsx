@@ -41,7 +41,13 @@ function statusText(job: InstallStatus): string {
   }
 }
 
-export function UpdatesSection() {
+export function UpdatesSection({
+  visible = true,
+  onAccessChange,
+}: {
+  visible?: boolean
+  onAccessChange?: (admin: boolean) => void
+} = {}) {
   const [admin, setAdmin] = useState(false)
   const [result, setResult] = useState<UpdateCheck | null>(null)
   const [job, setJob] = useState<InstallStatus | null>(null)
@@ -55,10 +61,21 @@ export function UpdatesSection() {
   useEffect(() => {
     const controller = new AbortController()
     void apiRequest<{ admin: boolean }>({ method: 'GET', url: '/updates/access', signal: controller.signal })
-      .then((value) => { if (!controller.signal.aborted) setAdmin(value.admin) })
-      .catch(() => { if (!controller.signal.aborted) setAdmin(false) })
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          const allowed = value.admin === true
+          setAdmin(allowed)
+          onAccessChange?.(allowed)
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setAdmin(false)
+          onAccessChange?.(false)
+        }
+      })
     return () => controller.abort()
-  }, [])
+  }, [onAccessChange])
   useEffect(() => {
     if (!admin) return
     const controller = new AbortController()
@@ -119,7 +136,7 @@ export function UpdatesSection() {
       setSubmitError('Приём заявки не подтверждён. Проверьте статус перед повторной попыткой; предыдущая установка может требовать проверки оператором.')
     } finally { setSubmitting(false) }
   }
-  if (!admin) return null
+  if (!admin || !visible) return null
   return <section aria-label="Обновления" className="account-section">
     <h3>Обновления</h3>
     <p>Канал: {result?.channel === 'release' ? 'release' : 'test'}.</p>

@@ -8,6 +8,60 @@ vi.mock('../api/client', () => ({ apiRequest: vi.fn() }))
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
 describe('UpdatesSection', () => {
+  it('reports server-confirmed access and keeps the same status while hidden', async () => {
+    const onAccessChange = vi.fn()
+
+    vi.mocked(apiRequest).mockImplementation(async (config) => {
+      if (config.url === '/updates/access') return { admin: true }
+      if (config.url === '/updates') return {
+        channel: 'test',
+        installed: { version: 'test-current', gitSha: '1'.repeat(40) },
+        available: null,
+        status: 'current',
+      }
+      if (config.url === '/updates/installations/current') return {
+        status: 'RUNNING',
+        manifestSha256: 'a'.repeat(64),
+        phase: 'VERIFY_IMAGES',
+        updatedAt: 'now',
+      }
+      throw new Error('unexpected request')
+    })
+
+    const view = render(
+      <UpdatesSection visible={false} onAccessChange={onAccessChange} />,
+    )
+
+    await waitFor(() => expect(onAccessChange).toHaveBeenCalledWith(true))
+
+    expect(screen.queryByRole('region', { name: 'Обновления' })).not.toBeInTheDocument()
+
+    view.rerender(
+      <UpdatesSection visible onAccessChange={onAccessChange} />,
+    )
+
+    expect(await screen.findByText(/Выполняется: Проверка образов/)).toBeInTheDocument()
+
+    view.rerender(
+      <UpdatesSection visible={false} onAccessChange={onAccessChange} />,
+    )
+
+    expect(screen.queryByRole('region', { name: 'Обновления' })).not.toBeInTheDocument()
+
+    view.rerender(
+      <UpdatesSection visible onAccessChange={onAccessChange} />,
+    )
+
+    expect(screen.getByText(/Выполняется: Проверка образов/)).toBeInTheDocument()
+
+    const accessCalls = vi.mocked(apiRequest).mock.calls.filter(
+      ([config]) => config.url === '/updates/access',
+    )
+
+    expect(accessCalls).toHaveLength(1)
+    expect(onAccessChange).toHaveBeenCalledTimes(1)
+  })
+
   it('does not expose the section to an ordinary user', async () => {
     vi.mocked(apiRequest).mockResolvedValueOnce({ admin: false })
     render(<UpdatesSection />)
