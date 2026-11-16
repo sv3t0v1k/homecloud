@@ -82,6 +82,152 @@ describe('FileBrowserPage', () => {
     expect(screen.getByRole('menuitem', { name: 'Открыть' })).toBeInTheDocument()
   })
 
+  it('exposes Liquid Selection Dock actions and clears selection without deleting files', async () => {
+    apiClient.defaults.adapter = async config => ok(
+      config,
+      config.url === '/files/folders'
+        ? [folder(7, 'A', null), folder(8, 'B', null)]
+        : [],
+    )
+
+    renderPage('/files')
+    const user = userEvent.setup()
+
+    const first = await screen.findByRole('button', {
+      name: 'A',
+    })
+
+    expect(screen.queryByRole('region', {
+      name: 'Выделенные объекты',
+    })).not.toBeInTheDocument()
+
+    await user.click(first)
+
+    const dock = screen.getByRole('region', {
+      name: 'Выделенные объекты',
+    })
+
+    expect(dock).toHaveClass('liquid-selection-dock')
+
+    expect(within(dock).getByText('Выбрано: 1')).toBeInTheDocument()
+
+    expect(within(dock).queryByRole('button', {
+      name: 'Скачать ZIP',
+    })).not.toBeInTheDocument()
+
+    await user.click(within(dock).getByRole('button', {
+      name: 'Выбрать всё',
+    }))
+
+    expect(within(dock).getByText('Выбрано: 2')).toBeInTheDocument()
+
+    expect(within(dock).getByRole('button', {
+      name: 'Скачать ZIP',
+    })).toBeEnabled()
+
+    await user.click(within(dock).getByRole('button', {
+      name: 'Снять выделение',
+    }))
+
+    expect(screen.queryByRole('region', {
+      name: 'Выделенные объекты',
+    })).not.toBeInTheDocument()
+
+    expect(screen.getByRole('button', {
+      name: 'A',
+    })).toBeInTheDocument()
+
+    expect(screen.getByRole('button', {
+      name: 'B',
+    })).toBeInTheDocument()
+
+    expect(screen.getByRole('checkbox', {
+      name: 'Выбрать A',
+    })).not.toBeChecked()
+
+    expect(screen.getByRole('checkbox', {
+      name: 'Выбрать B',
+    })).not.toBeChecked()
+  })
+
+  it('clears selection on empty workspace clicks without affecting files or modal actions', async () => {
+    apiClient.defaults.adapter = async config => ok(
+      config,
+      config.url === '/files/folders'
+        ? [folder(7, 'A', null), folder(8, 'B', null)]
+        : [],
+    )
+
+    renderPage('/files')
+    const user = userEvent.setup()
+
+    const first = await screen.findByRole('button', {
+      name: 'A',
+    })
+
+    const page = screen.getByRole('region', {
+      name: 'Мои файлы',
+    })
+
+    await user.click(first)
+
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument()
+
+    // Interactive toolbar actions must preserve selection.
+    await user.click(screen.getByRole('button', {
+      name: 'Плитка',
+    }))
+
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument()
+
+    // Empty grid space clears the selected object.
+    await user.click(page.querySelector('tbody')!)
+
+    expect(screen.queryByRole('region', {
+      name: 'Выделенные объекты',
+    })).not.toBeInTheDocument()
+
+    await user.click(first)
+
+    await user.click(screen.getByRole('button', {
+      name: 'В корзину',
+    }))
+
+    const dialog = screen.getByRole('dialog', {
+      name: 'Переместить выбранное в корзину?',
+    })
+
+    // Clicking inside the dialog does not dismiss it.
+    await user.click(within(dialog).getByRole('heading'))
+
+    expect(dialog).toBeInTheDocument()
+
+    // Backdrop dismisses only the dialog.
+    await user.click(dialog.closest('.dialog-overlay')!)
+
+    expect(dialog).not.toBeInTheDocument()
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument()
+
+    // A separate background click clears the selection.
+    await user.click(page)
+
+    expect(screen.queryByRole('region', {
+      name: 'Выделенные объекты',
+    })).not.toBeInTheDocument()
+
+    expect(screen.getByRole('checkbox', {
+      name: 'Выбрать A',
+    })).not.toBeChecked()
+
+    expect(screen.getByRole('button', {
+      name: 'A',
+    })).toBeInTheDocument()
+
+    expect(screen.getByRole('button', {
+      name: 'B',
+    })).toBeInTheDocument()
+  })
+
   it('reconstructs named breadcrumbs on a direct nested load', async () => {
     apiClient.defaults.adapter = async (config) => {
       if (config.url === '/files/folders/9') return ok(config, folder(9, 'Child', 3))
@@ -177,7 +323,18 @@ describe('FileBrowserPage', () => {
 
     await waitFor(() => expect(screen.getByRole('listitem', { name: 'Загрузка: new.png' })).toHaveTextContent('Файл загружен'))
     expect(screen.getByRole('listitem', { name: 'Загрузка: new.png' })).toHaveTextContent('Файл загружен')
-    expect(screen.getByRole('listitem', { name: 'Загрузка: new.png' })).toHaveTextContent('4 Б из 4 Б')
+    const completedCard = screen.getByRole('listitem', {
+      name: 'Загрузка: new.png',
+    })
+
+    expect(completedCard).toHaveAttribute(
+      'data-upload-state', 'completed',
+    )
+    expect(completedCard).toHaveTextContent('· 4 Б')
+
+    expect(screen.getByRole('progressbar', {
+      name: 'Прогресс: new.png',
+    })).toHaveAttribute('value', '100')
     expect(screen.queryByText(/Принято сервером:/)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Закрыть' }))
     expect(screen.queryByLabelText('Загрузки')).not.toBeInTheDocument()
@@ -263,7 +420,7 @@ describe('FileBrowserPage', () => {
     expect(sessions).toBe(0)
   })
 
-  it('selects with one click, opens on double click, supports range selection, search and context actions', async () => {
+  it('selects with one click, opens on double click, supports range selection and context actions', async () => {
     apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files' ? [file(11, 'first.txt', 1), file(12, 'second.txt', 1)] : [])
     renderPage('/files')
     const user = userEvent.setup()
@@ -281,8 +438,8 @@ describe('FileBrowserPage', () => {
     await user.dblClick(first)
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     await user.keyboard('{Escape}')
-    await user.type(screen.getByLabelText('Поиск в текущей папке'), 'second')
-    expect(screen.queryByRole('button', { name: 'first.txt' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Поиск в текущей папке')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'first.txt' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'second.txt' })).toBeInTheDocument()
   })
 

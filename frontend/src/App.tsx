@@ -9,11 +9,11 @@ import { FileBrowserPage, UploadQueueProvider } from './files/FileBrowserPage'
 import { TrashPage } from './files/TrashPage'
 import { ProtectedRoute } from './routing/ProtectedRoute'
 import { Icon } from './ui/Icon'
+import { LiquidCloseButton } from './ui/LiquidCloseButton'
 import { AccountDialog } from './account/AccountDialog'
 import { PublicSharePage } from './sharing/PublicSharePage'
 import { GlobalSearchPage } from './files/GlobalSearchPage'
 import { SearchSessionProvider } from './files/useGlobalSearch'
-import { searchOrigin } from './files/searchNavigation'
 
 function App() {
   return (
@@ -77,38 +77,92 @@ function TrashDialog({ background, onClose }: { background: HTMLElement | null; 
     return () => { if (background) background.inert = inert; document.body.style.overflow = overflow }
   }, [background])
   return <div className="dialog-overlay"><div aria-label="Корзина" aria-modal="true" className="dialog-surface trash-dialog" ref={ref} role="dialog" tabIndex={-1}>
-    <div className="dialog-header"><h2>Удалённые объекты</h2><button aria-label="Закрыть корзину" className="icon-button" onClick={onClose} type="button"><Icon name="close" /></button></div>
-    <TrashPage onConfirmationChange={setConfirming} />
+    <div className="dialog-header"><h2 id="trash-dialog-heading">Корзина</h2><LiquidCloseButton aria-label="Закрыть корзину" onClick={onClose} /></div>
+    <TrashPage embedded onConfirmationChange={setConfirming} />
   </div></div>
 }
 
 function Navbar({ onOpenAccount }: { onOpenAccount(): void }) {
   const session = useSession()
-  const navigate = useNavigate()
   const location = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
 
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchLauncher = useRef<HTMLButtonElement>(null)
+  const searchPanel = useRef<HTMLDivElement>(null)
+
+  function closeSearch(restoreFocus = true) {
+    setSearchOpen(false)
+    if (restoreFocus) searchLauncher.current?.focus()
+  }
+
   function openSearch() {
+    // Preserve compatibility with existing saved search URLs.
     if (location.pathname === '/files/search') {
       document.getElementById('global-search-query')?.focus()
-    } else {
-      navigate('/files/search', { state: { returnTo: searchOrigin(location.pathname, location.state), focusSearch: true } })
+      return
     }
+    setSearchOpen(true)
   }
+
+  useEffect(() => {
+    setSearchOpen(false)
+  }, [location.key])
+
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       const target = event.target
-      if (event.defaultPrevented || event.altKey || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k' ||
-        (target instanceof HTMLElement && (target.closest('input, textarea, select, [contenteditable="true"]') || target.closest('[role="dialog"]'))) ||
+      if (event.defaultPrevented || event.altKey ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.key.toLowerCase() !== 'k' ||
+        (target instanceof HTMLElement &&
+          target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) ||
         document.querySelector('[aria-modal="true"]')) return
+
       event.preventDefault()
-      if (location.pathname === '/files/search') document.getElementById('global-search-query')?.focus()
-      else navigate('/files/search', { state: { returnTo: searchOrigin(location.pathname, location.state), focusSearch: true } })
+
+      if (location.pathname === '/files/search') {
+        document.getElementById('global-search-query')?.focus()
+      } else {
+        setSearchOpen(true)
+      }
     }
+
     window.addEventListener('keydown', shortcut)
     return () => window.removeEventListener('keydown', shortcut)
-  }, [location.pathname, location.state, navigate])
+  }, [location.pathname])
+
+  useEffect(() => {
+    if (!searchOpen) return
+
+    function outside(event: PointerEvent) {
+      if (document.querySelector('[aria-modal="true"]')) return
+      if (!(event.target instanceof Node)) return
+
+      if (!searchPanel.current?.contains(event.target) &&
+          !searchLauncher.current?.contains(event.target)) {
+        setSearchOpen(false)
+      }
+    }
+
+    function escape(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || event.defaultPrevented ||
+          document.querySelector('[aria-modal="true"]')) return
+
+      event.preventDefault()
+      setSearchOpen(false)
+      searchLauncher.current?.focus()
+    }
+
+    document.addEventListener('pointerdown', outside)
+    window.addEventListener('keydown', escape)
+
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      window.removeEventListener('keydown', escape)
+    }
+  }, [searchOpen])
 
   async function handleLogout() {
     if (loggingOut) return
@@ -126,16 +180,67 @@ function Navbar({ onOpenAccount }: { onOpenAccount(): void }) {
   }
 
   return (
+    <>
     <header className="topbar">
       <Link className="brand" to="/files"><span className="brand-mark"><Icon name="cloud" /></span><span>HomeCloud</span></Link>
-      <button className="global-search-launcher button button--ghost" aria-label="Поиск во всех файлах" aria-keyshortcuts="Control+k Meta+k" onClick={openSearch} type="button"><Icon name="search" /><span>Поиск во всех файлах</span><kbd>⌘ / Ctrl K</kbd></button>
+      <div className="spotlight-launcher-slot">
+        <button
+          className="global-search-launcher button button--ghost"
+          aria-label="Поиск во всех файлах"
+          aria-keyshortcuts="Control+k Meta+k"
+          aria-expanded={searchOpen}
+          aria-controls={searchOpen ? 'homecloud-spotlight' : undefined}
+          ref={searchLauncher}
+          onClick={() => searchOpen ? closeSearch() : openSearch()}
+          type="button"
+        >
+          <Icon name="search" />
+          <span className="spotlight-launcher-label">Поиск</span>
+        </button>
+      </div>
       <div className="account-area">
-        {session.status === 'authenticated' ? <button aria-label={`Открыть аккаунт: ${session.user.name}`} className="button button--ghost" onClick={(event) => { event.currentTarget.focus(); onOpenAccount() }} type="button"><Icon name="user" /><span>{session.user.name}</span></button> : null}
+        {session.status === 'authenticated' ? (
+          <button
+            aria-label={`Открыть аккаунт: ${session.user.name}`}
+            className="button button--ghost liquid-topbar-button liquid-topbar-account"
+            onClick={(event) => {
+              event.currentTarget.focus()
+              onOpenAccount()
+            }}
+            type="button"
+          >
+            <Icon name="user" />
+            <span className="liquid-topbar-label">
+              {session.user.name}
+            </span>
+          </button>
+        ) : null}
         {logoutError ? <span className="inline-alert" role="alert">{logoutError}</span> : null}
 
-        <button className="button button--ghost" disabled={loggingOut} onClick={() => void handleLogout()} type="button">{loggingOut ? 'Выходим…' : 'Выйти'}</button>
+        <button
+          className="button button--ghost liquid-topbar-button liquid-topbar-logout"
+          aria-label={loggingOut ? 'Выходим…' : 'Выйти'}
+          disabled={loggingOut}
+          onClick={() => void handleLogout()}
+          type="button"
+        >
+          <Icon name="logout" />
+          <span className="liquid-topbar-label">
+            {loggingOut ? 'Выходим…' : 'Выйти'}
+          </span>
+        </button>
       </div>
     </header>
+    {searchOpen ? (
+      <div
+        className="spotlight-panel"
+        id="homecloud-spotlight"
+        ref={searchPanel}
+      >
+        <GlobalSearchPage onClose={() => closeSearch()} />
+      </div>
+    ) : null}
+    </>
   )
 }
 

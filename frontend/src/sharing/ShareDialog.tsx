@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/errors'
+import { Icon } from '../ui/Icon'
+import { LiquidCloseButton } from '../ui/LiquidCloseButton'
+import { FileThumbnail } from '../files/FileThumbnail'
 import { useDialogFocus } from '../accessibility/useDialogFocus'
 import { createShare, listShares, publicShareUrl, revokeShare, type OwnerShare, type ShareTarget } from './api'
 
-export function ShareDialog({ target, onClose }: { target: ShareTarget; onClose(): void }) {
+export type ShareDialogTarget = ShareTarget & {
+  mimeType?: string | null
+  updatedAt?: string
+}
+
+export function ShareDialog({ target, onClose }: {
+  target: ShareDialogTarget
+  onClose(): void
+}) {
   const [shares, setShares] = useState<OwnerShare[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -111,18 +122,81 @@ export function ShareDialog({ target, onClose }: { target: ShareTarget; onClose(
     }
   }
 
+  const image = !target.isFolder &&
+    target.mimeType?.startsWith('image/')
+
+  const hasThumbnail = !target.isFolder &&
+    ['image/jpeg', 'image/png', 'image/webp'].includes(
+      target.mimeType ?? '',
+    )
+
+  const targetType = target.isFolder
+    ? 'Папка'
+    : image
+      ? 'Изображение'
+      : target.mimeType?.startsWith('text/')
+        ? 'Текстовый документ'
+        : target.mimeType === 'application/pdf'
+          ? 'Документ PDF'
+          : target.mimeType?.startsWith('video/')
+            ? 'Видео'
+            : target.mimeType?.startsWith('audio/')
+              ? 'Аудио'
+              : 'Файл'
+
   return (
-    <div aria-labelledby="share-title" aria-modal="true" className="dialog-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
-      <div className="dialog-surface share-dialog">
+    <div aria-labelledby="share-title share-target-name" aria-modal="true" className="dialog-overlay liquid-settings-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
+      <div className="dialog-surface share-dialog liquid-settings-dialog">
         <header className="dialog-header">
-          <div>
-            <p className="eyebrow">Общий доступ</p>
-            <h3 id="share-title">Поделиться: {target.name}</h3>
-            <p className="page-description">Настройте срок действия ссылки и ограничения скачивания.</p>
-          </div>
-          <button aria-label="Закрыть общий доступ" className="button button--ghost" onClick={onClose} ref={closeButtonRef} type="button">Закрыть</button>
+          <h3 id="share-title">Поделиться</h3>
+          <LiquidCloseButton
+            aria-label="Закрыть общий доступ"
+            onClick={onClose}
+            ref={closeButtonRef}
+          />
         </header>
         <div className="dialog-body">
+          <div className="share-target-card">
+            {hasThumbnail ? (
+              <FileThumbnail
+                key={`${target.fileId}:${target.updatedAt ?? ''}`}
+                fileId={target.fileId}
+              />
+            ) : (
+              <span
+                aria-hidden="true"
+                className={`share-target-icon${target.isFolder ? ' is-folder' : ''}`}
+              >
+                <Icon
+                  name={target.isFolder
+                    ? 'folder'
+                    : image
+                      ? 'image'
+                      : target.mimeType?.startsWith('text/')
+                        ? 'text'
+                        : 'file'}
+                />
+              </span>
+            )}
+
+            <div className="share-target-details">
+              <strong
+                id="share-target-name"
+                className="share-target-name"
+                title={target.name}
+              >
+                {target.name}
+              </strong>
+              <span className="share-target-type">
+                {targetType}
+              </span>
+            </div>
+          </div>
+
+          <p className="share-policy-description">
+            Настройте срок действия ссылки и ограничения скачивания.
+          </p>
+
           <form className="share-form" onSubmit={(event) => void submit(event)}>
             <label className="field">Срок действия, дней<input className="input mono" max={36500} min={1} onChange={(event) => setExpiresInDays(event.target.value)} required type="number" value={expiresInDays} /></label>
             <label className="field">Лимит скачиваний (необязательно)<input className="input mono" min={1} onChange={(event) => setMaxDownloads(event.target.value)} placeholder="Без ограничений" type="number" value={maxDownloads} /></label>

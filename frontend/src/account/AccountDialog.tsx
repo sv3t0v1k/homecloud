@@ -1,4 +1,5 @@
 import { Icon } from '../ui/Icon'
+import { LiquidCloseButton } from '../ui/LiquidCloseButton'
 import { formatBytes, storagePercent } from '../ui/formatBytes'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useDialogFocus } from '../accessibility/useDialogFocus'
@@ -57,8 +58,12 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
     } finally { lock.current = false; setBusy(false) }
   }
   const percent = storage ? storagePercent(storage.storageUsed, storage.storageQuota) : null
-  return <div aria-label="Аккаунт и хранилище" aria-modal="true" className="dialog-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
-    <div className="dialog-surface account-dialog"><header className="dialog-header"><h2>Аккаунт и хранилище</h2><button className="button button--ghost" disabled={busy} onClick={close} type="button">Закрыть</button></header>
+  return <div aria-label="Аккаунт и хранилище" aria-modal="true" className="dialog-overlay liquid-settings-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
+    <div className="dialog-surface account-dialog liquid-settings-dialog"><header className="dialog-header"><h2>Аккаунт и хранилище</h2><LiquidCloseButton
+      aria-label="Закрыть"
+      disabled={busy}
+      onClick={close}
+    /></header>
       <div className="dialog-body">
         <section aria-labelledby="account-profile-title" className="account-section">
           <h3 id="account-profile-title">Профиль</h3>

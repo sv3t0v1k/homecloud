@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   AxiosError,
@@ -53,7 +53,37 @@ describe('authentication UX', () => {
     expect(screen.getByRole('dialog', { name: 'Корзина' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Удалить «old.txt» навсегда?' })).not.toBeInTheDocument()
     expect(remove).toHaveFocus()
-    await user.keyboard('{Escape}')
+
+    await user.click(remove)
+
+    const nested = screen.getByRole('dialog', {
+      name: 'Удалить «old.txt» навсегда?',
+    })
+
+    const surface = nested.querySelector('.dialog-surface')!
+
+    // Starting inside and releasing outside is not
+    // an intentional backdrop click.
+    fireEvent.pointerDown(surface, { button: 0 })
+    fireEvent.pointerUp(nested, { button: 0 })
+    fireEvent.click(nested, { button: 0, detail: 1 })
+
+    expect(nested).toBeInTheDocument()
+
+    await user.click(nested)
+
+    expect(nested).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', {
+      name: 'Корзина',
+    })).toBeInTheDocument()
+    expect(remove).toHaveFocus()
+
+    const trash = screen.getByRole('dialog', {
+      name: 'Корзина',
+    })
+
+    await user.click(trash.closest('.dialog-overlay')!)
+
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 

@@ -15,6 +15,26 @@ const SearchContext = createContext<SearchSession | null>(null)
 const CACHE_TTL = 60000
 const CACHE_LIMIT = 10
 
+type SpotlightLocation = {
+  query: string | null
+  offset: number
+}
+
+type SpotlightPosition = {
+  scrollTop: number
+  focusResult: string | null
+}
+
+const emptySpotlightLocation: SpotlightLocation = {
+  query: null,
+  offset: 0,
+}
+
+const emptySpotlightPosition: SpotlightPosition = {
+  scrollTop: 0,
+  focusResult: null,
+}
+
 class SearchSession {
   private version = 0
   private listeners = new Set<() => void>()
@@ -24,9 +44,52 @@ class SearchSession {
   private pending: { key: string; controller: AbortController } | null = null
   cooldownUntil = 0
 
+  private spotlightLocation = emptySpotlightLocation
+  private spotlightPosition = emptySpotlightPosition
+
   constructor(readonly ownerId: number, readonly generation: number) {}
 
   private current = () => this.ownerId > 0 && this.generation === tokenStorage.getOwnerGeneration()
+
+  getSpotlightLocation(): SpotlightLocation {
+    return this.current()
+      ? this.spotlightLocation
+      : emptySpotlightLocation
+  }
+
+  getSpotlightPosition(): SpotlightPosition {
+    return this.current()
+      ? this.spotlightPosition
+      : emptySpotlightPosition
+  }
+
+  setSpotlightLocation(location: SpotlightLocation) {
+    if (!this.current()) return
+
+    if (
+      this.spotlightLocation.query === location.query &&
+      this.spotlightLocation.offset === location.offset
+    ) return
+
+    this.spotlightLocation = { ...location }
+    this.spotlightPosition = emptySpotlightPosition
+  }
+
+  saveSpotlightPosition(
+    location: SpotlightLocation,
+    position: Partial<SpotlightPosition>,
+  ) {
+    if (
+      !this.current() ||
+      this.spotlightLocation.query !== location.query ||
+      this.spotlightLocation.offset !== location.offset
+    ) return
+
+    this.spotlightPosition = {
+      ...this.spotlightPosition,
+      ...position,
+    }
+  }
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
@@ -45,6 +108,8 @@ class SearchSession {
       this.pending = null
       this.pages.clear()
       this.cooldownUntil = 0
+      this.spotlightLocation = emptySpotlightLocation
+      this.spotlightPosition = emptySpotlightPosition
     })
   }
 
@@ -59,10 +124,16 @@ class SearchSession {
     this.changed()
   }
 
-  acquire(query: string, offset: number) {
+  acquire(query: string, offset: number, retryExpiredRateLimit = false) {
     const key = JSON.stringify([query, offset])
     this.leases.set(key, (this.leases.get(key) ?? 0) + 1)
-    this.load(query, offset)
+
+    const cached = this.pages.get(key)?.value
+    const retryRateLimit = retryExpiredRateLimit &&
+      cached?.error?.status === 429 &&
+      Date.now() >= this.cooldownUntil
+
+    this.load(query, offset, retryRateLimit)
     return () => {
       this.leases.set(key, Math.max(0, (this.leases.get(key) ?? 1) - 1))
       queueMicrotask(() => {
@@ -117,15 +188,31 @@ export function SearchSessionProvider({ ownerId, children }: { ownerId: number; 
   return createElement(SearchContext.Provider, { value: session }, children)
 }
 
-export function useGlobalSearch(query: string | null, offset: number) {
+export function useSpotlightSession() {
+  const session = useContext(SearchContext)
+
+  if (!session) {
+    throw new Error(
+      'useSpotlightSession requires SearchSessionProvider',
+    )
+  }
+
+  return session
+}
+
+export function useGlobalSearch(
+  query: string | null,
+  offset: number,
+  retryExpiredRateLimit = false,
+) {
   const session = useContext(SearchContext)
   if (!session) throw new Error('useGlobalSearch requires SearchSessionProvider')
   useSyncExternalStore(session.subscribe, session.getVersion, session.getVersion)
   const key = query === null ? null : JSON.stringify([query, offset])
   useEffect(() => {
     if (query === null) return
-    return session.acquire(query, offset)
-  }, [session, query, offset])
+    return session.acquire(query, offset, retryExpiredRateLimit)
+  }, [session, query, offset, retryExpiredRateLimit])
   return {
     ...session.snapshot(key),
     cooldownUntil: session.cooldownUntil,

@@ -10,7 +10,13 @@ type State =
   | { status: 'ready'; contents: TrashContents; warning: string | null }
   | { status: 'error'; message: string }
 
-export function TrashPage({ onConfirmationChange }: { onConfirmationChange?(open: boolean): void } = {}) {
+export function TrashPage({
+  embedded = false,
+  onConfirmationChange,
+}: {
+  embedded?: boolean
+  onConfirmationChange?(open: boolean): void
+} = {}) {
   const [state, setState] = useState<State>({ status: 'loading' })
   const [reloadKey, setReloadKey] = useState(0)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -83,11 +89,13 @@ export function TrashPage({ onConfirmationChange }: { onConfirmationChange?(open
     ...state.contents.files.map((item) => ({ ...item, kind: 'file' as const })),
   ]
   return (
-    <section aria-labelledby="trash-heading" className="trash-page">
-      <header className="page-header">
+    <section aria-labelledby={embedded ? "trash-dialog-heading" : "trash-heading"} className="trash-page">
+      {(!embedded || items.length > 0) ? <header className="page-header">
         <div>
-          <p className="eyebrow">Удалённые объекты</p>
-          <h2 className="page-heading" id="trash-heading">Корзина</h2>
+          {!embedded ? <>
+            <p className="eyebrow">Удалённые объекты</p>
+            <h2 className="page-heading" id="trash-heading">Корзина</h2>
+          </> : null}
           <p className="page-description">Восстановите нужное или удалите навсегда. Безвозвратное удаление нельзя отменить.</p>
         </div>
         <button className="button button--danger" disabled={items.length === 0 || pending !== null} onClick={(event) => { event.currentTarget.focus(); setConfirmation({
@@ -95,7 +103,7 @@ export function TrashPage({ onConfirmationChange }: { onConfirmationChange?(open
           confirmLabel: 'Удалить всё навсегда',
           run: () => void mutate('empty', async () => { await emptyTrash(); setSelected(new Set()) }),
         }) }} type="button"><Icon name="trash" />{pending === 'empty' ? 'Очищаем…' : 'Очистить корзину'}</button>
-      </header>
+      </header> : null}
       {items.length > 0 ? <div className="selection-toolbar"><label><input type="checkbox" aria-label="Выбрать всё в корзине" disabled={pending !== null} checked={items.every((item) => selected.has(`${item.kind}:${item.id}`))} onChange={(event) => setSelected(event.target.checked ? new Set(items.map((item) => `${item.kind}:${item.id}`)) : new Set())} /> Выбрать всё</label>{selected.size ? <><span>Выбрано: {selected.size}</span><button className="button button--ghost" disabled={pending !== null} onClick={() => void mutateSelected('restore')} type="button">Восстановить выбранное</button><button className="button button--danger" disabled={pending !== null} onClick={(event) => { event.currentTarget.focus(); setConfirmation({ title: 'Удалить выбранное навсегда?', confirmLabel: 'Удалить выбранное навсегда', run: () => void mutateSelected('delete') }) }} type="button">Удалить выбранное</button></> : null}</div> : null}
       {state.warning ? <div className="alert alert--danger" role="alert">{state.warning} <button className="button button--ghost" onClick={() => setReloadKey((value) => value + 1)} type="button">Повторить</button></div> : null}
       {items.length === 0 ? <div className="empty-state"><Icon name="trash" height={36} width={36} /><h3>Корзина пуста</h3><p className="muted">Здесь появятся удалённые файлы и папки.</p></div> : (

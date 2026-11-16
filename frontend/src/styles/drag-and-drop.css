@@ -1,0 +1,264 @@
+
+
+/* UI foundation: liquid drag and drop */
+
+/* Overlay is anchored to the actual drop target.
+   It never participates in layout or intercepts drag events. */
+.ux-v2 .files-page {
+  position: relative;
+}
+
+.ux-v2 .files-page--drop {
+  outline: none;
+}
+
+.ux-v2 .files-page > .liquid-drop-surface {
+  box-sizing: border-box;
+
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+
+  min-width: 0;
+  padding: 24px;
+  margin: 0;
+
+  border: 1px solid var(--accent);
+  border-radius: 24px;
+
+  background: var(--surface-primary);
+
+  background-image: radial-gradient(
+    ellipse at 50% 35%,
+    rgba(159,190,99,.10),
+    transparent 68%
+  );
+
+  box-shadow:
+    inset 0 0 0 1px rgba(159,190,99,.10),
+    inset 0 0 48px rgba(159,190,99,.06),
+    0 0 30px rgba(159,190,99,.10);
+
+  pointer-events: none;
+}
+
+@supports (
+  (backdrop-filter: blur(14px)) or
+  (-webkit-backdrop-filter: blur(14px))
+) {
+  .ux-v2 .files-page > .liquid-drop-surface {
+    background-color: color-mix(
+      in srgb,
+      var(--surface-primary) 88%,
+      transparent
+    );
+
+    -webkit-backdrop-filter: blur(14px) saturate(110%);
+    backdrop-filter: blur(14px) saturate(110%);
+  }
+}
+
+/* Keep the message readable even in long directories.
+   Do not place it at the center of a very tall file list. */
+.ux-v2 .liquid-drop-message {
+  position: sticky;
+  top: 18dvh;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  width: 100%;
+  max-width: 480px;
+  min-width: 0;
+
+  margin-top: clamp(24px, 10dvh, 96px);
+  padding: 20px 8px;
+
+  gap: 12px;
+  text-align: center;
+}
+
+/* HomeCloud emblem: glass, green edge and soft inner light. */
+.ux-v2 .liquid-drop-emblem {
+  position: relative;
+
+  display: grid;
+  place-items: center;
+
+  width: 96px;
+  height: 96px;
+  flex-shrink: 0;
+
+  margin-bottom: 12px;
+
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: radial-gradient(
+    circle at 35% 20%,
+    rgba(159,190,99,.24),
+    rgba(159,190,99,.035) 78%
+  );
+
+  color: var(--success);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.20),
+    0 0 38px rgba(159,190,99,.09);
+}
+
+.ux-v2 .liquid-drop-arrow {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+
+  display: grid;
+  place-items: center;
+
+  width: 32px;
+  height: 32px;
+
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: var(--surface-elevated);
+  color: var(--accent);
+}
+
+.ux-v2 .liquid-drop-title {
+  color: var(--text-primary);
+
+  font-size: clamp(20px, 2.5vw, 27px);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -.035em;
+}
+
+.ux-v2 .liquid-drop-description {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.ux-v2 .liquid-drop-destination {
+  box-sizing: border-box;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  max-width: 100%;
+  min-width: 0;
+
+  gap: 8px;
+  padding: 10px 18px;
+  margin-top: 2px;
+
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: var(--accent-soft);
+  color: var(--success);
+
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ux-v2 .liquid-drop-destination > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ux-v2 .liquid-drop-destination > svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ux-v2 .liquid-drop-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+/* Unavailable destination must not look ready. */
+.ux-v2 .liquid-drop-surface[data-drop-ready="false"] {
+  border-color: var(--border-strong);
+  box-shadow: var(--elevation-floating);
+}
+
+.ux-v2 .liquid-drop-surface[data-drop-ready="false"]
+.liquid-drop-emblem {
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+  background: var(--surface-secondary);
+  box-shadow: none;
+}
+
+.ux-v2 .liquid-drop-surface[data-drop-ready="false"]
+.liquid-drop-arrow {
+  display: none;
+}
+
+/* Fast visual acknowledgment when a file enters the region. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .liquid-drop-surface {
+    animation: homecloud-drop-appear
+      350ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .ux-v2 .liquid-drop-surface[data-drop-ready="true"]
+  .liquid-drop-emblem {
+    animation: homecloud-drop-light
+      2200ms ease-in-out infinite;
+  }
+
+  @keyframes homecloud-drop-appear {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes homecloud-drop-light {
+    0%, 100% {
+      box-shadow:
+        inset 0 1px 2px rgba(255,255,255,.20),
+        0 0 24px rgba(159,190,99,.06);
+    }
+
+    50% {
+      box-shadow:
+        inset 0 1px 2px rgba(255,255,255,.24),
+        0 0 42px rgba(159,190,99,.20);
+    }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .files-page > .liquid-drop-surface {
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .ux-v2 .liquid-drop-message {
+    top: 12dvh;
+    margin-top: 16px;
+    padding: 12px 4px;
+  }
+
+  .ux-v2 .liquid-drop-emblem {
+    width: 76px;
+    height: 76px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .files-page > .liquid-drop-surface {
+    background-color: var(--surface-primary);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}

@@ -1,0 +1,759 @@
+
+
+/* UI foundation: liquid spotlight */
+
+/* Glass search launcher in the top bar. */
+.ux-v2 .global-search-launcher {
+  border-radius: 999px;
+  min-height: 44px;
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.09),
+    rgba(255,255,255,.015)
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.12),
+    0 2px 8px rgba(0,0,0,.08);
+
+  transition:
+    border-color 200ms ease,
+    background-color 200ms ease,
+    box-shadow 350ms ease;
+}
+
+.ux-v2 .global-search-launcher:hover {
+  background-color: var(--surface-elevated);
+
+  border-color: color-mix(
+    in srgb, var(--accent) 45%, var(--border-strong)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.14),
+    0 3px 14px rgba(0,0,0,.12);
+}
+
+.ux-v2 .global-search-launcher > svg {
+  color: var(--accent);
+}
+
+/* Spotlight-inspired search surface.
+   Keep the existing search route and document scrolling. */
+.ux-v2 .global-search-page {
+  max-width: 920px;
+  padding: clamp(16px, 3vw, 32px);
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005)
+  );
+
+  border: 1px solid var(--border-strong);
+  border-radius: 28px;
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.10),
+    0 12px 36px rgba(0,0,0,.13);
+}
+
+.ux-v2 .global-search-page .search-page-heading {
+  margin-block: 12px 24px;
+}
+
+.ux-v2 .global-search-page .search-form {
+  margin-bottom: 24px;
+}
+
+.ux-v2 .global-search-page .search-input-wrap {
+  min-height: 62px;
+  border-radius: 20px;
+
+  background: var(--surface-elevated);
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.07),
+    transparent
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.10),
+    0 3px 10px rgba(0,0,0,.08);
+
+  transition:
+    border-color 200ms ease,
+    box-shadow 350ms ease;
+}
+
+.ux-v2 .global-search-page
+.search-input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.14),
+    0 0 0 3px var(--accent-soft);
+}
+
+.ux-v2 .global-search-page
+.search-input-wrap > svg {
+  color: var(--accent);
+  width: 23px;
+  height: 23px;
+  flex-shrink: 0;
+}
+
+.ux-v2 .global-search-page .search-input {
+  font-size: 19px;
+}
+
+.ux-v2 .global-search-page .search-submit {
+  border-radius: 999px;
+
+  background-image: linear-gradient(
+    160deg,
+    rgba(255,255,255,.30),
+    rgba(255,255,255,.04) 55%,
+    rgba(0,0,0,.07)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.35),
+    0 3px 10px rgba(0,0,0,.10);
+}
+
+.ux-v2 .global-search-page
+.search-result-list {
+  display: grid;
+  gap: 4px;
+}
+
+.ux-v2 .global-search-page
+.search-result-row {
+  border-radius: 14px;
+  padding-inline: 12px;
+
+  transition:
+    background-color 180ms ease;
+}
+
+.ux-v2 .global-search-page
+.search-result-row:hover,
+.ux-v2 .global-search-page
+.search-result-row:focus-within {
+  background: var(--surface-elevated);
+}
+
+/* Animate only the search heading and field,
+   never containers holding fixed menus/dialogs. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .global-search-page .search-page-heading,
+  .ux-v2 .global-search-page .search-form {
+    animation: homecloud-spotlight-appear
+      600ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-spotlight-appear {
+    from { opacity: .7; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .global-search-page {
+    border-radius: 20px;
+    padding: 16px;
+  }
+
+  .ux-v2 .global-search-page .search-input {
+    font-size: 16px;
+  }
+}
+
+
+/* UI foundation: unified liquid spotlight */
+
+/* No duplicate directory search: one compact control row. */
+.files-page .directory-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.files-page .directory-controls .directory-toolbar {
+  width: 100%;
+  justify-content: space-between;
+}
+
+/* Circular search launcher with reserved expansion space. */
+.ux-v2 .spotlight-launcher-slot {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 128px;
+  margin-inline: auto;
+}
+
+.ux-v2 .spotlight-launcher-slot
+> .global-search-launcher {
+  box-sizing: border-box;
+  inline-size: 44px;
+  min-inline-size: 44px;
+  block-size: 44px;
+  min-block-size: 44px;
+  margin: 0;
+  padding-inline: 12px;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.13),
+    rgba(255,255,255,.02)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 3px 12px rgba(0,0,0,.12);
+
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text-primary);
+
+  transition:
+    inline-size 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    background-color 150ms ease;
+}
+
+.ux-v2 .spotlight-launcher-slot
+.global-search-launcher > svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.ux-v2 .spotlight-launcher-slot
+.spotlight-launcher-label {
+  display: block;
+  max-inline-size: 0;
+  min-inline-size: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+
+  transition:
+    max-inline-size 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 741px) {
+  .ux-v2 .spotlight-launcher-slot
+  > .global-search-launcher:is(
+    :hover, :focus-visible, [aria-expanded="true"]
+  ) {
+    inline-size: 128px;
+    gap: var(--space-2);
+  }
+
+  .ux-v2 .spotlight-launcher-slot
+  .global-search-launcher:is(
+    :hover, :focus-visible, [aria-expanded="true"]
+  ) .spotlight-launcher-label {
+    max-inline-size: 82px;
+    opacity: 1;
+  }
+}
+
+/* Floating search, no modal backdrop or page navigation. */
+.ux-v2 .spotlight-panel {
+  position: fixed;
+  inset-inline: 0;
+  top: 12px;
+  margin-inline: auto;
+  width: min(720px, calc(100% - 24px));
+  z-index: 90;
+
+  isolation: isolate;
+  border-radius: 28px;
+}
+
+/* The material lives on a decorative sibling layer.
+   It is not an ancestor of interactive search results. */
+.ux-v2 .spotlight-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 20px 60px rgba(0,0,0,.28),
+    0 4px 12px rgba(0,0,0,.12);
+}
+
+@supports (
+  (backdrop-filter: blur(24px)) or
+  (-webkit-backdrop-filter: blur(24px))
+) {
+  .ux-v2 .spotlight-panel::before {
+    background: color-mix(
+      in srgb,
+      var(--surface-elevated) 84%,
+      transparent
+    );
+
+    -webkit-backdrop-filter:
+      blur(24px) saturate(145%);
+
+    backdrop-filter:
+      blur(24px) saturate(145%);
+  }
+}
+
+.ux-v2 .spotlight-panel .global-search-page {
+  box-sizing: border-box;
+  max-width: none;
+  max-height: calc(100dvh - 24px);
+  margin: 0;
+  padding: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+
+  border: 0;
+  border-radius: 28px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ux-v2 .spotlight-topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.ux-v2 .spotlight-topline h1 {
+  margin: 0 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ux-v2 .spotlight-topline .icon-button {
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.ux-v2 .spotlight-search .search-form {
+  margin-bottom: 18px;
+}
+
+.ux-v2 .spotlight-search .search-form > label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.ux-v2 .spotlight-search .search-input-wrap {
+  min-height: 60px;
+  border-radius: 999px;
+
+  background: var(--surface-primary);
+  border-color: var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.12);
+}
+
+.ux-v2 .spotlight-search
+.search-input-wrap:focus-within {
+  border-color: var(--accent);
+}
+
+.ux-v2 .spotlight-search
+.search-input-wrap > svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.ux-v2 .spotlight-search .search-input {
+  font-size: 18px;
+}
+
+.ux-v2 .spotlight-search .search-submit {
+  min-width: 105px;
+  border-radius: 999px;
+  background-image: linear-gradient(
+    160deg,
+    rgba(255,255,255,.30),
+    rgba(255,255,255,.04)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.32);
+}
+
+.ux-v2 .spotlight-search .search-results {
+  min-height: 0;
+}
+
+.ux-v2 .spotlight-search .search-empty {
+  padding: 20px 10px;
+}
+
+.ux-v2 .spotlight-search .search-empty > svg {
+  display: none;
+}
+
+.ux-v2 .spotlight-search .search-result-row {
+  padding: 10px;
+  border-radius: 14px;
+  border-bottom-color: transparent;
+}
+
+.ux-v2 .spotlight-search
+.search-result-row:is(:hover, :focus-within) {
+  background: var(--surface-primary);
+}
+
+.ux-v2 .spotlight-search .search-result-name {
+  font-size: 14px;
+}
+
+/* Same Liquid material on search result menus. */
+.ux-v2 .spotlight-search .action-menu-popover {
+  border-radius: 20px;
+  background: var(--surface-elevated);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.14),
+    0 12px 32px rgba(0,0,0,.20);
+}
+
+.ux-v2 .spotlight-search .action-menu-item {
+  border-radius: 12px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .spotlight-panel::before,
+  .ux-v2 .spotlight-search .spotlight-topline,
+  .ux-v2 .spotlight-search .search-form {
+    animation: homecloud-spotlight-open
+      450ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-spotlight-open {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 740px) {
+  .ux-v2 .spotlight-launcher-slot {
+    flex-basis: 44px;
+    margin-inline: auto 0;
+  }
+
+  .ux-v2 .spotlight-panel {
+    width: calc(100% - 16px);
+    top: 8px;
+  }
+
+  .ux-v2 .spotlight-panel .global-search-page {
+    max-height: calc(100dvh - 16px);
+    padding: 12px;
+  }
+
+  .ux-v2 .spotlight-search .search-input {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .spotlight-panel::before {
+    background: var(--surface-elevated);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .spotlight-launcher-slot
+  .global-search-launcher,
+  .ux-v2 .spotlight-launcher-slot
+  .spotlight-launcher-label {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: spotlight thumbnails */
+
+.ux-v2 .global-search-page
+.search-result-row > .file-icon {
+  box-sizing: border-box;
+  inline-size: 56px;
+  block-size: 56px;
+  flex-shrink: 0;
+  margin: 0;
+
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.08);
+}
+
+/* Real thumbnail, not the full-size original image. */
+.ux-v2 .global-search-page
+.search-result-row > .file-thumbnail {
+  overflow: hidden;
+  background: var(--surface-primary);
+}
+
+.ux-v2 .global-search-page
+.search-result-row .file-thumbnail-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ux-v2 .global-search-page
+.search-result-row > .file-icon > svg {
+  width: 23px;
+  height: 23px;
+}
+
+.ux-v2 .spotlight-search .search-result-row {
+  min-height: 76px;
+}
+
+.ux-v2 .global-search-page .search-result-copy {
+  min-width: 0;
+}
+
+/* Keep the same proportions on narrow displays. */
+@media (max-width: 600px) {
+  .ux-v2 .global-search-page
+  .search-result-row > .file-icon {
+    inline-size: 44px;
+    block-size: 44px;
+    border-radius: 10px;
+  }
+
+  .ux-v2 .spotlight-search .search-result-row {
+    min-height: 64px;
+  }
+}
+
+
+/* UI foundation: adaptive liquid spotlight */
+
+/* Preserve the legacy search page layout. */
+.global-search-page:not(.spotlight-search)
+> .spotlight-content {
+  display: contents;
+}
+
+/* Measure natural content independently of animated height. */
+.ux-v2 .spotlight-search > .spotlight-content {
+  display: flow-root;
+}
+
+.ux-v2 .spotlight-panel .spotlight-search {
+  height: var(--spotlight-height, auto);
+  scrollbar-gutter: stable;
+
+  transition:
+    height 450ms cubic-bezier(.4,0,.3,1);
+}
+
+/* Minimal initial state. */
+.ux-v2 .spotlight-search[data-spotlight-idle="true"]
+.search-results-heading {
+  display: none;
+}
+
+.ux-v2 .spotlight-search[data-spotlight-idle="true"]
+.search-empty {
+  padding: 4px 10px 10px;
+}
+
+.ux-v2 .spotlight-search[data-spotlight-idle="true"]
+.search-empty p {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* More compact result layout with stationary action slots. */
+.ux-v2 .spotlight-search .search-result-list {
+  display: grid;
+  gap: 3px;
+}
+
+.ux-v2 .spotlight-search .search-result-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 44px 44px;
+  align-items: center;
+  gap: 12px;
+
+  min-height: 68px;
+  padding: 6px 8px;
+}
+
+.ux-v2 .spotlight-search
+.search-result-row > .search-result-copy {
+  min-width: 0;
+}
+
+/* Location: circle at rest, Liquid capsule on hover. */
+.ux-v2 .spotlight-search
+.search-result-row > .search-result-path {
+  position: relative;
+  z-index: 1;
+  justify-self: end;
+
+  box-sizing: border-box;
+  inline-size: 44px;
+  min-inline-size: 44px;
+  block-size: 44px;
+  min-block-size: 44px;
+
+  margin: 0;
+  padding: 0;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.07),
+    rgba(255,255,255,.01)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.09);
+
+  white-space: nowrap;
+  overflow: hidden;
+
+  transition:
+    inline-size 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    padding 450ms cubic-bezier(.4,0,.3,1),
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.ux-v2 .spotlight-search
+.search-result-path > svg {
+  flex-shrink: 0;
+  width: 19px;
+  height: 19px;
+}
+
+.ux-v2 .spotlight-search
+.search-result-path > span {
+  display: block;
+  max-inline-size: 0;
+  min-inline-size: 0;
+  overflow: hidden;
+  opacity: 0;
+
+  transition:
+    max-inline-size 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ux-v2 .spotlight-search
+  .search-result-path:is(
+    :hover, :focus-visible
+  ):not(:disabled) {
+    inline-size: 148px;
+    padding-inline: 10px;
+    gap: var(--space-2);
+
+    background-color: var(--surface-elevated);
+    border-color: var(--border-strong);
+  }
+
+  .ux-v2 .spotlight-search
+  .search-result-path:is(
+    :hover, :focus-visible
+  ):not(:disabled) > span {
+    max-inline-size: 110px;
+    opacity: 1;
+  }
+}
+
+.ux-v2 .spotlight-search
+.search-result-path[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: var(--accent-muted);
+}
+
+/* Keep the menu trigger aligned with the folder button. */
+.ux-v2 .spotlight-search
+.search-result-row > .action-menu {
+  margin: 0;
+}
+
+.ux-v2 .spotlight-search
+.search-result-row > .action-menu > .icon-button {
+  inline-size: 44px;
+  min-inline-size: 44px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+/* The existing location panel occupies the next full row. */
+.ux-v2 .spotlight-search
+.search-result-row > .search-location-panel {
+  grid-column: 1 / -1;
+  margin: 4px 0;
+}
+
+/* Small screens keep compact touch targets. */
+@media (max-width: 600px) {
+  .ux-v2 .spotlight-search .search-result-row {
+    grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
+    gap: 8px;
+    min-height: 60px;
+    padding: 6px 4px;
+  }
+}
+
+/* Respect system accessibility settings. */
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .spotlight-panel .spotlight-search,
+  .ux-v2 .spotlight-search .search-result-path,
+  .ux-v2 .spotlight-search .search-result-path > span {
+    transition: none;
+  }
+}

@@ -133,6 +133,12 @@ describe('AccountDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Сохранить профиль' }))
     await user.keyboard('{Escape}')
     expect(close).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('dialog', {
+      name: 'Аккаунт и хранилище',
+    }))
+
+    expect(close).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Закрыть' })).toBeDisabled()
     resolve({ id: 1, name: 'Алексей' } as Awaited<ReturnType<typeof updateProfile>>)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Закрыть' })).toBeEnabled())
