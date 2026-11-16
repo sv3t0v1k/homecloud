@@ -1,0 +1,278 @@
+/* HomeCloud UI-03: settings workspace */
+
+.liquid-settings-dialog.homecloud-settings {
+  width: min(100%, 860px);
+  max-width: 860px;
+  height: min(650px, 90dvh);
+
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.homecloud-settings > .dialog-header {
+  flex: 0 0 auto;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.homecloud-settings > .settings-layout {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: 24px;
+
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-navigation {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+
+  min-width: 0;
+  padding: 10px;
+  overflow-y: auto;
+
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+
+  background:
+    linear-gradient(
+      155deg,
+      rgb(255 255 255 / 3%),
+      transparent
+    ),
+    var(--surface-primary);
+}
+
+.settings-nav-caption {
+  margin: 9px 10px 8px;
+
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.settings-nav-button {
+  position: relative;
+
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 11px;
+
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  padding: 10px 12px;
+
+  text-align: left;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}
+
+.settings-nav-button > svg {
+  flex-shrink: 0;
+  width: 19px;
+  height: 19px;
+}
+
+.settings-nav-button > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-nav-button:not(:disabled):hover {
+  color: var(--text-primary);
+  background: var(--surface-secondary);
+}
+
+.settings-nav-button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-muted);
+
+  box-shadow:
+    inset 0 1px 1px rgb(255 255 255 / 8%);
+}
+
+.settings-nav-button[aria-pressed="true"]::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.settings-nav-button:disabled {
+  opacity: .65;
+  cursor: not-allowed;
+}
+
+.settings-admin-navigation {
+  display: grid;
+  gap: 5px;
+
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 8px 6px;
+}
+
+.homecloud-settings .settings-pane > .account-section {
+  margin: 0;
+  padding: 24px;
+
+  border-radius: 20px;
+  background: var(--surface-primary);
+
+  overflow-wrap: anywhere;
+}
+
+.homecloud-settings .settings-pane .account-section h3 {
+  margin: 0 0 22px;
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -.035em;
+}
+
+.homecloud-settings .settings-pane .account-section p {
+  line-height: 1.65;
+}
+
+.homecloud-settings .settings-pane .account-hint {
+  margin: 12px 0 18px;
+}
+
+.homecloud-settings .settings-pane .account-section form,
+.homecloud-settings .settings-pane form.account-section {
+  min-width: 0;
+}
+
+.homecloud-settings .settings-pane .account-section
+> .upload-progress-bar {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.homecloud-settings .settings-pane > .alert,
+.homecloud-settings .settings-pane > [role="status"] {
+  margin-top: 16px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .homecloud-settings .settings-pane > .account-section {
+    animation: homecloud-settings-section-enter
+      650ms cubic-bezier(.4, 0, .3, 1) both;
+  }
+
+  @keyframes homecloud-settings-section-enter {
+    from {
+      opacity: .15;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+@media (max-width: 700px) {
+  .liquid-settings-dialog.homecloud-settings {
+    height: auto;
+    max-height: 90dvh;
+    overflow-y: auto;
+  }
+
+  .homecloud-settings > .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    flex: initial;
+    min-height: auto;
+  }
+
+  .settings-navigation {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+    padding: 8px;
+    overflow: visible;
+  }
+
+  .settings-navigation > .settings-nav-caption {
+    grid-column: 1 / -1;
+  }
+
+  .settings-admin-navigation {
+    display: contents;
+  }
+
+  .settings-admin-navigation > .settings-nav-caption {
+    grid-column: 1 / -1;
+    margin-top: 12px;
+  }
+
+  .settings-nav-button {
+    padding: 10px;
+    gap: 7px;
+    font-size: 12px;
+  }
+
+  .settings-pane {
+    overflow: visible;
+    min-height: auto;
+    padding: 5px;
+  }
+
+  .homecloud-settings .settings-pane > .account-section {
+    padding: 16px;
+  }
+
+  .homecloud-settings .settings-pane .account-section h3 {
+    font-size: 21px;
+  }
+}
+
+@media (max-width: 380px) {
+  .liquid-settings-dialog.homecloud-settings {
+    padding: 15px;
+  }
+
+  .settings-nav-button {
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+    gap: 5px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav-button {
+    transition: none;
+  }
+}

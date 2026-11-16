@@ -880,7 +880,7 @@ describe('global search in the shared authenticated workspace', () => {
     }))
 
     const dialog = await screen.findByRole('dialog', {
-      name: 'Аккаунт и хранилище',
+      name: 'Настройки HomeCloud',
     })
 
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
