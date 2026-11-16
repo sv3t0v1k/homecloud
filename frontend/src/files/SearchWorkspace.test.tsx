@@ -31,6 +31,7 @@ beforeEach(() => {
     calls.push(config)
     if (config.url === '/users/me') return ok(config, { id: 1, name: 'Owner', email: 'owner@example.test', isActive: true, storageQuota: '10000', storageUsed: '0' })
     if (config.url === '/auth/login') return ok(config, { accessToken: 'login-access', refreshToken: 'login-refresh' })
+    if (config.url === '/auth/logout') return ok(config, null)
     if (config.url === '/uploads/sessions') return ok(config, discoveredSessions)
     if (config.url === '/files/search') {
       if (searchHandler) return searchHandler(config)
@@ -354,7 +355,7 @@ describe('global search in the shared authenticated workspace', () => {
     const reopened = await screen.findByRole('searchbox', {
       name: 'Название файла или папки',
     })
-    await user.type(reopened, 'report{Enter}')
+    expect(reopened).toHaveValue('report')
 
     expect(await within(screen.getByRole('region', {
       name: 'Поиск во всём облаке',
@@ -372,6 +373,201 @@ describe('global search in the shared authenticated workspace', () => {
     await user.click(collapsed)
     expect(within(manager).getByText('paused-upload.bin')).toBeVisible()
     expect(within(manager).getByText('Для докачки выберите исходный файл')).toBeVisible()
+  })
+
+  it('restores the Spotlight query, page, scroll and result after opening a folder and going Back', async () => {
+    searchHandler = config => {
+      const offset = Number(config.params?.offset ?? 0)
+
+      return ok(config, {
+        files: offset === 0 ? [file()] : [],
+        folders: offset === 20 ? [folder()] : [],
+        offset,
+        limit: 20,
+        hasMore: offset === 0,
+      })
+    }
+
+    renderWorkspace('/files')
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', {
+      name: 'Мои файлы',
+    })
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    const input = screen.getByRole('searchbox', {
+      name: 'Название файла или папки',
+    })
+
+    await user.type(input, 'report{Enter}')
+
+    const spotlight = screen.getByRole('region', {
+      name: 'Поиск во всём облаке',
+    })
+
+    await within(spotlight).findByRole('button', {
+      name: 'report.txt',
+    })
+
+    await user.click(within(spotlight).getByRole('button', {
+      name: 'Дальше',
+    }))
+
+    const result = await within(spotlight).findByRole(
+      'button',
+      { name: 'report-folder' },
+    )
+
+    expect(searchCalls().map(call => call.params?.offset)).toEqual([
+      0,
+      20,
+    ])
+
+    expect(within(spotlight).getByText('21–21')).toBeInTheDocument()
+
+    spotlight.scrollTop = 137
+    fireEvent.scroll(spotlight)
+
+    await user.click(result)
+
+    expect(await screen.findByRole('heading', {
+      name: 'report-folder',
+    })).toBeInTheDocument()
+
+    expect(screen.queryByRole('region', {
+      name: 'Поиск во всём облаке',
+    })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', {
+      name: 'История назад',
+    }))
+
+    await screen.findByRole('heading', {
+      name: 'Мои файлы',
+    })
+
+    expect(screen.getByTestId('route').textContent).toBe('/files')
+
+    // Back does not unexpectedly open the overlay.
+    expect(screen.queryByRole('region', {
+      name: 'Поиск во всём облаке',
+    })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    const restored = screen.getByRole('region', {
+      name: 'Поиск во всём облаке',
+    })
+
+    expect(within(restored).getByRole('searchbox')).toHaveValue('report')
+
+    const restoredResult = await within(restored).findByRole(
+      'button',
+      { name: 'report-folder' },
+    )
+
+    expect(within(restored).getByText('21–21')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(restoredResult).toHaveFocus()
+      expect(restored.scrollTop).toBe(137)
+    })
+
+    // The existing session cache supplies the restored page.
+    expect(searchCalls()).toHaveLength(2)
+
+    // Explicit close and reopen keep the same saved context.
+    await user.click(within(restored).getByRole('button', {
+      name: 'Закрыть поиск',
+    }))
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    expect(screen.getByRole('searchbox')).toHaveValue('report')
+    expect(searchCalls()).toHaveLength(2)
+  })
+
+  it('does not retain Spotlight context across logout and a new login of the same owner', async () => {
+    searchResult.folders = [folder()]
+
+    renderWorkspace('/files')
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', {
+      name: 'Мои файлы',
+    })
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    await user.type(
+      screen.getByRole('searchbox'),
+      'private-report{Enter}',
+    )
+
+    await screen.findByRole('heading', {
+      name: 'Результаты для «private-report»',
+    })
+
+    expect(searchCalls()).toHaveLength(1)
+
+    await user.click(screen.getByRole('button', {
+      name: 'Закрыть поиск',
+    }))
+
+    await user.click(screen.getByRole('button', {
+      name: 'Выйти',
+    }))
+
+    await screen.findByRole('heading', {
+      name: 'Войти',
+    })
+
+    expect(tokenStorage.getAccessToken()).toBeNull()
+
+    await user.type(
+      screen.getByLabelText('Электронная почта'),
+      'owner@example.test',
+    )
+
+    await user.type(
+      screen.getByLabelText('Пароль'),
+      'test-password',
+    )
+
+    await user.click(screen.getByRole('button', {
+      name: 'Войти',
+    }))
+
+    await screen.findByRole('heading', {
+      name: 'Мои файлы',
+    })
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    expect(screen.getByRole('searchbox')).toHaveValue('')
+
+    expect(screen.queryByRole('heading', {
+      name: 'Результаты для «private-report»',
+    })).not.toBeInTheDocument()
+
+    expect(searchCalls()).toHaveLength(1)
+
+    expect(JSON.stringify(localStorage)).not.toContain('private-report')
+    expect(JSON.stringify(sessionStorage)).not.toContain('private-report')
   })
 
   it('opens Spotlight with Ctrl+K without navigation and leaves input and modal shortcuts alone', async () => {

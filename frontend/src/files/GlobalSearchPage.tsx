@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/errors'
 import { Icon } from '../ui/Icon'
@@ -14,21 +14,52 @@ import { downloadOriginalFile } from './download'
 import { searchOrigin } from './searchNavigation'
 import { resolveSearchPath, type PathCache, type SearchCrumb } from './searchPath'
 import { normalizeSearchQuery, parseSearchLocation, SEARCH_PAGE_SIZE, searchRetryAfter } from './searchApi'
-import { useGlobalSearch } from './useGlobalSearch'
+import { useGlobalSearch, useSpotlightSession } from './useGlobalSearch'
 import type { SearchFile, SearchFolder } from './searchTypes'
 import './global-search.css'
 
 type Result = { kind: 'file'; item: SearchFile } | { kind: 'folder'; item: SearchFolder }
 type PathState = { result: Result; status: 'loading' | 'ready' | 'error'; crumbs: SearchCrumb[]; error?: ApiError; retryAt?: number }
 
-export function GlobalSearchPage({
+export function GlobalSearchPage(
+  { onClose }: { onClose?: () => void } = {},
+) {
+  const spotlight = useSpotlightSession()
+
+  return <SearchPageContent
+    key={`${spotlight.ownerId}:${spotlight.generation}`}
+    onClose={onClose}
+    spotlight={spotlight}
+  />
+}
+
+function SearchPageContent({
   onClose,
-}: { onClose?: () => void } = {}) {
+  spotlight,
+}: {
+  onClose?: () => void
+  spotlight: ReturnType<typeof useSpotlightSession>
+}) {
   const inline = Boolean(onClose)
-  const [inlineLocation, setInlineLocation] = useState<{
+
+  const [inlineLocation, updateInlineLocation] = useState<{
     query: string | null
     offset: number
-  }>({ query: null, offset: 0 })
+  }>(() => inline
+    ? spotlight.getSpotlightLocation()
+    : { query: null, offset: 0 },
+  )
+
+  const inlineRestored = useRef(false)
+  const spotlightSurface = useRef<HTMLElement>(null)
+
+  const setInlineLocation = useCallback((
+    next: { query: string | null; offset: number },
+  ) => {
+    inlineRestored.current = false
+    spotlight.setSpotlightLocation(next)
+    updateInlineLocation(next)
+  }, [spotlight])
   const location = useLocation()
   const navigate = useNavigate()
   const parsed = inline
@@ -174,7 +205,7 @@ export function GlobalSearchPage({
     )
 
     return () => window.clearTimeout(timer)
-  }, [inline, draft, committed, cooldownUntil])
+  }, [inline, draft, committed, cooldownUntil, setInlineLocation])
   useEffect(() => {
     const deadline = Math.max(cooldownUntil, path?.retryAt ?? 0)
     const current = Date.now()
@@ -208,6 +239,35 @@ export function GlobalSearchPage({
       if (value.scrollResults === true) resultHeading.current?.scrollIntoView?.({ block: 'start' })
     }
   }, [status, location.state, inline])
+
+  useEffect(() => {
+    if (
+      !inline ||
+      !committed ||
+      awaitingQuery ||
+      status !== 'ready' ||
+      inlineRestored.current
+    ) return
+
+    const surface = spotlightSurface.current
+    if (!surface) return
+
+    const saved = spotlight.getSpotlightPosition()
+
+    inlineRestored.current = true
+    surface.scrollTop = saved.scrollTop
+
+    if (
+      saved.focusResult &&
+      /^(file|folder):[1-9][0-9]*$/.test(saved.focusResult)
+    ) {
+      const result = surface.querySelector<HTMLButtonElement>(
+        `[data-search-key="${saved.focusResult}"] .search-result-name:not(:disabled)`,
+      )
+
+      result?.focus({ preventScroll: true })
+    }
+  }, [inline, committed, awaitingQuery, status, inlineLocation, spotlight])
 
   const pathResult = path?.result
   useEffect(() => {
@@ -263,6 +323,11 @@ export function GlobalSearchPage({
 
   function navigateFromResult(result: Result, destination: string, extra: Record<string, unknown> = {}) {
     if (inline) {
+      spotlight.saveSpotlightPosition(inlineLocation, {
+        scrollTop: spotlightSurface.current?.scrollTop ?? 0,
+        focusResult: `${result.kind}:${result.item.id}`,
+      })
+
       navigate(destination, { state: extra })
       return
     }
@@ -348,6 +413,37 @@ export function GlobalSearchPage({
   }
 
   return <section
+    ref={inline ? spotlightSurface : undefined}
+    onScroll={inline ? event => {
+      if (
+        !inlineRestored.current ||
+        status !== 'ready' ||
+        awaitingQuery
+      ) return
+
+      spotlight.saveSpotlightPosition(inlineLocation, {
+        scrollTop: event.currentTarget.scrollTop,
+      })
+    } : undefined}
+    onFocusCapture={inline ? event => {
+      if (
+        !inlineRestored.current ||
+        status !== 'ready' ||
+        awaitingQuery ||
+        !(event.target instanceof HTMLElement) ||
+        !event.target.matches('.search-result-name')
+      ) return
+
+      const key = event.target.closest(
+        '[data-search-key]',
+      )?.getAttribute('data-search-key')
+
+      if (key) {
+        spotlight.saveSpotlightPosition(inlineLocation, {
+          focusResult: key,
+        })
+      }
+    } : undefined}
     className={`global-search-page${inline ? ' spotlight-search' : ''}`}
     aria-labelledby="global-search-title"
     data-spotlight-idle={inline && !committed && !awaitingQuery ? 'true' : undefined}

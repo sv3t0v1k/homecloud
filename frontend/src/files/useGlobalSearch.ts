@@ -15,6 +15,26 @@ const SearchContext = createContext<SearchSession | null>(null)
 const CACHE_TTL = 60000
 const CACHE_LIMIT = 10
 
+type SpotlightLocation = {
+  query: string | null
+  offset: number
+}
+
+type SpotlightPosition = {
+  scrollTop: number
+  focusResult: string | null
+}
+
+const emptySpotlightLocation: SpotlightLocation = {
+  query: null,
+  offset: 0,
+}
+
+const emptySpotlightPosition: SpotlightPosition = {
+  scrollTop: 0,
+  focusResult: null,
+}
+
 class SearchSession {
   private version = 0
   private listeners = new Set<() => void>()
@@ -24,9 +44,52 @@ class SearchSession {
   private pending: { key: string; controller: AbortController } | null = null
   cooldownUntil = 0
 
+  private spotlightLocation = emptySpotlightLocation
+  private spotlightPosition = emptySpotlightPosition
+
   constructor(readonly ownerId: number, readonly generation: number) {}
 
   private current = () => this.ownerId > 0 && this.generation === tokenStorage.getOwnerGeneration()
+
+  getSpotlightLocation(): SpotlightLocation {
+    return this.current()
+      ? this.spotlightLocation
+      : emptySpotlightLocation
+  }
+
+  getSpotlightPosition(): SpotlightPosition {
+    return this.current()
+      ? this.spotlightPosition
+      : emptySpotlightPosition
+  }
+
+  setSpotlightLocation(location: SpotlightLocation) {
+    if (!this.current()) return
+
+    if (
+      this.spotlightLocation.query === location.query &&
+      this.spotlightLocation.offset === location.offset
+    ) return
+
+    this.spotlightLocation = { ...location }
+    this.spotlightPosition = emptySpotlightPosition
+  }
+
+  saveSpotlightPosition(
+    location: SpotlightLocation,
+    position: Partial<SpotlightPosition>,
+  ) {
+    if (
+      !this.current() ||
+      this.spotlightLocation.query !== location.query ||
+      this.spotlightLocation.offset !== location.offset
+    ) return
+
+    this.spotlightPosition = {
+      ...this.spotlightPosition,
+      ...position,
+    }
+  }
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
@@ -45,6 +108,8 @@ class SearchSession {
       this.pending = null
       this.pages.clear()
       this.cooldownUntil = 0
+      this.spotlightLocation = emptySpotlightLocation
+      this.spotlightPosition = emptySpotlightPosition
     })
   }
 
@@ -121,6 +186,18 @@ export function SearchSessionProvider({ ownerId, children }: { ownerId: number; 
   const session = useMemo(() => new SearchSession(ownerId, generation), [ownerId, generation])
   useEffect(() => { session.retain(); return () => session.release() }, [session])
   return createElement(SearchContext.Provider, { value: session }, children)
+}
+
+export function useSpotlightSession() {
+  const session = useContext(SearchContext)
+
+  if (!session) {
+    throw new Error(
+      'useSpotlightSession requires SearchSessionProvider',
+    )
+  }
+
+  return session
 }
 
 export function useGlobalSearch(
