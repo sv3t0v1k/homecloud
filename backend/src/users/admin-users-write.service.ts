@@ -9,7 +9,7 @@ import { isEmail } from "class-validator";
 import { DataSource, EntityManager } from "typeorm";
 import * as bcrypt from "bcryptjs";
 
-import { UserEntity } from "../entities/user.entity";
+import { UserEntity, UserRole } from "../entities/user.entity";
 import { isSessionVersion } from "../auth/session-token";
 import {
   lockSessionUser,
@@ -29,6 +29,7 @@ import {
   parseAdminChangePassword,
   parseAdminCreateUser,
   parseAdminUpdateUser,
+  parseAdminChangeStatus,
   parseAdminUserId,
 } from "./dtos/admin-user.dto";
 import {
@@ -172,9 +173,9 @@ export class AdminUsersWriteService {
     );
   }
 
-  // Internal first part of the administrative PATCH operation.
-  // Role and quota changes are deliberately unavailable until
-  // their transaction invariants are implemented.
+  // Internal administrative PATCH operation.
+  // Quota changes remain unavailable until storage accounting
+  // and reservation admission share the required transaction locks.
   async updateProfile(
     actor: AdminActor,
     rawId: unknown,
@@ -195,7 +196,7 @@ export class AdminUsersWriteService {
     const id = parseAdminUserId(rawId);
     const input = parseAdminUpdateUser(rawBody);
 
-    if (input.role !== undefined || input.storageQuota !== undefined) {
+    if (input.storageQuota !== undefined) {
       throw new BadRequestException({
         code: "VALIDATION_ERROR",
         message: "Invalid administrator request",
@@ -209,11 +210,25 @@ export class AdminUsersWriteService {
 
         // Explicit field allowlist, never arbitrary entity updates.
         const changes: Partial<
-          Pick<UserEntity, "name" | "email" | "isEmailVerified">
+          Pick<UserEntity, "name" | "email" | "isEmailVerified" | "role">
         > = {};
 
         if (input.name !== undefined && input.name !== target.name) {
           changes.name = input.name;
+        }
+
+        const roleChanged =
+          input.role !== undefined && input.role !== target.role;
+
+        if (roleChanged && input.role !== undefined) {
+          await this.assertActiveAdminRemains(
+            manager,
+            target,
+            input.role,
+            target.isActive,
+          );
+
+          changes.role = input.role;
         }
 
         let emailChanged = false;
@@ -272,9 +287,9 @@ export class AdminUsersWriteService {
           }
         }
 
-        // The old identity and all refresh sessions are invalidated
-        // atomically with the actual email change.
-        if (emailChanged) {
+        // Email and role changes share a single version increment.
+        // A combined PATCH revokes sessions once, atomically.
+        if (emailChanged || roleChanged) {
           await revokeLockedUserSessions(manager, target);
         }
 
@@ -373,6 +388,105 @@ export class AdminUsersWriteService {
           passwordChanged: true,
           sessionsRevoked: true,
         };
+      },
+    );
+  }
+
+  // Caller owns the administrative advisory lock and the
+  // target user row lock in the same transaction.
+  private async assertActiveAdminRemains(
+    manager: EntityManager,
+    target: UserEntity,
+    nextRole: UserRole,
+    nextActive: boolean,
+  ): Promise<void> {
+    const wasActiveAdmin =
+      target.role === UserRole.ADMIN && target.isActive === true;
+
+    const willBeActiveAdmin =
+      nextRole === UserRole.ADMIN && nextActive === true;
+
+    if (!wasActiveAdmin || willBeActiveAdmin) {
+      return;
+    }
+
+    // Every production role/status mutation and bootstrap
+    // serializes through the same administrative advisory lock.
+    const activeAdmins = await manager.count(UserEntity, {
+      where: {
+        role: UserRole.ADMIN,
+        isActive: true,
+      },
+    });
+
+    if (activeAdmins <= 1) {
+      throw new ConflictException({
+        code: "LAST_ACTIVE_ADMIN",
+        message: "The last active administrator cannot be removed",
+      });
+    }
+  }
+
+  // Internal operation only. The HTTP status endpoint must
+  // remain unavailable until alternative credentials are fenced.
+  async updateStatus(
+    actor: AdminActor,
+    rawId: unknown,
+    rawBody: unknown,
+  ): Promise<AdminUserDto> {
+    validateActorIdentity(actor);
+
+    const current = await this.database.manager.findOne(
+      UserEntity,
+      {
+        select: AUTHORIZATION_FIELDS,
+        where: { id: actor.userId },
+      },
+    );
+
+    assertAdminActor(actor, current);
+
+    const id = parseAdminUserId(rawId);
+    const input = parseAdminChangeStatus(rawBody);
+
+    return this.database.transaction(
+      "READ COMMITTED",
+      async (manager) => {
+        const target = await this.lockMutationTarget(
+          manager,
+          actor,
+          id,
+        );
+
+        // Repeated status assignment is a genuine no-op.
+        if (target.isActive === input.isActive) {
+          return readAdminUser(manager, id);
+        }
+
+        await this.assertActiveAdminRemains(
+          manager,
+          target,
+          target.role,
+          input.isActive,
+        );
+
+        const updated = await manager.update(
+          UserEntity,
+          { id },
+          { isActive: input.isActive },
+        );
+
+        if (updated.affected !== 1) {
+          throw new Error("Administrative status update failed");
+        }
+
+        // Both actual status transitions invalidate existing
+        // sessions. Reactivation never revives old credentials.
+        await revokeLockedUserSessions(manager, target);
+
+        // Alternative credentials, public capabilities and
+        // in-flight storage operations are handled in 01.6.
+        return readAdminUser(manager, id);
       },
     );
   }

@@ -1051,7 +1051,7 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     };
   }
 
-  it("denies unauthorized profile changes and rejects premature role or quota edits", async () => {
+  it("denies unauthorized profile changes and rejects premature quota edits", async () => {
     const users = db.getRepository(UserEntity);
     const before = await users.findOneByOrFail({ id: ordinary.id });
 
@@ -1075,9 +1075,8 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
 
     for (const patch of [
       {},
-      { role: UserRole.ADMIN },
       { storageQuota: "0" },
-      { name: "Valid", role: UserRole.ADMIN },
+      { name: "Valid", storageQuota: "0" },
       { storageUsed: "0" },
       { password: PASSWORD },
       { isActive: false },
@@ -1974,4 +1973,529 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     expect((await get(ME, fresh.body.data.accessToken)).status)
       .toBe(200);
   }, 40000);
+
+  // ======================================================
+  // Role and status mutations. No HTTP route is exposed yet.
+  // ======================================================
+
+  function actorFor(user: UserEntity) {
+    return {
+      userId: user.id,
+      sessionVersion: user.sessionVersion,
+    };
+  }
+
+  async function expectOldSessionRejected(
+    accessToken: string,
+    refreshToken: string,
+  ) {
+    const me = await get(ME, accessToken);
+
+    expect(me.status).toBe(401);
+
+    const refreshed = await request(app.getHttpServer())
+      .post("/api/v1/auth/refresh")
+      .send({ refreshToken });
+
+    expect(refreshed.status).toBe(401);
+  }
+
+  it("validates status updates and denies ordinary users without mutation", async () => {
+    const { user, credentials } = await passwordTarget(
+      "status-denied@example.test",
+    );
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: user.id });
+    const tokens = await sessions.findBy({ userId: user.id });
+
+    await expect(updateService().updateStatus(
+      actorFor(user), String(user.id), { isActive: false },
+    )).rejects.toMatchObject({
+      status: 403,
+      response: { code: "ADMIN_REQUIRED" },
+    });
+
+    await expect(updateService().updateStatus(
+      { ...administratorActor(), sessionVersion: "999" },
+      String(user.id),
+      { isActive: false },
+    )).rejects.toMatchObject({ status: 401 });
+
+    for (const body of [
+      {},
+      { isActive: "false" },
+      { isActive: 0 },
+      { isActive: null },
+      { isActive: false, role: UserRole.ADMIN },
+      { isActive: false, storageQuota: "0" },
+      { isActive: false, sessionVersion: "9" },
+    ]) {
+      await expect(updateService().updateStatus(
+        administratorActor(), String(user.id), body,
+      )).rejects.toMatchObject({
+        status: 400,
+        response: { code: "VALIDATION_ERROR" },
+      });
+    }
+
+    await expect(updateService().updateStatus(
+      administratorActor(), "2147483647", { isActive: false },
+    )).rejects.toMatchObject({
+      status: 404,
+      response: { code: "USER_NOT_FOUND" },
+    });
+
+    expect(await users.findOneByOrFail({ id: user.id }))
+      .toEqual(before);
+
+    expect(await sessions.findBy({ userId: user.id }))
+      .toEqual(tokens);
+
+    expect((await get(ME, credentials.accessToken)).status)
+      .toBe(200);
+  });
+
+  it("changes role and email atomically with exactly one session version increment", async () => {
+    const { user, credentials } = await passwordTarget(
+      "role-change@example.test",
+    );
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: user.id });
+
+    const promoted = await updateService().updateProfile(
+      administratorActor(),
+      String(user.id),
+      {
+        role: UserRole.ADMIN,
+        email: " ROLE-PROMOTED@Example.TEST ",
+        name: "Promoted administrator",
+      },
+    );
+
+    expect(promoted).toMatchObject({
+      id: user.id,
+      role: UserRole.ADMIN,
+      email: "role-promoted@example.test",
+      name: "Promoted administrator",
+    });
+
+    const after = await users.findOneByOrFail({ id: user.id });
+
+    expect(after).toEqual({
+      ...before,
+      role: UserRole.ADMIN,
+      email: "role-promoted@example.test",
+      name: "Promoted administrator",
+      isEmailVerified: false,
+      sessionVersion: "2",
+      updatedAt: after.updatedAt,
+    });
+
+    expect(await sessions.countBy({
+      userId: user.id, revoked: false,
+    })).toBe(0);
+
+    await expectOldSessionRejected(
+      credentials.accessToken, credentials.refreshToken,
+    );
+
+    const adminSession = await login(after.email);
+
+    expect((await get(ENDPOINT, adminSession.accessToken)).status)
+      .toBe(200);
+
+    const noOpBefore = await users.findOneByOrFail({ id: user.id });
+
+    await updateService().updateProfile(
+      administratorActor(),
+      String(user.id),
+      { role: UserRole.ADMIN },
+    );
+
+    expect(await users.findOneByOrFail({ id: user.id }))
+      .toEqual(noOpBefore);
+
+    expect((await get(ENDPOINT, adminSession.accessToken)).status)
+      .toBe(200);
+
+    const demoted = await updateService().updateProfile(
+      administratorActor(),
+      String(user.id),
+      { role: UserRole.USER },
+    );
+
+    expect(demoted.role).toBe(UserRole.USER);
+
+    expect((await users.findOneByOrFail({ id: user.id }))
+      .sessionVersion).toBe("3");
+
+    await expectOldSessionRejected(
+      adminSession.accessToken, adminSession.refreshToken,
+    );
+
+    const ordinarySession = await login(after.email);
+
+    const denied = await get(ENDPOINT, ordinarySession.accessToken);
+
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe("ADMIN_REQUIRED");
+
+    const profile = await get(ME, ordinarySession.accessToken);
+
+    expect(profile.status).toBe(200);
+    expect(profile.body.data.capabilities)
+      .toEqual({ manageUsers: false });
+  });
+
+  it("blocks and reactivates an account without reviving old credentials", async () => {
+    const { user, credentials } = await passwordTarget(
+      "status-lifecycle@example.test",
+    );
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: user.id });
+
+    const blocked = await updateService().updateStatus(
+      administratorActor(), String(user.id), { isActive: false },
+    );
+
+    expect(blocked).toMatchObject({
+      id: user.id,
+      isActive: false,
+      storageQuota: "1073741824",
+      storageUsed: "0",
+    });
+
+    const afterBlock = await users.findOneByOrFail({ id: user.id });
+
+    expect(afterBlock).toEqual({
+      ...before,
+      isActive: false,
+      sessionVersion: "2",
+      updatedAt: afterBlock.updatedAt,
+    });
+
+    expect(await sessions.countBy({
+      userId: user.id, revoked: false,
+    })).toBe(0);
+
+    await expectOldSessionRejected(
+      credentials.accessToken, credentials.refreshToken,
+    );
+
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/login")
+      .send({ email: user.email, password: PASSWORD })
+      .expect(401);
+
+    await updateService().updateStatus(
+      administratorActor(), String(user.id), { isActive: false },
+    );
+
+    expect(await users.findOneByOrFail({ id: user.id }))
+      .toEqual(afterBlock);
+
+    const unblocked = await updateService().updateStatus(
+      administratorActor(), String(user.id), { isActive: true },
+    );
+
+    expect(unblocked.isActive).toBe(true);
+
+    const afterUnblock = await users.findOneByOrFail({
+      id: user.id,
+    });
+
+    expect(afterUnblock.sessionVersion).toBe("3");
+
+    await expectOldSessionRejected(
+      credentials.accessToken, credentials.refreshToken,
+    );
+
+    const fresh = await login(user.email);
+
+    expect((await get(ME, fresh.accessToken)).status).toBe(200);
+
+    await updateService().updateStatus(
+      administratorActor(), String(user.id), { isActive: true },
+    );
+
+    expect(await users.findOneByOrFail({ id: user.id }))
+      .toEqual(afterUnblock);
+
+    expect((await get(ME, fresh.accessToken)).status).toBe(200);
+  });
+
+  it("rolls back role and status changes if session revocation fails", async () => {
+    const { user, credentials } = await passwordTarget(
+      "role-status-rollback@example.test",
+    );
+
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: user.id });
+    const tokens = await sessions.findBy({ userId: user.id });
+    const table = db.getMetadata(RefreshTokenEntity).tableName;
+
+    await db.query(`
+      CREATE FUNCTION admin_role_status_rollback_probe()
+      RETURNS trigger LANGUAGE plpgsql AS $fixture$
+      BEGIN
+        RAISE EXCEPTION 'fixture role status revocation failure';
+      END;
+      $fixture$;
+    `);
+
+    try {
+      await db.query(`
+        CREATE TRIGGER admin_role_status_rollback_probe
+        BEFORE UPDATE ON "${table}"
+        FOR EACH ROW
+        EXECUTE FUNCTION admin_role_status_rollback_probe()
+      `);
+
+      await expect(updateService().updateProfile(
+        administratorActor(),
+        String(user.id),
+        { role: UserRole.ADMIN, name: "Must roll back" },
+      )).rejects.toThrow("fixture role status revocation failure");
+
+      await expect(updateService().updateStatus(
+        administratorActor(),
+        String(user.id),
+        { isActive: false },
+      )).rejects.toThrow("fixture role status revocation failure");
+
+      expect(await users.findOneByOrFail({ id: user.id }))
+        .toEqual(before);
+
+      expect(await sessions.findBy({ userId: user.id }))
+        .toEqual(tokens);
+
+      expect((await get(ME, credentials.accessToken)).status)
+        .toBe(200);
+
+    } finally {
+      await db.query(
+        `DROP TRIGGER IF EXISTS admin_role_status_rollback_probe ON "${table}"`,
+      );
+
+      await db.query(
+        "DROP FUNCTION IF EXISTS admin_role_status_rollback_probe()",
+      );
+    }
+  });
+
+  it.each([
+    "demotion",
+    "blocking",
+    "mixed",
+  ] as const)(
+    "preserves the last active administrator during concurrent %s",
+    async (mode) => {
+      const first = await passwordTarget(
+        `last-${mode}-first@example.test`,
+        UserRole.ADMIN,
+      );
+
+      const second = await passwordTarget(
+        `last-${mode}-second@example.test`,
+        UserRole.ADMIN,
+      );
+
+      const users = db.getRepository(UserEntity);
+      const sessions = db.getRepository(RefreshTokenEntity);
+
+      // Test-only isolation: keep exactly these two active ADMINs.
+      // Preserve all other fixture rows for restoration afterwards.
+      const others = (await users.findBy({
+        role: UserRole.ADMIN,
+        isActive: true,
+      })).filter((user) =>
+        user.id !== first.user.id && user.id !== second.user.id,
+      );
+
+      const otherIds = others.map((user) => user.id);
+      const gate = db.createQueryRunner();
+
+      let pending:
+        Promise<PromiseSettledResult<
+          Awaited<ReturnType<AdminUsersWriteService["updateStatus"]>>
+        >[]> | undefined;
+
+      try {
+        if (otherIds.length > 0) {
+          await users.update(otherIds, { isActive: false });
+        }
+
+        expect(await users.countBy({
+          role: UserRole.ADMIN,
+          isActive: true,
+        })).toBe(2);
+
+        const firstBefore = await users.findOneByOrFail({
+          id: first.user.id,
+        });
+
+        const secondBefore = await users.findOneByOrFail({
+          id: second.user.id,
+        });
+
+        await gate.connect();
+        await gate.startTransaction();
+        await lockAdminTransactions(gate.manager);
+
+        // Both actors try to remove themselves. Regardless of
+        // acquisition order, exactly one operation can succeed.
+        const firstOperation = mode === "blocking"
+          ? updateService().updateStatus(
+              actorFor(first.user),
+              String(first.user.id),
+              { isActive: false },
+            )
+          : updateService().updateProfile(
+              actorFor(first.user),
+              String(first.user.id),
+              { role: UserRole.USER },
+            );
+
+        const secondOperation = mode === "demotion"
+          ? updateService().updateProfile(
+              actorFor(second.user),
+              String(second.user.id),
+              { role: UserRole.USER },
+            )
+          : updateService().updateStatus(
+              actorFor(second.user),
+              String(second.user.id),
+              { isActive: false },
+            );
+
+        pending = Promise.allSettled([
+          firstOperation,
+          secondOperation,
+        ]);
+
+        await waitForCreateLock(2);
+
+        await gate.commitTransaction();
+
+        const outcomes = await pending;
+
+        expect(outcomes.filter((r) =>
+          r.status === "fulfilled",
+        )).toHaveLength(1);
+
+        expect(outcomes.filter((r) =>
+          r.status === "rejected",
+        )).toHaveLength(1);
+
+        expect(outcomes.find((r) =>
+          r.status === "rejected",
+        )).toMatchObject({
+          status: "rejected",
+          reason: {
+            status: 409,
+            response: { code: "LAST_ACTIVE_ADMIN" },
+          },
+        });
+
+        const remaining = await users.findBy({
+          role: UserRole.ADMIN,
+          isActive: true,
+        });
+
+        expect(remaining).toHaveLength(1);
+
+        const survivor = remaining[0];
+        const survivorFixture =
+          survivor.id === first.user.id ? first : second;
+
+        const removedFixture =
+          survivor.id === first.user.id ? second : first;
+
+        const survivorBefore =
+          survivor.id === first.user.id
+            ? firstBefore
+            : secondBefore;
+
+        expect(survivor).toEqual(survivorBefore);
+
+        expect(await sessions.countBy({
+          userId: survivor.id,
+          revoked: false,
+        })).toBe(1);
+
+        const removed = await users.findOneByOrFail({
+          id: removedFixture.user.id,
+        });
+
+        expect(removed.sessionVersion).toBe("2");
+
+        expect(await sessions.countBy({
+          userId: removed.id,
+          revoked: false,
+        })).toBe(0);
+
+        await expectOldSessionRejected(
+          removedFixture.credentials.accessToken,
+          removedFixture.credentials.refreshToken,
+        );
+
+        // Both mechanisms independently protect the last ADMIN.
+        await expect(updateService().updateProfile(
+          actorFor(survivor),
+          String(survivor.id),
+          { role: UserRole.USER, name: "Must not change" },
+        )).rejects.toMatchObject({
+          status: 409,
+          response: { code: "LAST_ACTIVE_ADMIN" },
+        });
+
+        await expect(updateService().updateStatus(
+          actorFor(survivor),
+          String(survivor.id),
+          { isActive: false },
+        )).rejects.toMatchObject({
+          status: 409,
+          response: { code: "LAST_ACTIVE_ADMIN" },
+        });
+
+        expect(await users.findOneByOrFail({ id: survivor.id }))
+          .toEqual(survivorBefore);
+
+        expect((await get(
+          ENDPOINT,
+          survivorFixture.credentials.accessToken,
+        )).status).toBe(200);
+
+      } finally {
+        if (gate.isTransactionActive) {
+          await gate.rollbackTransaction();
+        }
+
+        if (pending) await pending;
+
+        await gate.release();
+
+        // Restore the unrelated disposable fixtures. No real
+        // production accounts are involved in this test.
+        for (const user of others) {
+          await users.update(user.id, {
+            isActive: true,
+            updatedAt: user.updatedAt,
+          });
+        }
+      }
+    },
+    30000,
+  );
 });
