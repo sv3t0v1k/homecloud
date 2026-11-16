@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -9,6 +10,7 @@ import { Request } from "express";
 import { JwtGuard } from "../auth/guards/jwt.guard";
 import { UserInfo } from "../auth/jwt.strategy";
 import { AdminUsersReadService } from "./admin-users-read.service";
+import { AdminUsersWriteService } from "./admin-users-write.service";
 
 type AuthenticatedRequest = Request & {
   user: UserInfo;
@@ -40,7 +42,21 @@ function rawListQuery(request: Request): Record<string, unknown> {
 @Controller("admin/users")
 @UseGuards(JwtGuard)
 export class AdminUsersController {
-  constructor(private readonly users: AdminUsersReadService) {}
+  constructor(
+    private readonly users: AdminUsersReadService,
+    private readonly writes: AdminUsersWriteService,
+  ) {}
+
+  @Post()
+  async create(@Req() request: AuthenticatedRequest) {
+    return this.writes.create(
+      {
+        userId: request.user.userId,
+        sessionVersion: request.user.sessionVersion,
+      },
+      request.body,
+    );
+  }
 
   @Get()
   async list(@Req() request: AuthenticatedRequest) {

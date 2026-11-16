@@ -9,6 +9,7 @@ import * as bcrypt from "bcryptjs";
 import request from "supertest";
 
 import { UsersModule } from "./users.module";
+import { lockAdminTransactions } from "./admin-transaction-lock";
 import { UserEntity, UserRole } from "../entities/user.entity";
 import { RefreshTokenEntity } from "../entities/refresh-token.entity";
 import { FileEntity } from "../entities/file.entity";
@@ -478,11 +479,8 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     expect(missing.body.code).toBe("USER_NOT_FOUND");
   });
 
-  it("does not open administrative mutation endpoints prematurely", async () => {
+  it("does not open administrative update endpoints prematurely", async () => {
     const headers = { Authorization: `Bearer ${adminToken}` };
-
-    await request(app.getHttpServer())
-      .post(ENDPOINT).set(headers).send({}).expect(404);
 
     await request(app.getHttpServer())
       .patch(`${ENDPOINT}/${ordinary.id}`)
@@ -595,6 +593,438 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
         // Test-only state restoration in the disposable database.
         // These are authorization race tests, not production admin
         // mutations. The production mutation paths are not exposed.
+        await db.getRepository(UserEntity).update(
+          administrator.id,
+          {
+            role: UserRole.ADMIN,
+            isActive: true,
+            sessionVersion: "1",
+          },
+        );
+      }
+    },
+    30000,
+  );
+
+  // ======================================================
+  // Administrative account creation: real HTTP + PostgreSQL
+  // ======================================================
+
+  function createBody(email: string) {
+    return {
+      name: "Created account",
+      email,
+      password: PASSWORD,
+      role: UserRole.USER,
+      storageQuota: "1073741824",
+    };
+  }
+
+  async function create(
+    body: Record<string, unknown>,
+    token = adminToken,
+  ) {
+    return request(app.getHttpServer())
+      .post(ENDPOINT)
+      .set("Authorization", `Bearer ${token}`)
+      .send(body);
+  }
+
+  async function waitForCreateLock(expected: number) {
+    const deadline = Date.now() + 10000;
+
+    while (Date.now() < deadline) {
+      const [row] = await adminConnection.query(`
+        SELECT count(*)::int AS count
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND application_name = $1
+          AND wait_event_type = 'Lock'
+          AND query ILIKE '%pg_advisory_xact_lock%'
+      `, [schema]);
+
+      if (row.count >= expected) return;
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    throw new Error("Expected administrative lock waits not observed");
+  }
+
+  it("denies account creation without current ADMIN authority", async () => {
+    const email = "denied-create@example.test";
+    const body = createBody(email);
+
+    const missing = await request(app.getHttpServer())
+      .post(ENDPOINT).send(body);
+
+    expect(missing.status).toBe(401);
+    expect(missing.body.code).toBe("UNAUTHORIZED");
+
+    const ordinaryResponse = await create(body, userToken);
+
+    expect(ordinaryResponse.status).toBe(403);
+    expect(ordinaryResponse.body.code).toBe("ADMIN_REQUIRED");
+
+    const forged = app.get(JwtService).sign({
+      sub: ordinary.id,
+      email: ordinary.email,
+      sv: ordinary.sessionVersion,
+      tokenUse: "access",
+      role: UserRole.ADMIN,
+    }, {
+      secret: ACCESS_SECRET,
+      algorithm: "HS256",
+      expiresIn: "5m",
+    });
+
+    const forgedResponse = await create(body, forged);
+
+    expect(forgedResponse.status).toBe(403);
+    expect(forgedResponse.body.code).toBe("ADMIN_REQUIRED");
+
+    expect(await db.getRepository(UserEntity).countBy({ email }))
+      .toBe(0);
+  });
+
+  it("rejects mass assignment and malformed creation input", async () => {
+    const email = "invalid-create@example.test";
+    const body = createBody(email);
+
+    for (const patch of [
+      { sessionVersion: "99" },
+      { id: 123456 },
+      { isActive: false },
+      { storageUsed: "1" },
+      { isEmailVerified: true },
+      { passwordHash: "private-injected-marker" },
+      { role: "SUPERADMIN" },
+      { name: "" },
+      { password: "short" },
+    ]) {
+      const response = await create({ ...body, ...patch });
+
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe("VALIDATION_ERROR");
+      expect(JSON.stringify(response.body))
+        .not.toContain("private-injected-marker");
+    }
+
+    for (const storageQuota of [1, "-1", "01", "9007199254740992"]) {
+      const response = await create({ ...body, storageQuota });
+
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe("INVALID_QUOTA");
+    }
+
+    const prototype = JSON.parse(
+      '{"__proto__":{"role":"ADMIN"}}',
+    );
+
+    // SuperAgent object merging can consume the special
+    // __proto__ property before JSON serialization.
+    // Send the exact JSON payload instead of an object.
+    const rawPayload = JSON.stringify({
+      ...body,
+      ...prototype,
+    });
+
+    expect(rawPayload).toContain('"__proto__"');
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        JSON.parse(rawPayload),
+        "__proto__",
+      ),
+    ).toBe(true);
+
+    const polluted = await request(app.getHttpServer())
+      .post(ENDPOINT)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .set("Content-Type", "application/json")
+      .send(rawPayload);
+
+    expect(polluted.status).toBe(400);
+    expect(polluted.body.code).toBe("VALIDATION_ERROR");
+
+    expect(await db.getRepository(UserEntity).countBy({ email }))
+      .toBe(0);
+  });
+
+  it("creates a canonical USER who can log in with the assigned password", async () => {
+    const email = "new-user@example.test";
+
+    const response = await create({
+      ...createBody("  NEW-USER@Example.TEST  "),
+      name: "  New user  ",
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.success).toBe(true);
+
+    const user = await db.getRepository(UserEntity)
+      .findOneByOrFail({ email });
+
+    expect(response.body.data).toEqual({
+      id: user.id,
+      name: "New user",
+      email,
+      role: UserRole.USER,
+      isActive: true,
+      storageQuota: "1073741824",
+      storageUsed: "0",
+      fileCount: 0,
+      folderCount: 0,
+      createdAt: user.createdAt.toISOString(),
+    });
+
+    expect(user.sessionVersion).toBe("1");
+    expect(user.isEmailVerified).toBe(false);
+    expect(user.password).toMatch(/^\$2[aby]\$12\$/);
+    expect(await bcrypt.compare(PASSWORD, user.password)).toBe(true);
+
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    // Account creation must not create a session.
+    expect(await sessions.countBy({ userId: user.id })).toBe(0);
+
+    const tokens = await login(email);
+
+    const me = await get(ME, tokens.accessToken);
+
+    expect(me.status).toBe(200);
+    expect(me.body.data.id).toBe(user.id);
+    expect(me.body.data.capabilities).toEqual({
+      manageUsers: false,
+    });
+
+    expect(await sessions.countBy({ userId: user.id })).toBe(1);
+
+    const detail = await get(`${ENDPOINT}/${user.id}`, adminToken);
+
+    expect(detail.status).toBe(200);
+    expect(detail.body.data).toEqual(response.body.data);
+  });
+
+  it("creates an explicit ADMIN and preserves an exact maximum quota", async () => {
+    const email = "additional-admin@example.test";
+
+    const response = await create({
+      ...createBody(email),
+      role: UserRole.ADMIN,
+      storageQuota: "9007199254740991",
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.role).toBe(UserRole.ADMIN);
+    expect(response.body.data.storageQuota).toBe("9007199254740991");
+    expect(response.body.data.storageUsed).toBe("0");
+
+    const user = await db.getRepository(UserEntity)
+      .findOneByOrFail({ email });
+
+    expect(String(user.storageQuota)).toBe("9007199254740991");
+    expect(user.sessionVersion).toBe("1");
+    expect(user.isActive).toBe(true);
+
+    const tokens = await login(email);
+    const me = await get(ME, tokens.accessToken);
+
+    expect(me.body.data.capabilities).toEqual({
+      manageUsers: true,
+    });
+
+    expect((await get(ENDPOINT, tokens.accessToken)).status)
+      .toBe(200);
+  });
+
+  it("rejects a canonical duplicate without modifying the existing account", async () => {
+    const users = db.getRepository(UserEntity);
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+
+    const response = await create({
+      ...createBody(" ALICE@EXAMPLE.TEST "),
+      name: "Must not replace",
+      role: UserRole.ADMIN,
+      password: "must-not-replace-password",
+      storageQuota: "0",
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("EMAIL_ALREADY_EXISTS");
+    expect(response.body).not.toHaveProperty("data");
+
+    expect(await users.findOneByOrFail({ id: ordinary.id }))
+      .toEqual(before);
+
+    expect(await users.countBy({ email: ordinary.email })).toBe(1);
+  });
+
+  it("permits only one concurrent creation of equivalent email addresses", async () => {
+    const runner = db.createQueryRunner();
+    const email = "concurrent-create@example.test";
+
+    let pending:
+      Promise<PromiseSettledResult<request.Response>[]> |
+      undefined;
+
+    try {
+      await runner.connect();
+      await runner.startTransaction();
+      await lockAdminTransactions(runner.manager);
+
+      pending = Promise.allSettled([
+        create(createBody(email)),
+        create(createBody(" CONCURRENT-CREATE@EXAMPLE.TEST ")),
+      ]);
+
+      // Both real HTTP requests must reach the PostgreSQL lock.
+      await waitForCreateLock(2);
+
+      await runner.commitTransaction();
+
+      const results = await pending;
+
+      const statuses = results.map((result) =>
+        result.status === "fulfilled" ? result.value.status : -1,
+      ).sort((a, b) => a - b);
+
+      expect(statuses).toEqual([201, 409]);
+
+      expect(results.find((result) =>
+        result.status === "fulfilled" &&
+        result.value.status === 409,
+      )).toMatchObject({
+        status: "fulfilled",
+        value: {
+          body: { code: "EMAIL_ALREADY_EXISTS" },
+        },
+      });
+
+      const users = db.getRepository(UserEntity);
+
+      expect(await users.countBy({ email })).toBe(1);
+
+      const created = await users.findOneByOrFail({ email });
+
+      expect(created.role).toBe(UserRole.USER);
+      expect(created.sessionVersion).toBe("1");
+
+      expect(await db.getRepository(RefreshTokenEntity)
+        .countBy({ userId: created.id })).toBe(0);
+
+    } finally {
+      if (runner.isTransactionActive) {
+        await runner.rollbackTransaction();
+      }
+
+      if (pending) await pending;
+      await runner.release();
+    }
+  }, 30000);
+
+  it("rolls back a real INSERT when the persisted result fails validation", async () => {
+    const email = "rollback-create@example.test";
+    const users = db.getRepository(UserEntity);
+    const before = await users.count();
+
+    // Test-only trigger inside the isolated schema.
+    // The INSERT succeeds but the returned state is unacceptable.
+    await db.query(`
+      CREATE FUNCTION admin_create_rollback_probe()
+      RETURNS trigger LANGUAGE plpgsql AS $fixture$
+      BEGIN
+        IF NEW.email = 'rollback-create@example.test' THEN
+          NEW."storageUsed" := 1;
+        END IF;
+        RETURN NEW;
+      END;
+      $fixture$;
+    `);
+
+    try {
+      await db.query(`
+        CREATE TRIGGER admin_create_rollback_probe
+        BEFORE INSERT ON "users"
+        FOR EACH ROW
+        EXECUTE FUNCTION admin_create_rollback_probe()
+      `);
+
+      const response = await create(createBody(email));
+
+      expect(response.status).toBe(500);
+      expect(response.body).not.toHaveProperty("data");
+      expect(JSON.stringify(response.body)).not.toContain(PASSWORD);
+
+      expect(await users.countBy({ email })).toBe(0);
+      expect(await users.count()).toBe(before);
+
+    } finally {
+      await db.query(
+        'DROP TRIGGER IF EXISTS admin_create_rollback_probe ON "users"',
+      );
+
+      await db.query(
+        "DROP FUNCTION IF EXISTS admin_create_rollback_probe()",
+      );
+    }
+  });
+
+  it.each([
+    ["demotion", { role: UserRole.USER }, 403, "ADMIN_REQUIRED"],
+    ["session revocation", { sessionVersion: "2" }, 401, "UNAUTHORIZED"],
+    ["deactivation", { isActive: false }, 401, "UNAUTHORIZED"],
+  ] as const)(
+    "prevents creation after concurrent administrator %s",
+    async (_name, change, status, code) => {
+      const runner = db.createQueryRunner();
+      const email = "lost-authority@example.test";
+      let pending:
+        Promise<PromiseSettledResult<request.Response>[]> |
+        undefined;
+
+      try {
+        await runner.connect();
+        await runner.startTransaction();
+
+        await lockAdminTransactions(runner.manager);
+
+        await runner.manager.update(
+          UserEntity,
+          { id: administrator.id },
+          change,
+        );
+
+        // Preliminary authorization sees the still-committed ADMIN.
+        // Creation reaches the global lock, then must reauthorize.
+        pending = Promise.allSettled([
+          create(createBody(email)),
+        ]);
+
+        await waitForCreateLock(1);
+        await runner.commitTransaction();
+
+        const [result] = await pending;
+
+        expect(result).toMatchObject({
+          status: "fulfilled",
+          value: {
+            status,
+            body: { code },
+          },
+        });
+
+        expect(await db.getRepository(UserEntity).countBy({ email }))
+          .toBe(0);
+
+      } finally {
+        if (runner.isTransactionActive) {
+          await runner.rollbackTransaction();
+        }
+
+        if (pending) await pending;
+        await runner.release();
+
+        // Restore fixture state only in this disposable database.
         await db.getRepository(UserEntity).update(
           administrator.id,
           {

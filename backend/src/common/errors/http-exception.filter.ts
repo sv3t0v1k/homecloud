@@ -54,6 +54,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       [HttpStatus.UNAUTHORIZED]: ["UNAUTHORIZED"],
       [HttpStatus.FORBIDDEN]: ["REGISTRATION_DISABLED", "ADMIN_REQUIRED"],
       [HttpStatus.NOT_FOUND]: ["USER_NOT_FOUND"],
+      [HttpStatus.CONFLICT]: ["EMAIL_ALREADY_EXISTS"],
       [HttpStatus.SERVICE_UNAVAILABLE]: ["STORAGE_ACCOUNTING_UNAVAILABLE"],
     };
 
