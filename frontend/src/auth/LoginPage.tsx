@@ -2,7 +2,7 @@ import { type FormEvent, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 
 import { ApiError } from '../api/errors'
-import { Icon } from '../ui/Icon'
+import { AuthScreen } from './AuthScreen'
 import { useSession } from './SessionContext'
 
 export function LoginPage() {
@@ -16,9 +16,9 @@ export function LoginPage() {
 
   if (session.status === 'bootstrapping') {
     return (
-      <main className="auth-page" role="status">
-        Восстанавливаем сеанс…
-      </main>
+      <AuthScreen mode="loading">
+        <p>Восстанавливаем сеанс…</p>
+      </AuthScreen>
     )
   }
 
@@ -45,12 +45,8 @@ export function LoginPage() {
   }
 
   return (
-    <main className="auth-page">
-      <div className="auth-layout">
-        <div className="auth-card">
-          <h1 className="auth-brand"><Icon name="cloud" height={32} width={32} />HomeCloud</h1>
-          <h2 className="page-heading">Войти</h2>
-          <p className="page-description">Ваши файлы — в одном месте.</p>
+    <AuthScreen mode="form">
+      <h2 className="page-heading">Войти</h2>
           {session.status === 'anonymous' && session.notice ? (
             <p className="alert alert--warning" role="status">
               {session.notice}
@@ -96,9 +92,7 @@ export function LoginPage() {
               {submitting ? 'Входим…' : 'Войти'}
             </button>
           </form>
-        </div>
-      </div>
-    </main>
+    </AuthScreen>
   )
 }
 
