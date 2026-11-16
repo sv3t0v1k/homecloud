@@ -1,4 +1,10 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -17,7 +23,11 @@ beforeEach(() => {
   session.login.mockReset()
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 function Destination() {
   const location = useLocation()
@@ -98,5 +108,174 @@ describe('Liquid welcome and login', () => {
       'example-password',
     )
     expect(session.login).toHaveBeenCalledTimes(1)
+  })
+})
+
+
+function renderLoginTransition() {
+  return (
+    <MemoryRouter
+      initialEntries={[{
+        pathname: '/login',
+        state: { from: '/files/search?q=report&offset=20' },
+      }]}
+    >
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="*" element={<Destination />} />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
+async function submitTransitionLogin() {
+  fireEvent.change(screen.getByLabelText('Электронная почта'), {
+    target: { value: 'owner@example.com' },
+  })
+  fireEvent.change(screen.getByLabelText('Пароль'), {
+    target: { value: 'example-password' },
+  })
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
+  })
+}
+
+describe('Liquid successful login transition', () => {
+  it('folds the panel after success and preserves the original destination', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: true,
+    }))
+
+    session.status = 'anonymous'
+    session.login.mockImplementation(async () => {
+      session.status = 'authenticated'
+    })
+
+    const view = render(renderLoginTransition())
+
+    await submitTransitionLogin()
+
+    expect(
+      view.container.querySelector('[data-mode="closing"]'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Входим…' })).toBeDisabled()
+    expect(screen.getByLabelText('Пароль')).toHaveValue('')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    act(() => {
+      vi.advanceTimersByTime(849)
+    })
+
+    expect(
+      view.container.querySelector('[data-mode="closing"]'),
+    ).toBeInTheDocument()
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '/files/search?q=report&offset=20',
+    )
+    expect(session.login).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels the transition if the session expires before navigation', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: true,
+    }))
+
+    session.status = 'anonymous'
+    session.login.mockImplementation(async () => {
+      session.status = 'authenticated'
+    })
+
+    const view = render(renderLoginTransition())
+
+    await submitTransitionLogin()
+
+    expect(
+      view.container.querySelector('[data-mode="closing"]'),
+    ).toBeInTheDocument()
+
+    session.status = 'anonymous'
+    view.rerender(renderLoginTransition())
+
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+
+    expect(screen.getByRole('button', { name: 'Войти' })).toBeEnabled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Пароль')).toHaveValue('')
+  })
+
+  it('navigates immediately when reduced motion is requested', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: false,
+    }))
+
+    session.status = 'anonymous'
+    session.login.mockImplementation(async () => {
+      session.status = 'authenticated'
+    })
+
+    render(renderLoginTransition())
+
+    await submitTransitionLogin()
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '/files/search?q=report&offset=20',
+    )
+  })
+})
+
+
+describe('Liquid login entrance stability', () => {
+  it('does not replay the entrance after focus loss and failed login', async () => {
+    session.status = 'anonymous'
+    session.login.mockRejectedValue(new Error('Login failed'))
+
+    const view = render(renderLoginTransition())
+    const card = view.container.querySelector('.liquid-auth-card')
+    const email = screen.getByLabelText('Электронная почта')
+
+    expect(card).toHaveAttribute('data-entered', 'false')
+
+    fireEvent.focus(email)
+
+    expect(card).toHaveAttribute('data-entered', 'true')
+
+    fireEvent.blur(email)
+    await submitTransitionLogin()
+
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(card).toHaveAttribute('data-entered', 'true')
+    expect(card).toHaveAttribute('data-mode', 'form')
+    expect(screen.getByRole('button', { name: 'Войти' })).toBeEnabled()
+
+    fireEvent.focus(email)
+    fireEvent.blur(email)
+
+    expect(card).toHaveAttribute('data-entered', 'true')
+    expect(view.container.querySelector('.liquid-auth-card')).toBe(card)
+  })
+
+  it('remembers completed entrance without focusing a field', () => {
+    session.status = 'anonymous'
+
+    const view = render(renderLoginTransition())
+    const card = view.container.querySelector('.liquid-auth-card')
+    const reveal = view.container.querySelector('.liquid-auth-reveal')
+
+    expect(card).toHaveAttribute('data-entered', 'false')
+    expect(reveal).not.toBeNull()
+
+    fireEvent.animationEnd(reveal!)
+
+    expect(card).toHaveAttribute('data-entered', 'true')
   })
 })

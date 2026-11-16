@@ -6,17 +6,30 @@
   place-items: center;
   padding: clamp(16px, 4vw, 40px);
 
+  position: relative;
+  isolation: isolate;
+  background: var(--bg-app);
+}
+
+.liquid-auth-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+
   background:
     radial-gradient(
       ellipse at 50% 42%,
       var(--accent-soft),
       transparent 60%
-    ),
-    var(--bg-app);
+    );
 }
 
 .liquid-auth-card {
   --auth-unfold-motion: 1200ms cubic-bezier(.4, 0, .3, 1);
+
+  position: relative;
+  z-index: 1;
 
   width: min(100%, 400px);
   min-width: 0;
@@ -196,18 +209,19 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  .liquid-auth-card[data-entered="false"]
   .liquid-auth-brand {
     animation: liquid-auth-brand-in 600ms ease both;
   }
 
-  .liquid-auth-card[data-mode="form"]
+  .liquid-auth-card[data-mode="form"][data-entered="false"]
   .liquid-auth-reveal {
     animation:
       liquid-auth-unfold var(--auth-unfold-motion)
       100ms both;
   }
 
-  .liquid-auth-card[data-mode="form"]
+  .liquid-auth-card[data-mode="form"][data-entered="false"]
   .liquid-auth-content {
     animation: liquid-auth-content-in 800ms ease 250ms both;
   }
@@ -215,15 +229,6 @@
   .liquid-auth-progress > span {
     animation: liquid-auth-loading 1200ms ease-in-out
       infinite alternate;
-  }
-
-  /* Keyboard and autofill must never wait for animation. */
-
-  .liquid-auth-card[data-mode="form"]:focus-within
-  .liquid-auth-reveal,
-  .liquid-auth-card[data-mode="form"]:focus-within
-  .liquid-auth-content {
-    animation: none;
   }
 
   @keyframes liquid-auth-brand-in {
@@ -273,5 +278,88 @@
 
   .liquid-auth-brand h1 {
     font-size: 26px;
+  }
+}
+
+
+/* UI-02.2: successful login — fold back into the brand. */
+
+@media (prefers-reduced-motion: no-preference) {
+  .liquid-auth-card[data-mode="closing"] {
+    pointer-events: none;
+    animation:
+      liquid-auth-card-out 170ms ease 680ms both;
+  }
+
+  .liquid-auth-card[data-mode="closing"]
+  .liquid-auth-reveal {
+    animation:
+      liquid-auth-fold 680ms
+      cubic-bezier(.4, 0, .3, 1) both;
+  }
+
+  .liquid-auth-card[data-mode="closing"]
+  .liquid-auth-content {
+    animation:
+      liquid-auth-content-out 250ms ease both;
+  }
+
+  .liquid-auth-card[data-mode="closing"]
+  .liquid-auth-brand {
+    animation: none;
+  }
+
+  .app-shell.ux-v2 {
+    animation:
+      liquid-workspace-enter 500ms
+      cubic-bezier(.2, .65, .3, 1);
+  }
+
+  @keyframes liquid-auth-fold {
+    from { grid-template-rows: 1fr; }
+    to { grid-template-rows: 0fr; }
+  }
+
+  @keyframes liquid-auth-content-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  @keyframes liquid-auth-card-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  @keyframes liquid-workspace-enter {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
+
+
+/* UI-02.2.1: stable form and background handoff. */
+
+.liquid-auth-content > .alert--danger {
+  margin: 0 0 16px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .liquid-auth-content > .alert--danger {
+    animation: liquid-auth-error-in 240ms ease both;
+  }
+
+  .liquid-auth-page[data-mode="closing"]::before {
+    animation:
+      liquid-auth-glow-out 320ms ease 530ms both;
+  }
+
+  @keyframes liquid-auth-error-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes liquid-auth-glow-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
   }
 }
