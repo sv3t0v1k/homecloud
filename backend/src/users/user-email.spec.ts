@@ -3,7 +3,6 @@ import { validateSync } from "class-validator";
 import { EntityManager } from "typeorm";
 import { normalizeUserEmail } from "./user-email";
 import { LoginDto } from "../auth/dtos/login.dto";
-import { RegisterDto } from "../auth/dtos/register.dto";
 
 describe("User email DTO boundary", () => {
   it("rejects an actual NUL before querying PostgreSQL", async () => {
@@ -29,12 +28,11 @@ describe("User email DTO boundary", () => {
     expect(validateSync(dto)).toHaveLength(0);
   });
 
-  it("trims registration email before validation", () => {
-    const dto = plainToInstance(RegisterDto, {
+  it("trims tab and nonbreaking space from login email", () => {
+    const dto = plainToInstance(LoginDto, {
       email: String.fromCharCode(9) +
         "User@example.test" +
         String.fromCharCode(160),
-      name: "User",
       password: "password123",
     });
 
@@ -56,18 +54,9 @@ describe("User email DTO boundary", () => {
       password: "password123",
     });
 
-    const registration = plainToInstance(RegisterDto, {
-      email,
-      password: "password123",
-      name: "User",
-    });
-
     expect(validateSync(login).some(
       (error) => error.property === "email",
     )).toBe(true);
 
-    expect(validateSync(registration).some(
-      (error) => error.property === "email",
-    )).toBe(true);
   });
 });

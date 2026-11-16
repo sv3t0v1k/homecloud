@@ -47,6 +47,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
       typeof details === "object" && details !== null && "checks" in details
         ? (details as { checks: unknown }).checks
         : undefined;
+    // Do not forward arbitrary exception metadata to clients.
+    // Explicitly allow only the stable registration-denial code.
+    const safeCode =
+      status === HttpStatus.FORBIDDEN &&
+      typeof details === "object" &&
+      details !== null &&
+      "code" in details &&
+      details.code === "REGISTRATION_DISABLED"
+        ? "REGISTRATION_DISABLED"
+        : undefined;
+
     const safeChecks =
       checks && typeof checks === "object"
         ? Object.fromEntries(
@@ -62,6 +73,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     response.status(status).json({
       statusCode: status,
+      ...(safeCode ? { code: safeCode } : {}),
       ...(safeChecks ? { checks: safeChecks } : {}),
       message,
       timestamp: new Date().toISOString(),

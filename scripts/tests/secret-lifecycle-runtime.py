@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from runtime_fixture_user import seed_fixture_user
 
 urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
 repo = pathlib.Path(__file__).resolve().parents[2]
@@ -161,8 +162,11 @@ try:
         result['invalid_production_startup_rejected'] = True
         start()
         credentials = {'email': 'secrets@example.invalid', 'password': generate(), 'name': 'Drill'}
-        result['stage'] = 'initial_register'
-        old = tokens('auth/register', credentials)
+        result['stage'] = 'initial_fixture_account'
+        seed_fixture_user(name, 'hc_secrets', credentials)
+        old = tokens('auth/login', {
+            key: credentials[key] for key in ('email', 'password')
+        })
         result['stage'] = 'initial_access'
         assert request('users/me', old['accessToken'])[0] == 200
         old_metrics = env['METRICS_TOKEN']
@@ -173,13 +177,15 @@ try:
         result['stage'] = 'jwt_metrics_cutover'
         env.update(JWT_SECRET=generate(), JWT_REFRESH_SECRET=generate(), METRICS_TOKEN=generate())
         start()
-        assert request('users/me', old['accessToken'])[0] == 403
+        assert request('users/me', old['accessToken'])[0] == 401
         assert request('auth/refresh', data={'refreshToken': old['refreshToken']})[0] == 401
         fresh = tokens('auth/login', {key: credentials[key] for key in ('email', 'password')})
         rotated = tokens('auth/refresh', {'refreshToken': fresh['refreshToken']})
         assert request('users/me', rotated['accessToken'])[0] == 200
         assert request('auth/refresh', data={'refreshToken': fresh['refreshToken']})[0] == 401
         assert request('auth/refresh', data={'refreshToken': rotated['refreshToken']})[0] == 401
+        assert request('users/me', fresh['accessToken'])[0] == 401
+        assert request('users/me', rotated['accessToken'])[0] == 401
         result['jwt_old_invalid_new_login_refresh_reuse_revocation'] = True
         assert request('metrics', old_metrics)[0] == 401
         assert request('metrics', env['METRICS_TOKEN'])[0] == 200

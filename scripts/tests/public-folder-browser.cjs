@@ -20,7 +20,8 @@ async function published(name){return eventually(async()=>{const state=await con
  browser=await chromium.launch({headless:true});const context=await browser.newContext({acceptDownloads:true,ignoreHTTPSErrors:true});api=context.request;page=await context.newPage();page.on('pageerror',error=>{report.pageErrors??=[];report.pageErrors.push(error.message);console.log(JSON.stringify({pageError:error.message}));});page.setDefaultTimeout(12000);
  await eventually(async()=>{try{return (await api.get(base+'/login')).status()===200;}catch{return false;}},'HTTPS backend ready',60000);
  const email='public-browser-'+randomBytes(6).toString('hex')+'@example.test',password=randomBytes(20).toString('hex');
- const auth=await request('/api/v1/auth/register',{email,password,name:'Local browser fixture'}),headers={Authorization:'Bearer '+auth.accessToken};await control('quota',{email});
+ const prepared=await control('account',{email,password});assert.equal(prepared.role,'USER');assert.ok(Number.isSafeInteger(prepared.id));
+ const auth=await request('/api/v1/auth/login',{email,password}),headers={Authorization:'Bearer '+auth.accessToken};assert.ok(auth.accessToken&&auth.refreshToken);await control('quota',{email});
  const root=await request('/api/v1/files/folders',{name:'Public browser root'},headers);
  const child=await request('/api/v1/files/folders',{name:'existing',parentId:root.folderId},headers);
  const outside=await request('/api/v1/files/folders',{name:'Outside'},headers);

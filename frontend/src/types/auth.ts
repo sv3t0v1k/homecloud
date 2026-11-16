@@ -3,12 +3,6 @@ export interface LoginDto {
   password: string
 }
 
-export interface RegisterDto {
-  email: string
-  password: string
-  name?: string
-}
-
 export interface Tokens {
   accessToken: string
   refreshToken: string

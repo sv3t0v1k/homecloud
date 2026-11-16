@@ -101,34 +101,84 @@ docker compose --profile redis up -d --wait redis
 
 ## Первый пользователь и квота
 
-Экран поддерживает login, регистрация выполняется API. Новому пользователю
-назначается **нулевая квота**; upload заработает только после назначения оператором.
+Публичная самостоятельная регистрация отключена. Endpoint
+`POST /api/v1/auth/register` возвращает HTTP 403 `REGISTRATION_DISABLED`.
+Первый ADMIN создаётся оператором сервера, а не браузером.
+
+### Новая пустая БД
+
+Сначала запустить Compose по инструкции выше: backend применит миграции.
+Затем выполнить из того же корня проекта, с теми же Compose-файлами,
+project name и конфигурацией:
 
 ```sh
-# Ввод пароля без сохранения literal в shell history (>=8символов).
-read -r HC_EMAIL
-read -rs HC_PASSWORD; echo
-export HC_EMAIL HC_PASSWORD
-python3 - <<'PYUSER' | curl -fsS http://localhost:8080/api/v1/auth/register \
-  -H 'Content-Type: application/json' --data-binary @- -o /dev/null
-import json, os
-print(json.dumps(dict(email=os.environ['HC_EMAIL'], password=os.environ['HC_PASSWORD'], name='Local test')))
-PYUSER
-unset HC_PASSWORD
-# Выбрать ровно свою строку по email; пример квоты1GiB.
-# Не менять password hashes, storageUsed, чужие users или upload journal.
-docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"' sh \
-  -v ON_ERROR_STOP=1 -v user_email="$HC_EMAIL" <<'SQL'
-SELECT id AS hc_user_id FROM users WHERE email=:'user_email' \gset
-UPDATE users SET "storageQuota"=1073741824
-WHERE id=:'hc_user_id' AND email=:'user_email';
-SQL
-unset HC_EMAIL
+docker compose stop frontend backend
+
+docker compose run --rm --no-deps backend \
+  node dist/users/admin-bootstrap-cli.js \
+  bootstrap create \
+  --email admin@example.com \
+  --name "Администратор"
+
+docker compose up -d --wait --wait-timeout 180
+docker compose exec -T backend node docker/healthcheck.cjs
 ```
 
-Для назначения квоты удобно открыть интерактивный `psql`, проверить выбранную строку
-и выполнить UPDATE с точными id+email. Quota API/администраторские роли отсутствуют.
-Login UI: http://localhost:8080/login. Из браузера upload/download используют тот же origin.
+Заменить пример email своим адресом. CLI запросит новый пароль и его
+подтверждение в интерактивном терминале, без отображения вводимых символов.
+Пароль: не менее 12 символов и не более 72 байт UTF-8.
+Не передавать пароль через argv, env, pipe или shell history.
+
+Bootstrap требует полностью подготовленную схему, остановленный backend
+и тот же storage root-fence, что и обычный API. Повторный запуск для
+существующего активного ADMIN не меняет его запись или пароль.
+
+### Существующая БД
+
+Не создавать новую БД и не удалять существующих пользователей.
+Если активного ADMIN ещё нет, остановить backend и повысить конкретного
+активного пользователя по его точным id и email командой
+`bootstrap promote --user-id ID --email EMAIL`.
+
+Полный операторский контракт, ограничения и порядок возобновления работы:
+[Первоначальная настройка администратора](admin-bootstrap.md).
+Для установленного Linux использовать именно его штатные Compose-файлы,
+project name и внешнюю конфигурацию, включая startup gate и maintenance mount.
+
+### Вход и квота
+
+Login UI: http://localhost:8080/login. Новый ADMIN получает начальную квоту 0.
+Роль ADMIN сама по себе не разрешает превышать квоту.
+
+До появления полноценного admin API разрешён только прежний локальный
+операторский способ настройки квоты одноразовой dev-базы. Не применять
+пример ниже на установленном сервере или к уже работающим пользователям.
+
+Для свежего локального ADMIN без файлов и активных операций остановить
+backend, проверить его точные id и email в `psql`, затем назначить
+начальную квоту. Пример для 1 GiB:
+
+```sql
+UPDATE users
+SET "storageQuota" = 1073741824
+WHERE id = 1
+  AND email = 'admin@example.com'
+  AND role = 'ADMIN'
+  AND "storageQuota" = 0
+  AND "storageUsed" = 0
+  AND NOT EXISTS (SELECT 1 FROM files)
+  AND NOT EXISTS (SELECT 1 FROM upload_sessions)
+  AND NOT EXISTS (SELECT 1 FROM file_copy_operations);
+```
+
+Заменить id и email фактическими значениями проверенной записи.
+Ожидается ровно одна изменённая строка. Если условие не выполнено,
+не ослаблять его. Не изменять password hashes, role, sessionVersion,
+storageUsed или upload/copy journals вручную.
+
+После настройки снова запустить тот же Compose и проверить readiness.
+Управление произвольными пользователями и квотами через admin API
+относится к следующим этапам BE-ADMIN.
 
 ## Подготовка Linux mini-PC
 

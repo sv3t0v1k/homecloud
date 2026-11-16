@@ -1,18 +1,14 @@
 import {
   Injectable,
   UnauthorizedException,
-  ConflictException,
   Logger,
   OnModuleInit,
   OnModuleDestroy,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, EntityManager, LessThan } from "typeorm";
-import { UserEntity, UserRole } from "../entities/user.entity";
-import {
-  normalizeUserEmail,
-  isUserEmailConflict,
-} from "../users/user-email";
+import { UserEntity } from "../entities/user.entity";
+import { normalizeUserEmail } from "../users/user-email";
 import {
   isSessionVersion,
   sessionVersionMatches,
@@ -82,49 +78,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = undefined;
     }
-  }
-
-  async register(
-    email: string,
-    password: string,
-    name?: string,
-  ): Promise<Tokens> {
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    return this.refreshTokenRepository.manager.transaction(
-      async (manager) => {
-        const canonicalEmail = await normalizeUserEmail(manager, email);
-
-        const existing = await manager.findOne(UserEntity, {
-          where: { email: canonicalEmail },
-        });
-
-        if (existing) {
-          throw new ConflictException("User with this email already exists");
-        }
-
-        const user = manager.create(UserEntity, {
-          email: canonicalEmail,
-          password: hashedPassword,
-          name: name || canonicalEmail.split("@")[0],
-          role: UserRole.USER,
-          sessionVersion: "1",
-        });
-
-        let saved: UserEntity;
-
-        try {
-          saved = await manager.save(user);
-        } catch (error) {
-          if (isUserEmailConflict(error, manager)) {
-            throw new ConflictException("User with this email already exists");
-          }
-          throw error;
-        }
-
-        return this.generateTokens(manager, saved);
-      },
-    );
   }
 
   async login(email: string, password: string): Promise<Tokens> {

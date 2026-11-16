@@ -78,7 +78,9 @@ else
   valid_image_id "$candidate_id" || exit 1
 fi
 
-# From this point forward, do not use a mutable backend tag.
+# Pin execution to the exact outer identity.
+# The transport tag is used only for archive serialization;
+# the nested archive verifier binds it back to this identity.
 BACKEND_IMAGE_ID="$candidate_id"
 test "$(docker image inspect "$BACKEND_IMAGE_ID" --format '{{.Id}}')" = "$BACKEND_IMAGE_ID" || exit 1
 test "$(docker image inspect "$BACKEND_IMAGE_ID" --format '{{.Os}}/{{.Architecture}}')" = "$PLATFORM" || exit 1
@@ -100,7 +102,12 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
   --platform "$TOOL_PLATFORM" --entrypoint python3 homecloud-restore-e2e-runtime:local \
   -B /opt/homecloud/scripts/ci/restore-runtime-preflight.py
 
-docker save "$BACKEND_IMAGE_ID" postgres:16-alpine "$STUB_IMAGE" \
+# Docker's classic archive preserves tags only for named exports.
+# Recheck both transport tags immediately before serialization.
+test "$(docker image inspect homecloud-restore-e2e-backend:local --format '{{.Id}}')" = "$BACKEND_IMAGE_ID"
+test "$(docker image inspect "$STUB_IMAGE" --format '{{.Id}}')" = "$STUB_IMAGE_ID"
+
+docker save homecloud-restore-e2e-backend:local postgres:16-alpine "$STUB_IMAGE" \
   | docker run --rm -i --privileged --cgroupns=private --network none \
       --platform "$TOOL_PLATFORM" \
       -e "HOMECLOUD_E2E_STUB_IMAGE=$STUB_IMAGE" \

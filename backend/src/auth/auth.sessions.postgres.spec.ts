@@ -5,6 +5,7 @@ import { DataSource, EntityManager } from "typeorm";
 import * as bcrypt from "bcryptjs";
 
 import { AuthService } from "./auth.service";
+import { normalizeUserEmail } from "../users/user-email";
 import { JwtStrategy } from "./jwt.strategy";
 import {
   lockSessionUser,
@@ -123,10 +124,37 @@ postgres("Real PostgreSQL session concurrency", () => {
   const users = () => db.getRepository(UserEntity);
   const tokens = () => db.getRepository(RefreshTokenEntity);
 
+  // Test-only account preparation. No HTTP registration endpoint
+  // or production registration service is involved.
+  async function createFixtureAccount(
+    email: string,
+    password: string,
+    name: string,
+  ) {
+    const canonicalEmail = await normalizeUserEmail(
+      db.manager,
+      email,
+    );
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    await users().insert({
+      email: canonicalEmail,
+      password: passwordHash,
+      name,
+      role: UserRole.USER,
+      isActive: true,
+      sessionVersion: "1",
+    });
+
+    // All test credentials are issued by the real login flow.
+    return auth.login(canonicalEmail, password);
+  }
+
   async function createUser() {
     const email = `${randomUUID()}@example.test`;
 
-    const issued = await auth.register(
+    const issued = await createFixtureAccount(
       email,
       OLD_PASSWORD,
       "Qualification user",
@@ -326,11 +354,11 @@ postgres("Real PostgreSQL session concurrency", () => {
       .rejects.toThrow("Invalid refresh token");
   }, 30000);
 
-  it("registers and authenticates the same canonical account regardless of email casing or surrounding whitespace", async () => {
+  it("authenticates the same canonical account regardless of email casing or surrounding whitespace", async () => {
     const canonical = `${randomUUID()}@example.test`;
     const supplied = `  ${canonical.toUpperCase()}  `;
 
-    const issued = await auth.register(
+    const issued = await createFixtureAccount(
       supplied,
       OLD_PASSWORD,
       "Canonical user",
@@ -358,12 +386,12 @@ postgres("Real PostgreSQL session concurrency", () => {
       OLD_PASSWORD,
     )).resolves.toHaveProperty("accessToken");
 
-    await expect(auth.register(
+    await expect(createFixtureAccount(
       canonical.toUpperCase(),
       OLD_PASSWORD,
       "Duplicate",
     )).rejects.toMatchObject({
-      status: 409,
+      driverError: { code: "23505" },
     });
 
     expect(await users().countBy({
@@ -371,16 +399,16 @@ postgres("Real PostgreSQL session concurrency", () => {
     })).toBe(1);
   }, 30000);
 
-  it("permits only one concurrent registration for equivalent email addresses", async () => {
+  it("permits only one concurrent database insert for equivalent email addresses", async () => {
     const canonical = `${randomUUID()}@example.test`;
 
     const results = await Promise.allSettled([
-      auth.register(
+      createFixtureAccount(
         canonical,
         OLD_PASSWORD,
         "First",
       ),
-      auth.register(
+      createFixtureAccount(
         ` ${canonical.toUpperCase()} `,
         OLD_PASSWORD,
         "Second",
@@ -398,7 +426,9 @@ postgres("Real PostgreSQL session concurrency", () => {
 
     expect(accepted).toHaveLength(1);
     expect(denied).toHaveLength(1);
-    expect(denied[0].reason.getStatus()).toBe(409);
+    expect(denied[0].reason).toMatchObject({
+      driverError: { code: "23505" },
+    });
 
     expect(await users().countBy({
       email: canonical,

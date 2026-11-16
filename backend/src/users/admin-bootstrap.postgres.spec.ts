@@ -133,7 +133,18 @@ postgres("Operator administrator bootstrap", () => {
   }
 
   async function createUser(email: string) {
-    const issued = await auth.register(email, PASSWORD, "Existing user");
+    // Create only an ordinary user in this isolated test schema.
+    // Tokens are obtained through the real authentication service.
+    await users().insert({
+      email,
+      password: await bcrypt.hash(PASSWORD, 12),
+      name: "Existing user",
+      role: UserRole.USER,
+      isActive: true,
+      sessionVersion: "1",
+    });
+
+    const issued = await auth.login(email, PASSWORD);
 
     const user = await users().findOneByOrFail({ email });
 

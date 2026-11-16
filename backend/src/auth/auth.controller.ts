@@ -5,13 +5,13 @@ import {
   ValidationPipe,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
   UseGuards,
   Request as NestRequest,
 } from "@nestjs/common";
 import { Request as ExpressRequest } from "express";
 import { IsString, IsNotEmpty, MaxLength } from "class-validator";
 import { AuthService } from "./auth.service";
-import { RegisterDto } from "./dtos/register.dto";
 import { LoginDto } from "./dtos/login.dto";
 import { ChangePasswordDto } from "./dtos/change-password.dto";
 import { JwtGuard } from "./guards/jwt.guard";
@@ -36,17 +36,14 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post("register")
-  @HttpCode(HttpStatus.CREATED)
-  async register(@Body(ValidationPipe) dto: RegisterDto) {
-    const tokens = await this.authService.register(
-      dto.email,
-      dto.password,
-      dto.name,
-    );
-    return {
-      message: "User registered successfully",
-      ...tokens,
-    };
+  @HttpCode(HttpStatus.FORBIDDEN)
+  register(): never {
+    // Keep the historical endpoint for a stable client error.
+    // Do not validate credentials or invoke account creation.
+    throw new ForbiddenException({
+      code: "REGISTRATION_DISABLED",
+      message: "Public registration is disabled",
+    });
   }
 
   @Post("login")
