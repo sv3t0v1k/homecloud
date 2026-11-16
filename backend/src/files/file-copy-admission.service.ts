@@ -3,9 +3,15 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { DataSource, EntityManager } from "typeorm";
+import {
+  canAddStorageBytes,
+  lockStorageCommitments,
+  StorageCommitments,
+} from "../storage/storage-accounting";
 
 export interface CopyAdmissionRequest {
   userId: number;
@@ -285,7 +291,7 @@ export class FileCopyAdmissionService {
 
     try {
       await runner.connect();
-      await runner.startTransaction();
+      await runner.startTransaction("READ COMMITTED");
 
       await runner.query("SET LOCAL lock_timeout = '1500ms'");
       await runner.query("SET LOCAL statement_timeout = '2500ms'");
@@ -318,52 +324,35 @@ export class FileCopyAdmissionService {
         );
       }
 
-      // Shared user-row lock coordinates with upload admission.
-      const owners = await runner.query(
-        `SELECT id, "isActive", "storageUsed", "storageQuota"
-         FROM users
-         WHERE id = $1
-         FOR UPDATE`,
-        [userId],
-      );
+      // Preserve the global copy gate -> user-row lock order.
+      // Read all commitments in a fresh statement after obtaining
+      // the owner lock. No child rows or filesystem locks are added.
+      let accounting: StorageCommitments;
 
-      if (owners.length !== 1 || !owners[0].isActive) {
+      try {
+        accounting = await lockStorageCommitments(
+          runner.manager,
+          userId,
+        );
+      } catch (error) {
+        if (error instanceof NotFoundException) {
+          throw new ForbiddenException("User unavailable");
+        }
+
+        throw error;
+      }
+
+      if (!accounting.isActive) {
         throw new ForbiddenException("User unavailable");
       }
 
-      const copies = await runner.query(
-        `SELECT COUNT(*)::int AS count,
-                COALESCE(SUM(bytes), 0)::text AS bytes
-         FROM file_copy_operations
-         WHERE "userId" = $1
-           AND state IN ('reserved', 'cleanup_required')`,
-        [userId],
-      );
-
-      if (Number(copies[0]?.count) > 0) {
+      if (accounting.activeCopyCount > 0n) {
         throw new ServiceUnavailableException(
           "User file copy already in progress",
         );
       }
 
-      const uploads = await runner.query(
-        `SELECT COALESCE(SUM("totalSize"), 0)::text AS bytes
-         FROM upload_sessions
-         WHERE "userId" = $1
-           AND status IN ('pending', 'uploading')`,
-        [userId],
-      );
-
-      const used = BigInt(owners[0].storageUsed);
-      const quota = BigInt(owners[0].storageQuota);
-      const uploadBytes = BigInt(uploads[0]?.bytes ?? "0");
-      const copyBytes = BigInt(copies[0]?.bytes ?? "0");
-
-      if (used < 0n || quota < 0n || uploadBytes < 0n || copyBytes < 0n) {
-        throw new ServiceUnavailableException("Invalid storage accounting");
-      }
-
-      if (used + uploadBytes + copyBytes + BigInt(bytes) > quota) {
+      if (!canAddStorageBytes(accounting, BigInt(bytes))) {
         throw new ForbiddenException("Storage quota exceeded");
       }
 

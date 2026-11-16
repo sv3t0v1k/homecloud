@@ -297,16 +297,34 @@ describePostgres("File copy admission PostgreSQL", () => {
         return runner;
       });
 
-    // reserve() uses runner.query for admission.
-    // The first DataSource.query is the reconciliation lookup.
+    // Transactional accounting uses EntityManager.query, which
+    // delegates to DataSource.query with the active QueryRunner.
+    // Fail only the independent reconciliation lookup after COMMIT.
+    const originalQuery = db.query.bind(db);
+    let reconciliationFailures = 0;
+
     const querySpy = jest
       .spyOn(db, "query")
-      .mockRejectedValueOnce(new Error("reconciliation database unavailable"));
+      .mockImplementation(async (sql, parameters, queryRunner) => {
+        if (
+          !queryRunner &&
+          sql.includes('SELECT "userId", "sourceFileId"') &&
+          sql.includes("FROM file_copy_operations") &&
+          sql.includes("WHERE id = $1")
+        ) {
+          reconciliationFailures += 1;
+          throw new Error("reconciliation database unavailable");
+        }
+
+        return originalQuery(sql, parameters, queryRunner);
+      });
 
     try {
       await expect(service.reserve(request(1))).rejects.toThrow(
         "Copy reservation COMMIT outcome uncertain",
       );
+
+      expect(reconciliationFailures).toBe(1);
     } finally {
       querySpy.mockRestore();
       factorySpy.mockRestore();
@@ -1147,5 +1165,124 @@ describePostgres("File copy admission PostgreSQL", () => {
     `);
 
     expect(row.count).toBe(0);
+  });
+
+  it("denies missing and inactive copy owners without allocating a reservation", async () => {
+    await db.query(
+      `UPDATE users SET "isActive" = false WHERE id = 1`,
+    );
+
+    for (const userId of [1, 2147483647]) {
+      await expect(
+        service.reserve(request(userId)),
+      ).rejects.toMatchObject({
+        status: 403,
+        message: "User unavailable",
+      });
+    }
+
+    expect(await db.query(
+      `SELECT id FROM file_copy_operations`,
+    )).toEqual([]);
+  });
+
+  it("rejects corrupt active upload bytes even when a positive aggregate masks them", async () => {
+    await db.query(`
+      INSERT INTO upload_sessions (
+        "userId", status, "totalSize"
+      ) VALUES
+        (1, 'pending', 100),
+        (1, 'uploading', -1)
+    `);
+
+    await expect(
+      service.reserve(request(1, 10)),
+    ).rejects.toMatchObject({
+      status: 503,
+      response: {
+        code: "STORAGE_ACCOUNTING_UNAVAILABLE",
+      },
+    });
+
+    expect(await db.query(
+      `SELECT id FROM file_copy_operations`,
+    )).toEqual([]);
+
+    await db.query(`
+      UPDATE upload_sessions
+      SET status = 'aborted'
+      WHERE "userId" = 1
+        AND "totalSize" < 0
+    `);
+
+    // Terminal invalid data does not consume new quota.
+    await expect(
+      service.reserve(request(1, 900)),
+    ).resolves.toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("rejects aggregate commitments above the safe integer limit without rounding or allocating", async () => {
+    await db.query(`
+      UPDATE users
+      SET "storageQuota" = 9007199254740991
+      WHERE id = 1
+    `);
+
+    await db.query(`
+      INSERT INTO upload_sessions (
+        "userId", status, "totalSize"
+      ) VALUES
+        (1, 'pending', 9007199254740991),
+        (1, 'uploading', 2)
+    `);
+
+    await expect(
+      service.reserve(request(1, 0)),
+    ).rejects.toMatchObject({
+      status: 403,
+      message: "Storage quota exceeded",
+    });
+
+    expect(await db.query(
+      `SELECT id FROM file_copy_operations`,
+    )).toEqual([]);
+  });
+
+  it("preserves zero-byte copy admission at exact quota without admitting additional bytes", async () => {
+    await db.query(`
+      UPDATE users
+      SET "storageUsed" = 1000
+      WHERE id = 1
+    `);
+
+    await expect(
+      service.reserve(request(1, 1)),
+    ).rejects.toThrow("Storage quota exceeded");
+
+    const id = await service.reserve(request(1, 0));
+
+    expect(await db.query(
+      `SELECT id, bytes::text AS bytes, state
+       FROM file_copy_operations
+       WHERE id = $1`,
+      [id],
+    )).toEqual([
+      { id, bytes: "0", state: "reserved" },
+    ]);
+
+    // Zero-byte operations still occupy the per-user slot.
+    await expect(
+      service.reserve(request(1, 0)),
+    ).rejects.toThrow(
+      "User file copy already in progress",
+    );
+
+    await service.releaseAfterOwnedCleanup(
+      id, 1, () => undefined,
+    );
+
+    await expect(
+      service.reserve(request(1, 0)),
+    ).resolves.toMatch(/^[0-9a-f-]{36}$/);
   });
 });
