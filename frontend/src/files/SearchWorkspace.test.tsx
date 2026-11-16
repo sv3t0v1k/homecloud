@@ -15,7 +15,9 @@ let calls: InternalAxiosRequestConfig[]
 let discoveredSessions: unknown[]
 let searchResult: SearchPage
 let filePresent: boolean
-let searchHandler: ((config: InternalAxiosRequestConfig) => AxiosResponse) | null
+let searchHandler: ((
+  config: InternalAxiosRequestConfig,
+) => AxiosResponse | Promise<AxiosResponse>) | null
 
 beforeEach(() => {
   localStorage.clear()
@@ -494,6 +496,278 @@ describe('global search in the shared authenticated workspace', () => {
 
     expect(screen.getByRole('searchbox')).toHaveValue('report')
     expect(searchCalls()).toHaveLength(2)
+  })
+
+  it.each([true, false])(
+    'restores Spotlight after expired cache refresh with previous result present=%s',
+    async present => {
+      const actualNow = Date.now.bind(Date)
+      let clockOffset = 0
+
+      vi.spyOn(Date, 'now').mockImplementation(
+        () => actualNow() + clockOffset,
+      )
+
+      searchHandler = config => {
+        const offset = Number(config.params?.offset ?? 0)
+
+        return ok(config, {
+          files: offset === 0 ? [file()] : [],
+          folders: offset === 20 ? [folder()] : [],
+          offset,
+          limit: 20,
+          hasMore: offset === 0,
+        })
+      }
+
+      renderWorkspace('/files')
+
+      const user = userEvent.setup()
+
+      await screen.findByRole('heading', {
+        name: 'Мои файлы',
+      })
+
+      await user.click(screen.getByRole('button', {
+        name: 'Поиск во всех файлах',
+      }))
+
+      const input = screen.getByRole('searchbox', {
+        name: 'Название файла или папки',
+      })
+
+      await user.type(input, 'report{Enter}')
+
+      const spotlight = screen.getByRole('region', {
+        name: 'Поиск во всём облаке',
+      })
+
+      await within(spotlight).findByRole('button', {
+        name: 'report.txt',
+      })
+
+      await user.click(within(spotlight).getByRole('button', {
+        name: 'Дальше',
+      }))
+
+      const result = await within(spotlight).findByRole(
+        'button',
+        { name: 'report-folder' },
+      )
+
+      spotlight.scrollTop = 137
+      fireEvent.scroll(spotlight)
+
+      await user.click(result)
+
+      await screen.findByRole('heading', {
+        name: 'report-folder',
+      })
+
+      await user.click(screen.getByRole('button', {
+        name: 'История назад',
+      }))
+
+      await screen.findByRole('heading', {
+        name: 'Мои файлы',
+      })
+
+      expect(screen.getByTestId('route').textContent).toBe('/files')
+      expect(searchCalls()).toHaveLength(2)
+
+      // Expire the real 60-second cache without waiting
+      // in real time or replacing the request lifecycle.
+      clockOffset += 61000
+
+      const freshFolder = present
+        ? folder()
+        : {
+          ...folder(),
+          id: 8,
+          shareFileId: 1008,
+          name: 'report-other',
+        }
+
+      let finishRefresh: (() => void) | undefined
+
+      searchHandler = config => new Promise<AxiosResponse>(
+        resolve => {
+          finishRefresh = () => resolve(ok(config, {
+            files: [],
+            folders: [freshFolder],
+            offset: Number(config.params?.offset ?? 0),
+            limit: 20,
+            hasMore: false,
+          }))
+        },
+      )
+
+      await user.click(screen.getByRole('button', {
+        name: 'Поиск во всех файлах',
+      }))
+
+      const restored = screen.getByRole('region', {
+        name: 'Поиск во всём облаке',
+      })
+
+      const restoredInput = within(restored).getByRole(
+        'searchbox',
+      )
+
+      expect(restoredInput).toHaveValue('report')
+
+      await waitFor(() => {
+        expect(searchCalls()).toHaveLength(3)
+        expect(finishRefresh).toBeTypeOf('function')
+      })
+
+      expect(searchCalls().map(call => call.params?.offset))
+        .toEqual([0, 20, 20])
+
+      // Keep the refresh pending. The old ready snapshot
+      // must not consume the saved focus or scroll.
+      expect(
+        restored.querySelector('.search-results'),
+      ).toHaveAttribute('aria-busy', 'true')
+
+      expect(within(restored).queryByRole('button', {
+        name: 'report-folder',
+      })).not.toBeInTheDocument()
+
+      expect(restoredInput).toHaveFocus()
+      expect(restored.scrollTop).toBe(0)
+
+      await act(async () => {
+        finishRefresh?.()
+      })
+
+      const freshResult = await within(restored).findByRole(
+        'button',
+        { name: freshFolder.name },
+      )
+
+      expect(within(restored).getByText('21–21'))
+        .toBeInTheDocument()
+
+      await waitFor(() => {
+        if (present) {
+          expect(freshResult).toHaveFocus()
+          expect(restored.scrollTop).toBe(137)
+        } else {
+          expect(restoredInput).toHaveFocus()
+          expect(restored.scrollTop).toBe(0)
+        }
+      })
+
+      // A subsequent reopen must use the freshly cached
+      // page and must not try to focus a deleted result.
+      await user.click(within(restored).getByRole('button', {
+        name: 'Закрыть поиск',
+      }))
+
+      await user.click(screen.getByRole('button', {
+        name: 'Поиск во всех файлах',
+      }))
+
+      const reopened = screen.getByRole('region', {
+        name: 'Поиск во всём облаке',
+      })
+
+      const reopenedResult = await within(reopened).findByRole(
+        'button',
+        { name: freshFolder.name },
+      )
+
+      expect(searchCalls()).toHaveLength(3)
+
+      if (present) {
+        expect(reopenedResult).toHaveFocus()
+      } else {
+        expect(within(reopened).getByRole('searchbox'))
+          .toHaveFocus()
+      }
+    },
+  )
+
+  it('preserves the committed Spotlight query for an unfinished draft but clears it for empty input', async () => {
+    searchResult.folders = [folder()]
+    renderWorkspace('/files')
+
+    const user = userEvent.setup()
+
+    await screen.findByRole('heading', {
+      name: 'Мои файлы',
+    })
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    const input = screen.getByRole('searchbox')
+
+    await user.type(input, 'report{Enter}')
+
+    const spotlight = screen.getByRole('region', {
+      name: 'Поиск во всём облаке',
+    })
+
+    await within(spotlight).findByRole('button', {
+      name: 'report-folder',
+    })
+
+    fireEvent.change(input, {
+      target: { value: 'p' },
+    })
+
+    // The unfinished draft hides old actionable results,
+    // but it does not erase the saved committed query.
+    expect(within(spotlight).queryByRole('button', {
+      name: 'report-folder',
+    })).not.toBeInTheDocument()
+
+    expect(within(spotlight).getByText(
+      'Введите от 2 до 100 символов.',
+    )).toBeInTheDocument()
+
+    expect(searchCalls()).toHaveLength(1)
+
+    await user.click(within(spotlight).getByRole('button', {
+      name: 'Закрыть поиск',
+    }))
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    const reopened = screen.getByRole('region', {
+      name: 'Поиск во всём облаке',
+    })
+
+    const restoredInput = within(reopened).getByRole('searchbox')
+
+    expect(restoredInput).toHaveValue('report')
+
+    await within(reopened).findByRole('button', {
+      name: 'report-folder',
+    })
+
+    expect(searchCalls()).toHaveLength(1)
+
+    // An explicitly empty field does clear the context.
+    fireEvent.change(restoredInput, {
+      target: { value: '' },
+    })
+
+    await user.click(within(reopened).getByRole('button', {
+      name: 'Закрыть поиск',
+    }))
+
+    await user.click(screen.getByRole('button', {
+      name: 'Поиск во всех файлах',
+    }))
+
+    expect(screen.getByRole('searchbox')).toHaveValue('')
+    expect(searchCalls()).toHaveLength(1)
   })
 
   it('does not retain Spotlight context across logout and a new login of the same owner', async () => {

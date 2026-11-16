@@ -87,8 +87,11 @@ function SearchPageContent({
   const scrollRestored = useRef(false)
   const returnTo = searchOrigin(location.pathname, location.state)
   const busy = status === 'loading'
-  const awaitingQuery = inline &&
-    normalizeSearchQuery(draft) !== committed
+  const normalizedDraft = normalizeSearchQuery(draft)
+  const awaitingQuery = inline && (
+    normalizedDraft !== committed ||
+    (normalizedDraft === null && draft.trim().length > 0)
+  )
   const resultsDisabled = busy ||
     status === 'error' || awaitingQuery
   const remaining = Math.max(0, Math.ceil((cooldownUntil - now) / 1000))
@@ -166,7 +169,9 @@ function SearchPageContent({
   }, [committed, parsed.offset, focusSearch, inline])
 
   useEffect(() => {
-    if (inline) input.current?.focus({ preventScroll: true })
+    if (inline && !inlineRestored.current) {
+      input.current?.focus({ preventScroll: true })
+    }
   }, [inline])
 
   // Live search with a pause after typing. Existing server
@@ -177,7 +182,9 @@ function SearchPageContent({
     const query = normalizeSearchQuery(draft)
 
     if (!query) {
-      if (committed !== null) {
+      // Clearing the field clears the saved search.
+      // An unfinished draft must not erase that context.
+      if (!draft.trim() && committed !== null) {
         setInlineLocation({ query: null, offset: 0 })
       }
       return
@@ -252,22 +259,45 @@ function SearchPageContent({
     const surface = spotlightSurface.current
     if (!surface) return
 
+    const currentPage = spotlight.snapshot(JSON.stringify([
+      inlineLocation.query,
+      inlineLocation.offset,
+    ]))
+
+    // Do not consume the saved position on a stale render.
+    // Wait for the actual result of the active acquisition.
+    if (
+      currentPage.status !== 'ready' ||
+      currentPage.data !== data
+    ) return
+
     const saved = spotlight.getSpotlightPosition()
 
     inlineRestored.current = true
-    surface.scrollTop = saved.scrollTop
 
-    if (
-      saved.focusResult &&
+    const result = saved.focusResult &&
       /^(file|folder):[1-9][0-9]*$/.test(saved.focusResult)
-    ) {
-      const result = surface.querySelector<HTMLButtonElement>(
+      ? surface.querySelector<HTMLButtonElement>(
         `[data-search-key="${saved.focusResult}"] .search-result-name:not(:disabled)`,
       )
+      : null
 
-      result?.focus({ preventScroll: true })
+    if (saved.focusResult && !result) {
+      // The previous result no longer exists on this page.
+      // Keep the query and page, but restore a safe position.
+      spotlight.saveSpotlightPosition(inlineLocation, {
+        scrollTop: 0,
+        focusResult: null,
+      })
+
+      surface.scrollTop = 0
+      input.current?.focus({ preventScroll: true })
+      return
     }
-  }, [inline, committed, awaitingQuery, status, inlineLocation, spotlight])
+
+    surface.scrollTop = saved.scrollTop
+    result?.focus({ preventScroll: true })
+  }, [inline, committed, awaitingQuery, status, data, inlineLocation, spotlight])
 
   const pathResult = path?.result
   useEffect(() => {
@@ -508,7 +538,11 @@ function SearchPageContent({
       <p className="sr-only" role="status">{busy ? 'Поиск выполняется' : status === 'ready' ? count ? `На странице результатов: ${count}` : 'Совпадений не найдено' : ''}</p>
       {busy ? <div className="search-skeleton" aria-hidden="true">{[0, 1, 2, 3].map(n => <div className="skeleton-row" key={n}><span className="skeleton-icon" /><span className="skeleton-line" /><span className="skeleton-line skeleton-short" /></div>)}</div> : null}
       {awaitingQuery && !busy ? (
-        <p className="search-help" role="status">Уточняем запрос…</p>
+        <p className="search-help" role="status">
+          {normalizedDraft
+            ? 'Уточняем запрос…'
+            : 'Введите от 2 до 100 символов.'}
+        </p>
       ) : null}
       {!busy && !awaitingQuery && !committed && !parsed.error ? <div className="search-empty"><Icon name="search" />{inline ? <p>Введите название файла или папки</p> : <><h3>Файл рядом. Нужно вспомнить название.</h3><p>Ищите среди файлов и папок на любой глубине.<br />Результаты появятся после отправки запроса.</p></>}</div> : null}
       {!busy && !awaitingQuery && status === 'ready' && !count ? <div className="search-empty"><Icon name="search" /><h3>Ничего не найдено</h3><p>Попробуйте часть названия или другое написание.<br />Поиск учитывает название, а не содержимое файла.</p></div> : null}
