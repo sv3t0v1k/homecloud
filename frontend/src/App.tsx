@@ -199,10 +199,36 @@ function Navbar({ onOpenAccount }: { onOpenAccount(): void }) {
         </button>
       </div>
       <div className="account-area">
-        {session.status === 'authenticated' ? <button aria-label={`Открыть аккаунт: ${session.user.name}`} className="button button--ghost" onClick={(event) => { event.currentTarget.focus(); onOpenAccount() }} type="button"><Icon name="user" /><span>{session.user.name}</span></button> : null}
+        {session.status === 'authenticated' ? (
+          <button
+            aria-label={`Открыть аккаунт: ${session.user.name}`}
+            className="button button--ghost liquid-topbar-button liquid-topbar-account"
+            onClick={(event) => {
+              event.currentTarget.focus()
+              onOpenAccount()
+            }}
+            type="button"
+          >
+            <Icon name="user" />
+            <span className="liquid-topbar-label">
+              {session.user.name}
+            </span>
+          </button>
+        ) : null}
         {logoutError ? <span className="inline-alert" role="alert">{logoutError}</span> : null}
 
-        <button className="button button--ghost" disabled={loggingOut} onClick={() => void handleLogout()} type="button">{loggingOut ? 'Выходим…' : 'Выйти'}</button>
+        <button
+          className="button button--ghost liquid-topbar-button liquid-topbar-logout"
+          aria-label={loggingOut ? 'Выходим…' : 'Выйти'}
+          disabled={loggingOut}
+          onClick={() => void handleLogout()}
+          type="button"
+        >
+          <Icon name="logout" />
+          <span className="liquid-topbar-label">
+            {loggingOut ? 'Выходим…' : 'Выйти'}
+          </span>
+        </button>
       </div>
     </header>
     {searchOpen ? (

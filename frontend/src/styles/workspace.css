@@ -852,3 +852,207 @@
     to { opacity: 1; }
   }
 }
+
+
+/* UI foundation: Liquid account and logout */
+
+.ux-v2 .topbar .account-area {
+  min-width: 0;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ux-v2 .topbar .account-area > .liquid-topbar-button {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+
+  inline-size: 44px;
+  min-inline-size: 44px;
+  block-size: 44px;
+  min-block-size: 44px;
+
+  padding: 0;
+  gap: 0;
+
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+
+  background: var(--surface-primary);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, .13),
+    rgba(255, 255, 255, .02)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, .12),
+    0 2px 8px rgba(0, 0, 0, .08);
+
+  color: var(--text-primary);
+
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+
+  transition:
+    inline-size 450ms cubic-bezier(.4, 0, .3, 1),
+    padding 450ms cubic-bezier(.4, 0, .3, 1),
+    gap 450ms cubic-bezier(.4, 0, .3, 1),
+    background-color 250ms ease,
+    border-color 250ms ease,
+    color 250ms ease,
+    box-shadow 250ms ease;
+}
+
+.ux-v2 .topbar .liquid-topbar-button > svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.ux-v2 .topbar .liquid-topbar-account {
+  --topbar-expanded-width: 168px;
+  --topbar-label-width: 114px;
+}
+
+.ux-v2 .topbar .liquid-topbar-account > svg {
+  color: var(--accent);
+}
+
+.ux-v2 .topbar .account-area > .liquid-topbar-logout {
+  --topbar-expanded-width: 108px;
+  --topbar-label-width: 54px;
+  color: var(--text-secondary);
+}
+
+/* Labels remain in the DOM for stable semantics.
+   The button's accessible name is always available. */
+
+.ux-v2 .topbar .liquid-topbar-label {
+  display: block;
+  min-inline-size: 0;
+  max-inline-size: 0;
+
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+
+  opacity: 0;
+
+  transition:
+    max-inline-size 450ms cubic-bezier(.4, 0, .3, 1),
+    opacity 350ms ease;
+}
+
+/* Same Liquid motion as the Spotlight launcher.
+   Expand on hover only for a precise mouse pointer. */
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 741px) {
+
+  .ux-v2 .topbar .account-area
+  > .liquid-topbar-button:not(:disabled):is(
+    :hover, :focus-visible
+  ) {
+    inline-size: var(--topbar-expanded-width);
+    padding-inline: 12px;
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: color-mix(
+      in srgb, var(--accent) 45%, var(--border-strong)
+    );
+
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, .16),
+      0 4px 14px rgba(0, 0, 0, .15);
+  }
+
+  .ux-v2 .topbar .liquid-topbar-button
+  :is(.liquid-topbar-label) {
+    pointer-events: none;
+  }
+
+  .ux-v2 .topbar
+  .liquid-topbar-button:not(:disabled):is(
+    :hover, :focus-visible
+  ) > .liquid-topbar-label {
+    max-inline-size: var(--topbar-label-width);
+    opacity: 1;
+  }
+
+  .ux-v2 .topbar .account-area
+  > .liquid-topbar-logout:not(:disabled):is(
+    :hover, :focus-visible
+  ) {
+    color: var(--danger);
+
+    background-color: color-mix(
+      in srgb, var(--danger) 8%, var(--surface-primary)
+    );
+
+    border-color: color-mix(
+      in srgb, var(--danger) 45%, var(--border-strong)
+    );
+
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, .12),
+      0 0 16px var(--danger-soft);
+  }
+}
+
+.ux-v2 .topbar .liquid-topbar-button:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+
+.ux-v2 .topbar .liquid-topbar-button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+/* Stable compact layout on phones and tablets. */
+
+@media (max-width: 600px) {
+  .ux-v2 .topbar {
+    gap: 8px;
+    padding-inline: 12px;
+  }
+
+  .ux-v2 .topbar .brand {
+    padding-inline: 0;
+  }
+
+  .ux-v2 .topbar .account-area {
+    gap: 6px;
+  }
+
+  .ux-v2 .topbar .account-area
+  > .liquid-topbar-button {
+    inline-size: 44px;
+    min-inline-size: 44px;
+    padding: 0;
+    gap: 0;
+  }
+
+  .ux-v2 .topbar .liquid-topbar-label {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .topbar .account-area
+  > .liquid-topbar-button,
+  .ux-v2 .topbar .liquid-topbar-label {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .topbar .account-area
+  > .liquid-topbar-button {
+    background-image: none;
+  }
+}

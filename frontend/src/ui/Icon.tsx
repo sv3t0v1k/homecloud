@@ -1,6 +1,6 @@
 import type { ReactNode, SVGProps } from 'react'
 
-type IconName = 'search' | 'arrow-left' | 'lock' | 'cloud' | 'home' | 'menu' | 'trash' | 'user' | 'folder' | 'file' | 'image' | 'text' | 'more' | 'upload' | 'download' | 'plus' | 'close' | 'chevron' | 'check' | 'link' | 'copy' | 'edit' | 'move' | 'grid' | 'list'
+type IconName = 'search' | 'arrow-left' | 'lock' | 'cloud' | 'home' | 'menu' | 'trash' | 'user' | 'logout' | 'folder' | 'file' | 'image' | 'text' | 'more' | 'upload' | 'download' | 'plus' | 'close' | 'chevron' | 'check' | 'link' | 'copy' | 'edit' | 'move' | 'grid' | 'list'
 
 const paths: Record<IconName, ReactNode> = {
   search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></>,
@@ -28,6 +28,7 @@ const paths: Record<IconName, ReactNode> = {
   menu: <><path d="M4 7h16M4 12h16M4 17h16"/></>,
   trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14"/><path d="M10 11v6M14 11v6"/></>,
   user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
+  logout: <><path d="M10 4H4v16h6"/><path d="M9 12h12m-5-5 5 5-5 5"/></>,
 }
 
 export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {
