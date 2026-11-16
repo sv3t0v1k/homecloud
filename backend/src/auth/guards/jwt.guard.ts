@@ -18,7 +18,9 @@ export class JwtGuard implements CanActivate {
 
     let payload: JwtPayload;
     try {
-      payload = this.jwtService.verify<JwtPayload>(token);
+      payload = this.jwtService.verify<JwtPayload>(token, {
+        algorithms: ["HS256"],
+      });
     } catch {
       throw new UnauthorizedException();
     }

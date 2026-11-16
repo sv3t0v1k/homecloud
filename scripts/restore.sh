@@ -174,7 +174,7 @@ validation_psql() {
 }
 
 validate_restored_database() {
-  local TABLE_COUNT EXPECTED_TABLE_NAMES t EXISTS FILES_COLS USERS_COUNT MIGRATIONS EXPECTED_CURRENT_MIGRATIONS EXPECTED_ADMIN_MIGRATIONS
+  local TABLE_COUNT EXPECTED_TABLE_NAMES t EXISTS FILES_COLS USERS_COUNT MIGRATIONS EXPECTED_CURRENT_MIGRATIONS EXPECTED_ADMIN_MIGRATIONS EXPECTED_SESSION_MIGRATIONS
   TABLE_COUNT=$(validation_psql -tAc \
     "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'" | tr -d '[:space:]')
   EXPECTED_TABLE_NAMES="$CORE_TABLE_NAMES"
@@ -243,7 +243,13 @@ validate_restored_database() {
       EXPECTED_ADMIN_MIGRATIONS="$EXPECTED_CURRENT_MIGRATIONS
 1792831400000:AddUserRolesAndSessionVersion1792831400000"
 
-      if [ "$MIGRATIONS" = "$EXPECTED_ADMIN_MIGRATIONS" ]; then
+      EXPECTED_SESSION_MIGRATIONS="$EXPECTED_ADMIN_MIGRATIONS
+1792831500000:RevokeLegacyRefreshTokens1792831500000"
+
+      if [ "$MIGRATIONS" = "$EXPECTED_SESSION_MIGRATIONS" ] || {
+        [ "$MIGRATIONS" = "$EXPECTED_ADMIN_MIGRATIONS" ] &&
+        [ "${1:-historical}" != current ];
+      }; then
         validation_psql -tAc 'SELECT id, role, "sessionVersion" FROM public.users WHERE false' >/dev/null \
           || die "Current schema administrative users columns are missing"
       elif [ "$MIGRATIONS" = "$EXPECTED_CURRENT_MIGRATIONS" ] && [ "${1:-historical}" != current ]; then

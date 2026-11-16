@@ -14,6 +14,10 @@ import { FileCopyAdmission1792831300000 } from "../migrations/1792831300000-File
 import { DataSource } from "typeorm";
 import { JwtGuard } from "../auth/guards/jwt.guard";
 import { JwtStrategy } from "../auth/jwt.strategy";
+import {
+  lockSessionUser,
+  revokeLockedUserSessions,
+} from "../auth/session-revocation";
 import { applySecurityMiddleware } from "../common/security.config";
 import { FileEntity } from "../entities/file.entity";
 import { FolderEntity } from "../entities/folder.entity";
@@ -143,6 +147,7 @@ postgres(
       jest.spyOn(limiter, "now").mockReturnValue(Date.now());
       applySecurityMiddleware(app, config, {
         jwtService: jwt,
+        jwtStrategy: module.get(JwtStrategy),
         uploads: limiter,
       });
       app.setGlobalPrefix("api/v1");
@@ -189,8 +194,18 @@ postgres(
         10,
         1,
       );
-      const auth = `Bearer ${jwt.sign({ sub: owner.id, email: owner.email })}`;
-      const otherAuth = `Bearer ${jwt.sign({ sub: other.id, email: other.email })}`;
+      const auth = `Bearer ${jwt.sign({
+        sub: owner.id,
+        email: owner.email,
+        sv: "1",
+        tokenUse: "access",
+      }, { expiresIn: "15m" })}`;
+      const otherAuth = `Bearer ${jwt.sign({
+        sub: other.id,
+        email: other.email,
+        sv: "1",
+        tokenUse: "access",
+      }, { expiresIn: "15m" })}`;
       const base = `/api/v1/uploads/session/${session.uploadId}`;
       const unpublished = storage.generateFinalPath(
         owner.id,
@@ -284,7 +299,45 @@ postgres(
         10,
         1,
       );
-      await service.abortUpload(owner.id, replacement.uploadId);
+      // The ordinary global rate budget is already exhausted.
+      // A stale, correctly signed JWT must not bypass it.
+      await database.transaction(async (manager) => {
+        const locked = await lockSessionUser(manager, owner.id);
+
+        if (!locked) throw new Error("Test user not found");
+
+        await revokeLockedUserSessions(manager, locked);
+      });
+
+      const replacementPath =
+        `/api/v1/uploads/session/${replacement.uploadId}`;
+
+      await request(app.getHttpServer())
+        .delete(replacementPath)
+        .set("Authorization", auth)
+        .expect(429);
+
+      expect(
+        (await database.getRepository(UploadSessionEntity)
+          .findOneByOrFail({ id: replacement.id })).status,
+      ).toBe("pending");
+
+      const freshAuth = `Bearer ${jwt.sign({
+        sub: owner.id,
+        email: owner.email,
+        sv: "2",
+        tokenUse: "access",
+      }, { expiresIn: "15m" })}`;
+
+      await request(app.getHttpServer())
+        .delete(replacementPath)
+        .set("Authorization", freshAuth)
+        .expect(200);
+
+      expect(
+        (await database.getRepository(UploadSessionEntity)
+          .findOneByOrFail({ id: replacement.id })).status,
+      ).toBe("aborted");
     }, 30000);
   },
 );

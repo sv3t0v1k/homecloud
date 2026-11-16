@@ -31,7 +31,7 @@ describe("UpdatesModule DI and HTTP access", () => {
       .overrideProvider(getRepositoryToken(UserEntity)).useValue({
         findOne: jest.fn(async ({ where }: { where: { id: number; isActive: boolean } }) =>
           where.id === 7 && !adminActive ? null :
-            { id: where.id, email: "user@example.test", isActive: true }),
+            { id: where.id, email: "user@example.test", isActive: true, sessionVersion: "1" }),
       })
       .overrideProvider(getRepositoryToken(RefreshTokenEntity)).useValue({})
       .overrideProvider(AuthService).useValue({})
@@ -47,7 +47,12 @@ describe("UpdatesModule DI and HTTP access", () => {
   afterAll(async () => app?.close());
   beforeEach(() => { check.mockClear(); adminActive = true; });
 
-  const token = (userId: number) => `Bearer ${jwt.sign({ sub: userId, email: "user@example.test" })}`;
+  const token = (userId: number) => `Bearer ${jwt.sign({
+      sub: userId,
+      email: "user@example.test",
+      sv: "1",
+      tokenUse: "access",
+    })}`;
 
   it("starts with the configured AuthModule and accepts an admin JWT", async () => {
     await request(app.getHttpServer()).get("/updates").set("Authorization", token(7))

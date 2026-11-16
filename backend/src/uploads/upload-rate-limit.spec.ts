@@ -114,6 +114,7 @@ describe("authenticated upload rate policy (HTTP)", () => {
     jest.spyOn(limiter, "now").mockImplementation(() => clock);
     applySecurityMiddleware(app, new ConfigService({ NODE_ENV: "test" }), {
       jwtService: jwt,
+      jwtStrategy: module.get(JwtStrategy),
       uploads: limiter,
     });
     app.setGlobalPrefix("api/v1");
@@ -136,7 +137,13 @@ describe("authenticated upload rate policy (HTTP)", () => {
   });
 
   const token = (userId = 1, extra: Record<string, unknown> = {}) =>
-    jwt.sign({ sub: userId, email: `${userId}@example.test`, ...extra });
+    jwt.sign({
+      sub: userId,
+      email: `${userId}@example.test`,
+      sv: "1",
+      tokenUse: "access",
+      ...extra,
+    }, { expiresIn: "15m" });
   const chunk = (uploadId = FIRST, userId = 1, chunkIndex = 0) =>
     request(app.getHttpServer())
       .post(`/api/v1/uploads/session/${uploadId}/chunk`)

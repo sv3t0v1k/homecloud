@@ -14,6 +14,8 @@ jest.mock("bcryptjs", () => ({
 }));
 
 import { AuthService } from "./auth.service";
+import { UserEntity } from "../entities/user.entity";
+import { refreshTokenDigest } from "./session-token";
 import { RefreshTokenEntity } from "../entities/refresh-token.entity";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -38,10 +40,17 @@ describe("AuthService - Phase 3", () => {
   let mockConfigService: any;
   let transactionHarness: ReturnType<typeof createTransactionManager>;
 
-  const user = { id: 1, email: "user@test.com", isActive: true };
+  const user = {
+    id: 1,
+    email: "user@test.com",
+    isActive: true,
+    sessionVersion: "1",
+    password: "password-hash-oldpass",
+  };
 
   const createTransactionManager = (initialRecords: TokenRecord[]) => {
     const records = initialRecords.map((record) => ({ ...record }));
+    const lockedUser = { ...user };
     let nextId = Math.max(0, ...records.map((record) => record.id)) + 1;
     let tokenLockTail = Promise.resolve();
     const findOneCalls: any[] = [];
@@ -59,6 +68,19 @@ describe("AuthService - Phase 3", () => {
 
     const update = jest.fn(
       async (_entity: unknown, criteria: any, changes: any) => {
+        if (_entity === UserEntity) {
+          if (
+            criteria.id !== lockedUser.id ||
+            (criteria.sessionVersion !== undefined &&
+              criteria.sessionVersion !== lockedUser.sessionVersion)
+          ) {
+            return { affected: 0 };
+          }
+
+          Object.assign(lockedUser, changes);
+          return { affected: 1 };
+        }
+
         const record = records.find(
           (candidate) => candidate.id === criteria.id,
         );
@@ -122,6 +144,12 @@ describe("AuthService - Phase 3", () => {
           if (!releaseTokenLock) {
             releaseTokenLock = await acquireTokenLock();
           }
+          if (entity === UserEntity) {
+            return options.where.id === lockedUser.id
+              ? { ...lockedUser }
+              : null;
+          }
+
           const id = options?.where?.id;
           const tokenHash = options?.where?.tokenHash;
           const userId = options?.where?.userId;
@@ -235,9 +263,13 @@ describe("AuthService - Phase 3", () => {
     };
     mockJwtService = {
       sign: jest.fn(),
-      verify: jest.fn((token, options) => ({
+      verify: jest.fn(() => ({
         sub: 1,
         email: "user@test.com",
+        sv: "1",
+        tokenUse: "refresh",
+        jti: "12345678-1234-4123-8123-123456789abc",
+        exp: Math.floor(Date.now() / 1000) + 86400,
       })),
     };
     mockConfigService = createMockConfig();
@@ -318,7 +350,7 @@ describe("AuthService - Phase 3", () => {
 
   describe("refresh", () => {
     it("should allow only one of two concurrent refreshes of the same token", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+      const oldHash = refreshTokenDigest("token-a");
       const harness = useTransaction([
         {
           id: 1,
@@ -346,7 +378,7 @@ describe("AuthService - Phase 3", () => {
       expect(rejected).toHaveLength(1);
       expect(rejected[0].reason).toBeInstanceOf(UnauthorizedException);
       expect(rejected[0].reason.message).toBe("Refresh token was reused");
-      expect(harness.update).toHaveBeenCalledTimes(1);
+      expect(harness.update).toHaveBeenCalledTimes(2);
       expect(harness.revokeAllExecute).toHaveBeenCalledTimes(1);
       expect(harness.findOneCalls).toContainEqual(
         expect.objectContaining({
@@ -356,8 +388,9 @@ describe("AuthService - Phase 3", () => {
       );
     });
 
-    it("should compare the raw token against the stored bcrypt hash", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+    it("looks up the exact SHA-256 token digest without bcrypt", async () => {
+      const oldHash = refreshTokenDigest("token-a");
+
       const harness = useTransaction([
         {
           id: 1,
@@ -369,22 +402,23 @@ describe("AuthService - Phase 3", () => {
       ]);
 
       jest.clearAllMocks();
-      await service.refresh(1, "token-a");
 
-      expect(bcrypt.compare).toHaveBeenCalledWith("token-a", oldHash);
-      expect(bcrypt.hash).not.toHaveBeenCalledWith("token-a", 10);
-      expect(bcrypt.hash).toHaveBeenCalledWith(
-        expect.stringMatching(/^refresh-\d+$/),
-        10,
-      );
-      expect(harness.find).toHaveBeenCalledWith(
-        RefreshTokenEntity,
-        expect.objectContaining({ where: { userId: 1 } }),
-      );
+      const result = await service.refresh(1, "token-a");
+
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+      expect(bcrypt.hash).not.toHaveBeenCalled();
+
+      expect(harness.findOneCalls).toContainEqual({
+        where: { userId: 1, tokenHash: oldHash },
+        lock: { mode: "pessimistic_write" },
+      });
+
+      expect(harness.create.mock.calls[0][1].tokenHash)
+        .toBe(refreshTokenDigest(result.refreshToken));
     });
 
     it("should assign a unique jti to every refresh token", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+      const oldHash = refreshTokenDigest("token-a");
       const harness = useTransaction([
         {
           id: 1,
@@ -414,7 +448,7 @@ describe("AuthService - Phase 3", () => {
     });
 
     it("should set replacedBy on the old token to the new token hash", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+      const oldHash = refreshTokenDigest("token-a");
       const harness = useTransaction([
         {
           id: 1,
@@ -435,7 +469,7 @@ describe("AuthService - Phase 3", () => {
     });
 
     it("should reject the old token after a successful rotation", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+      const oldHash = refreshTokenDigest("token-a");
       const harness = useTransaction([
         {
           id: 1,
@@ -455,7 +489,7 @@ describe("AuthService - Phase 3", () => {
     });
 
     it("should revoke all user tokens when reuse is detected", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+      const oldHash = refreshTokenDigest("token-a");
       const harness = useTransaction([
         {
           id: 1,
@@ -475,7 +509,7 @@ describe("AuthService - Phase 3", () => {
     });
 
     it("should allow refreshing the newly rotated token", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+      const oldHash = refreshTokenDigest("token-a");
       const harness = useTransaction([
         {
           id: 1,
@@ -498,7 +532,7 @@ describe("AuthService - Phase 3", () => {
     });
 
     it("should reject expired token with 'Refresh token expired'", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+      const oldHash = refreshTokenDigest("token-a");
       const harness = useTransaction([
         {
           id: 1,
@@ -530,17 +564,21 @@ describe("AuthService - Phase 3", () => {
       const harness = useTransaction([
         {
           id: 1,
-          tokenHash: "old-hash",
+          tokenHash: refreshTokenDigest("token-a"),
           userId: 1,
           revoked: false,
           expiresAt: new Date(Date.now() + 60_000),
         },
       ]);
 
-      await service.logout(1, "token-a");
+      await service.logout(1, "token-a", "1");
 
-      expect(harness.find).toHaveBeenCalledWith(RefreshTokenEntity, {
-        where: { userId: 1 },
+      expect(harness.findOneCalls).toContainEqual({
+        where: {
+          userId: 1,
+          tokenHash: refreshTokenDigest("token-a"),
+        },
+        lock: { mode: "pessimistic_write" },
       });
       expect(harness.update).toHaveBeenCalledWith(
         RefreshTokenEntity,
@@ -554,14 +592,14 @@ describe("AuthService - Phase 3", () => {
       const harness = useTransaction([
         {
           id: 1,
-          tokenHash: "hash-refresh-other",
+          tokenHash: refreshTokenDigest("refresh-other"),
           userId: 1,
           revoked: false,
           expiresAt: new Date(Date.now() + 60_000),
         },
       ]);
 
-      await service.logout(1, "token-a");
+      await service.logout(1, "token-a", "1");
 
       expect(harness.update).not.toHaveBeenCalled();
       expect(harness.records[0].revoked).toBe(false);
@@ -571,22 +609,22 @@ describe("AuthService - Phase 3", () => {
       const harness = useTransaction([
         {
           id: 1,
-          tokenHash: "old-hash",
+          tokenHash: refreshTokenDigest("token-a"),
           userId: 1,
           revoked: true,
-          replacedBy: "hash-refresh-new",
+          replacedBy: refreshTokenDigest("refresh-new"),
           expiresAt: new Date(Date.now() + 60_000),
         },
         {
           id: 2,
-          tokenHash: "hash-refresh-new",
+          tokenHash: refreshTokenDigest("refresh-new"),
           userId: 1,
           revoked: false,
           expiresAt: new Date(Date.now() + 60_000),
         },
       ]);
 
-      await service.logout(1, "token-a");
+      await service.logout(1, "token-a", "1");
 
       expect(harness.update).toHaveBeenCalledWith(
         RefreshTokenEntity,
@@ -600,14 +638,14 @@ describe("AuthService - Phase 3", () => {
       const harness = useTransaction([
         {
           id: 1,
-          tokenHash: "old-hash",
+          tokenHash: refreshTokenDigest("token-a"),
           userId: 1,
           revoked: false,
           expiresAt: new Date(Date.now() + 60_000),
         },
       ]);
 
-      await service.logout(1, "token-a");
+      await service.logout(1, "token-a", "1");
 
       await expect(service.refresh(1, "token-a")).rejects.toThrow(
         "Refresh token was reused",
@@ -622,14 +660,28 @@ describe("AuthService - Phase 3", () => {
         id: 1,
         email: "user@test.com",
         password: await bcrypt.hash("oldpass", 12),
+        isActive: true,
+        sessionVersion: "1",
       };
 
       mockUserRepository.findOne.mockResolvedValue(userEntity);
       mockRefreshTokenRepository.save.mockResolvedValue({});
 
-      await service.changePassword(1, "oldpass", "newpass");
+      await service.changePassword(1, "oldpass", "newpass", "1");
 
-      expect(mockRefreshTokenRepository.createQueryBuilder).toHaveBeenCalled();
+      expect(transactionHarness.update).toHaveBeenCalledWith(
+        UserEntity,
+        { id: 1 },
+        { password: "password-hash-newpass" },
+      );
+
+      expect(transactionHarness.update).toHaveBeenCalledWith(
+        UserEntity,
+        { id: 1, sessionVersion: "1" },
+        { sessionVersion: "2" },
+      );
+
+      expect(transactionHarness.revokeAllExecute).toHaveBeenCalledTimes(1);
     });
   });
 

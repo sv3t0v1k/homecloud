@@ -15,6 +15,7 @@ import { RegisterDto } from "./dtos/register.dto";
 import { LoginDto } from "./dtos/login.dto";
 import { ChangePasswordDto } from "./dtos/change-password.dto";
 import { JwtGuard } from "./guards/jwt.guard";
+import { UserInfo } from "./jwt.strategy";
 
 class RefreshTokenDto {
   @IsString()
@@ -76,13 +77,14 @@ export class AuthController {
   @UseGuards(JwtGuard)
   @HttpCode(HttpStatus.OK)
   async changePassword(
-    @NestRequest() req: ExpressRequest & { user: { userId: number } },
+    @NestRequest() req: ExpressRequest & { user: UserInfo },
     @Body(ValidationPipe) dto: ChangePasswordDto,
   ) {
     await this.authService.changePassword(
       req.user.userId,
       dto.oldPassword,
       dto.newPassword,
+      req.user.sessionVersion,
     );
     return { message: "Password changed successfully" };
   }
@@ -91,10 +93,14 @@ export class AuthController {
   @UseGuards(JwtGuard)
   @HttpCode(HttpStatus.OK)
   async logout(
-    @NestRequest() req: ExpressRequest & { user: { userId: number } },
+    @NestRequest() req: ExpressRequest & { user: UserInfo },
     @Body(ValidationPipe) dto: LogoutDto,
   ) {
-    await this.authService.logout(req.user.userId, dto.refreshToken);
+    await this.authService.logout(
+      req.user.userId,
+      dto.refreshToken,
+      req.user.sessionVersion,
+    );
     return { message: "Logged out successfully" };
   }
 }

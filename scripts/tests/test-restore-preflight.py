@@ -24,20 +24,23 @@ for path in sorted((ROOT / 'backend/src/migrations').glob('*.ts')):
     if not match or not match.group(1).endswith(timestamp):
         raise AssertionError('Unexpected migration source: ' + path.name)
     MIGRATIONS.append(timestamp + ':' + match.group(1))
-if len(MIGRATIONS) != 32:
-    raise AssertionError('Expected 32 source migrations')
-if MIGRATIONS[-2] != '1792831300000:FileCopyAdmission1792831300000':
+if len(MIGRATIONS) != 33:
+    raise AssertionError('Expected 33 source migrations')
+if MIGRATIONS[-3] != '1792831300000:FileCopyAdmission1792831300000':
     raise AssertionError('Unexpected copy migration')
-if MIGRATIONS[-1] != '1792831400000:AddUserRolesAndSessionVersion1792831400000':
+if MIGRATIONS[-2] != '1792831400000:AddUserRolesAndSessionVersion1792831400000':
     raise AssertionError('Unexpected administrative users migration')
+if MIGRATIONS[-1] != '1792831500000:RevokeLegacyRefreshTokens1792831500000':
+    raise AssertionError('Unexpected session migration')
 
-COPY_MIGRATIONS = MIGRATIONS[:-1]
+COPY_MIGRATIONS = MIGRATIONS[:-2]
+ADMIN_MIGRATIONS = MIGRATIONS[:-1]
 
 class RestorePreflight(unittest.TestCase):
     def run_fixture(self, tables=CURRENT, replay_fail=False, pending_fail=False,
                     destructive=False, final_rc=0, ownership_fail=False,
                     migration_fail=False, columns_fail=False, backend_volumes=False,
-                    legacy_copy=False):
+                    legacy_copy=False, legacy_admin=False):
         source = (ROOT / 'scripts/restore.sh').read_text()
         start = source.index('# The dump is SQL, not a list of table names.')
         end = source.index('# Security: scan a storage', start)
@@ -56,7 +59,8 @@ class RestorePreflight(unittest.TestCase):
                        TEST_SCRIPT_DIR=str(ROOT / 'scripts'), TEST_TABLES=tables,
                        TEST_MIGRATIONS='\n'.join(MIGRATIONS), TEST_CURRENT=CURRENT,
                        TEST_INITIAL_MIGRATIONS='\n'.join(
-                           COPY_MIGRATIONS if legacy_copy else MIGRATIONS
+                           COPY_MIGRATIONS if legacy_copy else
+                           ADMIN_MIGRATIONS if legacy_admin else MIGRATIONS
                        ),
                        TEST_REPLAY_FAIL=str(int(replay_fail)), TEST_PENDING_FAIL=str(int(pending_fail)),
                        TEST_OWNERSHIP_FAIL=str(int(ownership_fail)), TEST_MIGRATION_FAIL=str(int(migration_fail)),
@@ -161,6 +165,12 @@ docker() {
 
     def test_legacy_copy_schema_migrates_to_admin_users_schema(self):
         result, calls = self.run_fixture(legacy_copy=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(call.startswith('run ') for call in calls))
+        self.assert_no_production_changes(calls)
+
+    def test_admin_schema_migrates_to_session_revocation_schema(self):
+        result, calls = self.run_fixture(legacy_admin=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(any(call.startswith('run ') for call in calls))
         self.assert_no_production_changes(calls)
