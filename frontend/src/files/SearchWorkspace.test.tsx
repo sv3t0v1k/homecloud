@@ -689,86 +689,102 @@ describe('global search in the shared authenticated workspace', () => {
     },
   )
 
-  it('preserves the committed Spotlight query for an unfinished draft but clears it for empty input', async () => {
-    searchResult.folders = [folder()]
-    renderWorkspace('/files')
+  it.each([false, true])(
+    'preserves Spotlight context for unfinished draft with intermediate clear=%s',
+    async clearFirst => {
+      searchResult.folders = [folder()]
+      renderWorkspace('/files')
 
-    const user = userEvent.setup()
+      const user = userEvent.setup()
 
-    await screen.findByRole('heading', {
-      name: 'Мои файлы',
-    })
+      await screen.findByRole('heading', {
+        name: 'Мои файлы',
+      })
 
-    await user.click(screen.getByRole('button', {
-      name: 'Поиск во всех файлах',
-    }))
+      await user.click(screen.getByRole('button', {
+        name: 'Поиск во всех файлах',
+      }))
 
-    const input = screen.getByRole('searchbox')
+      const input = screen.getByRole('searchbox')
 
-    await user.type(input, 'report{Enter}')
+      await user.type(input, 'report{Enter}')
 
-    const spotlight = screen.getByRole('region', {
-      name: 'Поиск во всём облаке',
-    })
+      const spotlight = screen.getByRole('region', {
+        name: 'Поиск во всём облаке',
+      })
 
-    await within(spotlight).findByRole('button', {
-      name: 'report-folder',
-    })
+      await within(spotlight).findByRole('button', {
+        name: 'report-folder',
+      })
 
-    fireEvent.change(input, {
-      target: { value: 'p' },
-    })
+      if (clearFirst) {
+        await user.clear(input)
 
-    // The unfinished draft hides old actionable results,
-    // but it does not erase the saved committed query.
-    expect(within(spotlight).queryByRole('button', {
-      name: 'report-folder',
-    })).not.toBeInTheDocument()
+        expect(input).toHaveValue('')
+        expect(within(spotlight).queryByRole('button', {
+          name: 'report-folder',
+        })).not.toBeInTheDocument()
 
-    expect(within(spotlight).getByText(
-      'Введите от 2 до 100 символов.',
-    )).toBeInTheDocument()
+        await user.type(input, 'p')
+      } else {
+        fireEvent.change(input, {
+          target: { value: 'p' },
+        })
+      }
 
-    expect(searchCalls()).toHaveLength(1)
+      expect(input).toHaveValue('p')
 
-    await user.click(within(spotlight).getByRole('button', {
-      name: 'Закрыть поиск',
-    }))
+      // The unfinished draft hides old actionable results,
+      // but it does not erase the saved committed query.
+      expect(within(spotlight).queryByRole('button', {
+        name: 'report-folder',
+      })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', {
-      name: 'Поиск во всех файлах',
-    }))
+      expect(within(spotlight).getByText(
+        'Введите от 2 до 100 символов.',
+      )).toBeInTheDocument()
 
-    const reopened = screen.getByRole('region', {
-      name: 'Поиск во всём облаке',
-    })
+      expect(searchCalls()).toHaveLength(1)
 
-    const restoredInput = within(reopened).getByRole('searchbox')
+      await user.click(within(spotlight).getByRole('button', {
+        name: 'Закрыть поиск',
+      }))
 
-    expect(restoredInput).toHaveValue('report')
+      await user.click(screen.getByRole('button', {
+        name: 'Поиск во всех файлах',
+      }))
 
-    await within(reopened).findByRole('button', {
-      name: 'report-folder',
-    })
+      const reopened = screen.getByRole('region', {
+        name: 'Поиск во всём облаке',
+      })
 
-    expect(searchCalls()).toHaveLength(1)
+      const restoredInput = within(reopened).getByRole('searchbox')
 
-    // An explicitly empty field does clear the context.
-    fireEvent.change(restoredInput, {
-      target: { value: '' },
-    })
+      expect(restoredInput).toHaveValue('report')
 
-    await user.click(within(reopened).getByRole('button', {
-      name: 'Закрыть поиск',
-    }))
+      await within(reopened).findByRole('button', {
+        name: 'report-folder',
+      })
 
-    await user.click(screen.getByRole('button', {
-      name: 'Поиск во всех файлах',
-    }))
+      expect(searchCalls()).toHaveLength(1)
 
-    expect(screen.getByRole('searchbox')).toHaveValue('')
-    expect(searchCalls()).toHaveLength(1)
-  })
+      // Closing with an explicitly empty field clears
+      // the persisted context, not only the visible results.
+      await user.clear(restoredInput)
+      expect(restoredInput).toHaveValue('')
+
+      await user.click(within(reopened).getByRole('button', {
+        name: 'Закрыть поиск',
+      }))
+
+      await user.click(screen.getByRole('button', {
+        name: 'Поиск во всех файлах',
+      }))
+
+      expect(screen.getByRole('searchbox')).toHaveValue('')
+      expect(searchCalls()).toHaveLength(1)
+    },
+  )
 
   it('does not retain Spotlight context across logout and a new login of the same owner', async () => {
     searchResult.folders = [folder()]

@@ -68,6 +68,20 @@ function SearchPageContent({
   const committed = parsed.query
   const focusSearch = !inline && Boolean(location.state && (location.state as { focusSearch?: boolean }).focusSearch)
   const [draft, setDraft] = useState(committed ?? '')
+  const draftOnClose = useRef(draft)
+
+  useEffect(() => {
+    if (!inline) return
+
+    return () => {
+      if (!draftOnClose.current.trim()) {
+        spotlight.setSpotlightLocation({
+          query: null,
+          offset: 0,
+        })
+      }
+    }
+  }, [inline, spotlight])
   const [validation, setValidation] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const spotlightContent = useRef<HTMLDivElement>(null)
@@ -182,10 +196,12 @@ function SearchPageContent({
     const query = normalizeSearchQuery(draft)
 
     if (!query) {
-      // Clearing the field clears the saved search.
-      // An unfinished draft must not erase that context.
+      // Clear the visible results immediately, without
+      // erasing the last completed search during editing.
+      // Closing with an empty draft clears saved context.
       if (!draft.trim() && committed !== null) {
-        setInlineLocation({ query: null, offset: 0 })
+        inlineRestored.current = false
+        updateInlineLocation({ query: null, offset: 0 })
       }
       return
     }
@@ -526,7 +542,12 @@ function SearchPageContent({
     </>}
     <form className="search-form" role="search" aria-label="Глобальный поиск" onSubmit={submit}>
       <label htmlFor="global-search-query">Название файла или папки</label>
-      <div className="search-input-row"><div className="search-input-wrap"><Icon name="search" /><input autoComplete="off" spellCheck={inline ? false : undefined} enterKeyHint={inline ? "search" : undefined} className="search-input" id="global-search-query" ref={input} type="search" maxLength={100} placeholder="Что нужно найти?" value={draft} onChange={event => { setDraft(event.target.value); setValidation(null) }} onKeyDown={event => { if (!inline && event.key === 'Escape') { setDraft(''); setValidation(null) } }} aria-invalid={Boolean(validation || parsed.error) || undefined} aria-describedby="global-search-help" /></div>{!inline ? <button className="button button--primary search-submit" disabled={busy || remaining > 0} type="submit">{busy ? 'Ищем…' : 'Найти'}<Icon name="chevron" /></button> : null}</div>
+      <div className="search-input-row"><div className="search-input-wrap"><Icon name="search" /><input autoComplete="off" spellCheck={inline ? false : undefined} enterKeyHint={inline ? "search" : undefined} className="search-input" id="global-search-query" ref={input} type="search" maxLength={100} placeholder="Что нужно найти?" value={draft} onChange={event => {
+        const value = event.target.value
+        draftOnClose.current = value
+        setDraft(value)
+        setValidation(null)
+      }} onKeyDown={event => { if (!inline && event.key === 'Escape') { setDraft(''); setValidation(null) } }} aria-invalid={Boolean(validation || parsed.error) || undefined} aria-describedby="global-search-help" /></div>{!inline ? <button className="button button--primary search-submit" disabled={busy || remaining > 0} type="submit">{busy ? 'Ищем…' : 'Найти'}<Icon name="chevron" /></button> : null}</div>
       <p className={validation || parsed.error
       ? 'search-help is-error'
       : inline ? 'search-help sr-only' : 'search-help'} id="global-search-help" role={validation || parsed.error ? 'alert' : undefined}>{validation || parsed.error || (inline ? 'От 2 символов · Enter для поиска' : 'От 2 до 100 символов. Нажмите Enter, чтобы начать поиск.')}</p>
