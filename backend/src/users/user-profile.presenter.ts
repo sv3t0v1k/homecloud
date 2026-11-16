@@ -1,4 +1,4 @@
-import { UserEntity } from "../entities/user.entity";
+import { UserEntity, UserRole } from "../entities/user.entity";
 
 export function presentUserProfile(user: UserEntity) {
   return {
@@ -13,5 +13,9 @@ export function presentUserProfile(user: UserEntity) {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     role: user.role,
+    capabilities: {
+      manageUsers:
+        user.isActive === true && user.role === UserRole.ADMIN,
+    },
   };
 }

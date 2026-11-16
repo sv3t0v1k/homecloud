@@ -47,16 +47,34 @@ export class HttpExceptionFilter implements ExceptionFilter {
       typeof details === "object" && details !== null && "checks" in details
         ? (details as { checks: unknown }).checks
         : undefined;
-    // Do not forward arbitrary exception metadata to clients.
-    // Explicitly allow only the stable registration-denial code.
-    const safeCode =
-      status === HttpStatus.FORBIDDEN &&
+    // Forward only explicitly approved status/code combinations.
+    // Never forward arbitrary metadata, credentials or internal codes.
+    const allowedCodes: Readonly<Record<number, readonly string[]>> = {
+      [HttpStatus.BAD_REQUEST]: ["VALIDATION_ERROR", "INVALID_QUOTA"],
+      [HttpStatus.UNAUTHORIZED]: ["UNAUTHORIZED"],
+      [HttpStatus.FORBIDDEN]: ["REGISTRATION_DISABLED", "ADMIN_REQUIRED"],
+      [HttpStatus.NOT_FOUND]: ["USER_NOT_FOUND"],
+      [HttpStatus.SERVICE_UNAVAILABLE]: ["STORAGE_ACCOUNTING_UNAVAILABLE"],
+    };
+
+    const adminUserRequest =
+      /^\/api\/v1\/admin\/users(?:\/|$)/i.test(request.path ?? "");
+
+    const requestedCode =
       typeof details === "object" &&
       details !== null &&
       "code" in details &&
-      details.code === "REGISTRATION_DISABLED"
-        ? "REGISTRATION_DISABLED"
+      typeof details.code === "string"
+        ? details.code
         : undefined;
+
+    const safeCode =
+      requestedCode !== undefined &&
+      allowedCodes[status]?.includes(requestedCode)
+        ? requestedCode
+        : adminUserRequest && status === HttpStatus.UNAUTHORIZED
+          ? "UNAUTHORIZED"
+          : undefined;
 
     const safeChecks =
       checks && typeof checks === "object"
@@ -77,7 +95,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ...(safeChecks ? { checks: safeChecks } : {}),
       message,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      // Administrative query parameters may contain user-supplied
+      // search terms or unexpected fields. Do not reflect them.
+      path: adminUserRequest ? request.path : request.url,
     });
   }
 }
