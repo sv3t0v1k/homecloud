@@ -203,3 +203,60 @@ test("migration:show is allowed under root fence", async () => {
     );
   });
 });
+
+
+test("operator bootstrap requires the same exclusive root fence", async () => {
+  await withRoot(async (root) => {
+    const boundary = new SecureFilesystem(
+      root,
+      fs.lstatSync(root),
+    );
+
+    const fd = boundary.directory(root);
+
+    const invokeBootstrap = () => invoke(
+      root,
+      "dist/users/admin-bootstrap-cli.js",
+      "bootstrap",
+      ["promote", "--user-id", "1", "--email", "owner@example.test"],
+    );
+
+    try {
+      boundary.lock(fd);
+
+      const blocked = await invokeBootstrap();
+
+      assert.notEqual(blocked.code, 0);
+      assert.doesNotMatch(blocked.stdout, /HC_ADMIN_BOOTSTRAP_FENCED/);
+    } finally {
+      fs.closeSync(fd);
+      boundary.close();
+    }
+
+    const allowed = await invokeBootstrap();
+
+    assert.equal(allowed.code, 0, allowed.stderr);
+    assert.match(allowed.stdout, /HC_ADMIN_BOOTSTRAP_FENCED/);
+  });
+});
+
+test("operator bootstrap refuses password arguments", async () => {
+  await withRoot(async (root) => {
+    const result = await invoke(
+      root,
+      "dist/users/admin-bootstrap-cli.js",
+      "bootstrap",
+      [
+        "create", "--email", "owner@example.test",
+        "--name", "Admin", "--password", "must-not-be-accepted",
+      ],
+    );
+
+    assert.notEqual(result.code, 0);
+    assert.match(
+      result.stderr,
+      /Unsupported administrator bootstrap invocation/,
+    );
+    assert.doesNotMatch(result.stdout, /HC_ADMIN_BOOTSTRAP_FENCED/);
+  });
+});

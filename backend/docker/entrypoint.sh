@@ -8,6 +8,13 @@ if [ "$#" -eq 2 ] && [ "$1" = node ] && [ "$2" = dist/main.js ]; then
   exec node docker/copy-root-fence-supervisor.cjs
 fi
 
+# Operator bootstrap uses the same exclusive root fence.
+# Even malformed arguments are routed to the strict supervisor parser.
+if [ "$#" -ge 2 ] && [ "$1" = node ] &&
+   [ "$2" = dist/users/admin-bootstrap-cli.js ]; then
+  exec node docker/copy-root-fence-supervisor.cjs --admin-bootstrap "$@"
+fi
+
 # All supported TypeORM operator CLI calls must use the same
 # kernel lock as the live API. Unsupported actions fail closed.
 if [ "$#" -ge 3 ] && [ "$1" = node ]; then

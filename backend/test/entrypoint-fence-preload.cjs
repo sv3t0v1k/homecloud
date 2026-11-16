@@ -8,6 +8,8 @@ if (target.endsWith("/node_modules/typeorm/cli.js")) {
   phase = "MIGRATIONS";
 } else if (target.endsWith("/dist/main.js")) {
   phase = "API";
+} else if (target.endsWith("/dist/users/admin-bootstrap-cli.js")) {
+  phase = "ADMIN_BOOTSTRAP";
 }
 
 if (phase) {
