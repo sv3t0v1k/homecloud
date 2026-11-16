@@ -26,14 +26,17 @@ def source_migrations():
         if not match or not match.group(1).endswith(timestamp):
             raise AssertionError('Unexpected migration source: ' + path.name)
         rows.append(timestamp + ':' + match.group(1))
-    if len(rows) != 31:
-        raise AssertionError('Expected 31 source migrations')
-    if rows[-1] != '1792831300000:FileCopyAdmission1792831300000':
+    if len(rows) != 32:
+        raise AssertionError('Expected 32 source migrations')
+    if rows[-2] != '1792831300000:FileCopyAdmission1792831300000':
         raise AssertionError('Unexpected copy migration')
+    if rows[-1] != '1792831400000:AddUserRolesAndSessionVersion1792831400000':
+        raise AssertionError('Unexpected admin migration')
     return rows
 
 CURRENT_MIGRATIONS = [] if BASELINE else source_migrations()
-HISTORICAL_MIGRATIONS = CURRENT_MIGRATIONS[:-1]
+HISTORICAL_MIGRATIONS = CURRENT_MIGRATIONS[:-2]
+COPY_MIGRATIONS = CURRENT_MIGRATIONS[:-1]
 COPY_EXTRA = {'file_copy_admission', 'file_copy_operations'}
 CURRENT_TABLES = CORE | CURRENT_EXTRA | COPY_EXTRA
 
@@ -136,7 +139,7 @@ validation_psql() {
     def test_current_copy_migration_inventory(self):
         for migrations in (
             HISTORICAL_MIGRATIONS,
-            CURRENT_MIGRATIONS[:-1] + ['1792831300000:Unexpected1792831300000'],
+            CURRENT_MIGRATIONS[:-1] + ['1792831400000:Unexpected1792831400000'],
             CURRENT_MIGRATIONS[:-1] + [CURRENT_MIGRATIONS[-2]],
             CURRENT_MIGRATIONS + ['1792831300001:Unexpected1792831300001'],
         ):
@@ -144,6 +147,22 @@ validation_psql() {
                 self.assertNotEqual(
                     self.gate(CURRENT_TABLES, migrations=migrations).returncode, 0
                 )
+
+    def test_legacy_copy_schema_accepted_before_migration(self):
+        self.assertEqual(
+            self.gate(CURRENT_TABLES, migrations=COPY_MIGRATIONS).returncode, 0
+        )
+        self.assertNotEqual(
+            self.gate(CURRENT_TABLES, migrations=COPY_MIGRATIONS,
+                      current=True).returncode, 0
+        )
+
+    def test_admin_schema_requires_user_role_and_session_columns(self):
+        for current in (False, True):
+            with self.subTest(current=current):
+                result = self.gate(CURRENT_TABLES, current=current,
+                                   missing_columns='users')
+                self.assertNotEqual(result.returncode, 0)
 
     def test_current_pending_state_rejected(self):
         self.assertNotEqual(

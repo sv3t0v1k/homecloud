@@ -3,6 +3,7 @@ import { Injectable, Logger, ForbiddenException, NotFoundException, BadRequestEx
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, EntityManager } from "typeorm";
 import { UserEntity } from "../entities/user.entity";
+import type { UpdateProfileDto } from "./dtos/update-profile.dto";
 
 @Injectable()
 export class UsersService {
@@ -23,9 +24,30 @@ export class UsersService {
 
   async updateProfile(
     id: number,
-    data: Partial<UserEntity>,
+    data: UpdateProfileDto,
   ): Promise<UserEntity> {
-    await this.userRepository.update(id, data);
+    const changes: UpdateProfileDto = {};
+
+    if (data.name !== undefined) {
+      if (typeof data.name !== "string" || data.name.length > 100) {
+        throw new BadRequestException("Invalid profile name");
+      }
+      changes.name = data.name;
+    }
+
+    if (data.avatar !== undefined) {
+      if (
+        data.avatar !== null &&
+        (typeof data.avatar !== "string" || data.avatar.length > 255)
+      ) {
+        throw new BadRequestException("Invalid profile avatar");
+      }
+      changes.avatar = data.avatar;
+    }
+
+    if (Object.keys(changes).length > 0) {
+      await this.userRepository.update(id, changes);
+    }
     const user = await this.findById(id);
     if (!user) throw new NotFoundException("User not found");
     return user;

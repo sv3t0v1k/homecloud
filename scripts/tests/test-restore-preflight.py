@@ -24,13 +24,20 @@ for path in sorted((ROOT / 'backend/src/migrations').glob('*.ts')):
     if not match or not match.group(1).endswith(timestamp):
         raise AssertionError('Unexpected migration source: ' + path.name)
     MIGRATIONS.append(timestamp + ':' + match.group(1))
-if len(MIGRATIONS) != 31:
-    raise AssertionError('Expected 31 source migrations')
+if len(MIGRATIONS) != 32:
+    raise AssertionError('Expected 32 source migrations')
+if MIGRATIONS[-2] != '1792831300000:FileCopyAdmission1792831300000':
+    raise AssertionError('Unexpected copy migration')
+if MIGRATIONS[-1] != '1792831400000:AddUserRolesAndSessionVersion1792831400000':
+    raise AssertionError('Unexpected administrative users migration')
+
+COPY_MIGRATIONS = MIGRATIONS[:-1]
 
 class RestorePreflight(unittest.TestCase):
     def run_fixture(self, tables=CURRENT, replay_fail=False, pending_fail=False,
                     destructive=False, final_rc=0, ownership_fail=False,
-                    migration_fail=False, columns_fail=False, backend_volumes=False):
+                    migration_fail=False, columns_fail=False, backend_volumes=False,
+                    legacy_copy=False):
         source = (ROOT / 'scripts/restore.sh').read_text()
         start = source.index('# The dump is SQL, not a list of table names.')
         end = source.index('# Security: scan a storage', start)
@@ -48,6 +55,9 @@ class RestorePreflight(unittest.TestCase):
             env = dict(os.environ, TEST_ARCHIVE=str(archive), TEST_TMP=tmp, TEST_DUMP=str(dump),
                        TEST_SCRIPT_DIR=str(ROOT / 'scripts'), TEST_TABLES=tables,
                        TEST_MIGRATIONS='\n'.join(MIGRATIONS), TEST_CURRENT=CURRENT,
+                       TEST_INITIAL_MIGRATIONS='\n'.join(
+                           COPY_MIGRATIONS if legacy_copy else MIGRATIONS
+                       ),
                        TEST_REPLAY_FAIL=str(int(replay_fail)), TEST_PENDING_FAIL=str(int(pending_fail)),
                        TEST_OWNERSHIP_FAIL=str(int(ownership_fail)), TEST_MIGRATION_FAIL=str(int(migration_fail)),
                        TEST_COLUMNS_FAIL=str(int(columns_fail)), TEST_BACKEND_VOLUMES=str(int(backend_volumes)))
@@ -90,7 +100,12 @@ docker() {
           for table in $available; do
             if [[ "$*" == *"table_name='$table'"* ]]; then printf '1\n'; return; fi
           done ;;
-        *"SELECT timestamp::text"*) printf '%s\n' "$TEST_MIGRATIONS" ;;
+        *"SELECT timestamp::text"*)
+          if [ -f "$TEST_TMP/migrated" ]; then
+            printf '%s\n' "$TEST_MIGRATIONS"
+          else
+            printf '%s\n' "$TEST_INITIAL_MIGRATIONS"
+          fi ;;
         *"WHERE false"*) [ "$TEST_COLUMNS_FAIL" = 0 ] || return 10 ;;
         *"SELECT count(*) FROM public.migrations"*) printf '1\n' ;;
         *"SELECT string_agg"*) printf 'id,storagePath\n' ;;
@@ -142,6 +157,12 @@ docker() {
         self.assertIn('migration:run', '\n'.join(calls))
         self.assertNotIn(' -v ', migration)
         self.assertNotIn(' --volumes-from ', migration)
+        self.assert_no_production_changes(calls)
+
+    def test_legacy_copy_schema_migrates_to_admin_users_schema(self):
+        result, calls = self.run_fixture(legacy_copy=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(call.startswith('run ') for call in calls))
         self.assert_no_production_changes(calls)
 
     def test_migration_error_blocks_before_production(self):

@@ -174,7 +174,7 @@ validation_psql() {
 }
 
 validate_restored_database() {
-  local TABLE_COUNT EXPECTED_TABLE_NAMES t EXISTS FILES_COLS USERS_COUNT MIGRATIONS EXPECTED_CURRENT_MIGRATIONS
+  local TABLE_COUNT EXPECTED_TABLE_NAMES t EXISTS FILES_COLS USERS_COUNT MIGRATIONS EXPECTED_CURRENT_MIGRATIONS EXPECTED_ADMIN_MIGRATIONS
   TABLE_COUNT=$(validation_psql -tAc \
     "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'" | tr -d '[:space:]')
   EXPECTED_TABLE_NAMES="$CORE_TABLE_NAMES"
@@ -239,8 +239,22 @@ validate_restored_database() {
 
     MIGRATIONS=$(validation_psql -tAc "SELECT timestamp::text || ':' || name FROM public.migrations ORDER BY timestamp, name") \
       || die "Current schema migration metadata unavailable"
-    [ "$MIGRATIONS" = "$EXPECTED_CURRENT_MIGRATIONS" ] \
-      || die "Schema migration set differs from confirmed inventory"
+    if [ "$TABLE_COUNT" = 17 ]; then
+      EXPECTED_ADMIN_MIGRATIONS="$EXPECTED_CURRENT_MIGRATIONS
+1792831400000:AddUserRolesAndSessionVersion1792831400000"
+
+      if [ "$MIGRATIONS" = "$EXPECTED_ADMIN_MIGRATIONS" ]; then
+        validation_psql -tAc 'SELECT id, role, "sessionVersion" FROM public.users WHERE false' >/dev/null \
+          || die "Current schema administrative users columns are missing"
+      elif [ "$MIGRATIONS" = "$EXPECTED_CURRENT_MIGRATIONS" ] && [ "${1:-historical}" != current ]; then
+        :
+      else
+        die "Schema migration set differs from confirmed inventory"
+      fi
+    else
+      [ "$MIGRATIONS" = "$EXPECTED_CURRENT_MIGRATIONS" ] \
+        || die "Schema migration set differs from confirmed inventory"
+    fi
   fi
   log "  All expected tables present: OK ($TABLE_COUNT tables)"
   # Verify key columns against the existing historical gate.
@@ -256,7 +270,7 @@ validate_restored_database() {
     # gate. This deliberately does not claim complete constraint/type parity.
     validation_psql -tAc 'SELECT id, "storagePath", "storageLocationId", "relativeObjectKey", size, "userId", "isFolder", "isDeleted" FROM public.files WHERE false' >/dev/null \
       || die "Current schema required files columns are missing"
-    validation_psql -tAc 'SELECT id, "storageUsed" FROM public.users WHERE false' >/dev/null \
+    validation_psql -tAc 'SELECT id, "storageUsed", role, "sessionVersion" FROM public.users WHERE false' >/dev/null \
       || die "Current schema required users columns are missing"
     validation_psql -tAc 'SELECT id, "machineKey", "mountKey" FROM public.storage_locations WHERE false' >/dev/null \
       || die "Current schema required storage location columns are missing"
