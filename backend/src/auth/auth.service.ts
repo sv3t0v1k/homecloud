@@ -10,6 +10,10 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, EntityManager, LessThan } from "typeorm";
 import { UserEntity, UserRole } from "../entities/user.entity";
 import {
+  normalizeUserEmail,
+  isUserEmailConflict,
+} from "../users/user-email";
+import {
   isSessionVersion,
   sessionVersionMatches,
   parseRefreshSessionClaims,
@@ -89,8 +93,10 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
 
     return this.refreshTokenRepository.manager.transaction(
       async (manager) => {
+        const canonicalEmail = await normalizeUserEmail(manager, email);
+
         const existing = await manager.findOne(UserEntity, {
-          where: { email },
+          where: { email: canonicalEmail },
         });
 
         if (existing) {
@@ -98,14 +104,23 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
         }
 
         const user = manager.create(UserEntity, {
-          email,
+          email: canonicalEmail,
           password: hashedPassword,
-          name: name || email.split("@")[0],
+          name: name || canonicalEmail.split("@")[0],
           role: UserRole.USER,
           sessionVersion: "1",
         });
 
-        const saved = await manager.save(user);
+        let saved: UserEntity;
+
+        try {
+          saved = await manager.save(user);
+        } catch (error) {
+          if (isUserEmailConflict(error, manager)) {
+            throw new ConflictException("User with this email already exists");
+          }
+          throw error;
+        }
 
         return this.generateTokens(manager, saved);
       },
@@ -113,8 +128,13 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   async login(email: string, password: string): Promise<Tokens> {
+    const canonicalEmail = await normalizeUserEmail(
+      this.userRepository.manager,
+      email,
+    );
+
     const snapshot = await this.userRepository.findOne({
-      where: { email },
+      where: { email: canonicalEmail },
     });
 
     if (!snapshot || !snapshot.isActive) {
@@ -370,7 +390,14 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     email: string,
     password: string,
   ): Promise<UserEntity | null> {
-    const user = await this.userRepository.findOne({ where: { email } });
+    const canonicalEmail = await normalizeUserEmail(
+      this.userRepository.manager,
+      email,
+    );
+
+    const user = await this.userRepository.findOne({
+      where: { email: canonicalEmail },
+    });
     if (!user || !user.isActive) return null;
 
     const isValid = await bcrypt.compare(password, user.password);

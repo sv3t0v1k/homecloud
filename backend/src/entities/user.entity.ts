@@ -9,6 +9,7 @@ import {
 } from "typeorm";
 import { FileEntity } from "./file.entity";
 import { RefreshTokenEntity } from "./refresh-token.entity";
+import { CANONICAL_EMAIL_CHECK } from "../users/user-email";
 
 export enum UserRole {
   ADMIN = "ADMIN",
@@ -16,6 +17,7 @@ export enum UserRole {
 }
 
 @Entity("users")
+@Check("users_email_canonical_check", CANONICAL_EMAIL_CHECK)
 @Check("users_role_check", `"role" IN ('ADMIN', 'USER')`)
 @Check("users_session_version_positive", `"sessionVersion" > 0`)
 export class UserEntity {

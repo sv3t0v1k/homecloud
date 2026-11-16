@@ -3,6 +3,7 @@ import { Injectable, Logger, ForbiddenException, NotFoundException, BadRequestEx
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, EntityManager } from "typeorm";
 import { UserEntity } from "../entities/user.entity";
+import { normalizeUserEmail } from "./user-email";
 import type { UpdateProfileDto } from "./dtos/update-profile.dto";
 
 @Injectable()
@@ -19,7 +20,14 @@ export class UsersService {
   }
 
   async findByEmail(email: string): Promise<UserEntity | null> {
-    return this.userRepository.findOne({ where: { email } });
+    const canonicalEmail = await normalizeUserEmail(
+      this.userRepository.manager,
+      email,
+    );
+
+    return this.userRepository.findOne({
+      where: { email: canonicalEmail },
+    });
   }
 
   async updateProfile(

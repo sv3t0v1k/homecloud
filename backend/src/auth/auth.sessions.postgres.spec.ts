@@ -326,6 +326,91 @@ postgres("Real PostgreSQL session concurrency", () => {
       .rejects.toThrow("Invalid refresh token");
   }, 30000);
 
+  it("registers and authenticates the same canonical account regardless of email casing or surrounding whitespace", async () => {
+    const canonical = `${randomUUID()}@example.test`;
+    const supplied = `  ${canonical.toUpperCase()}  `;
+
+    const issued = await auth.register(
+      supplied,
+      OLD_PASSWORD,
+      "Canonical user",
+    );
+
+    const user = await users().findOneByOrFail({
+      email: canonical,
+    });
+
+    expect(jwt.verify(issued.accessToken)).toMatchObject({
+      sub: user.id,
+      email: canonical,
+    });
+
+    const login = await auth.login(
+      canonical.toUpperCase(),
+      OLD_PASSWORD,
+    );
+
+    await expect(validateAccess(login.accessToken))
+      .resolves.toMatchObject({ userId: user.id });
+
+    await expect(auth.login(
+      `  ${canonical}  `,
+      OLD_PASSWORD,
+    )).resolves.toHaveProperty("accessToken");
+
+    await expect(auth.register(
+      canonical.toUpperCase(),
+      OLD_PASSWORD,
+      "Duplicate",
+    )).rejects.toMatchObject({
+      status: 409,
+    });
+
+    expect(await users().countBy({
+      email: canonical,
+    })).toBe(1);
+  }, 30000);
+
+  it("permits only one concurrent registration for equivalent email addresses", async () => {
+    const canonical = `${randomUUID()}@example.test`;
+
+    const results = await Promise.allSettled([
+      auth.register(
+        canonical,
+        OLD_PASSWORD,
+        "First",
+      ),
+      auth.register(
+        ` ${canonical.toUpperCase()} `,
+        OLD_PASSWORD,
+        "Second",
+      ),
+    ]);
+
+    const accepted = results.filter(
+      (result) => result.status === "fulfilled",
+    );
+
+    const denied = results.filter(
+      (result): result is PromiseRejectedResult =>
+        result.status === "rejected",
+    );
+
+    expect(accepted).toHaveLength(1);
+    expect(denied).toHaveLength(1);
+    expect(denied[0].reason.getStatus()).toBe(409);
+
+    expect(await users().countBy({
+      email: canonical,
+    })).toBe(1);
+
+    const user = await users().findOneByOrFail({
+      email: canonical,
+    });
+
+    expect(await activeTokenCount(user.id)).toBe(1);
+  }, 30000);
+
   it("changes password and revokes all old access and refresh credentials atomically", async () => {
     const { user, issued } = await createUser();
     const other = await auth.login(user.email, OLD_PASSWORD);
