@@ -41,6 +41,59 @@ function statusText(job: InstallStatus): string {
   }
 }
 
+// Confirmation belongs to the visible, eligible manifest.
+// Unmounting this component invalidates the user's intent
+// without interrupting the host status monitor.
+function InstallConfirmation({
+  version,
+  manifestSha256,
+  onConfirm,
+}: {
+  version: string
+  manifestSha256: string
+  onConfirm: (manifestSha256: string) => Promise<void>
+}) {
+  const [confirm, setConfirm] = useState(false)
+
+  if (!confirm) {
+    return (
+      <button
+        className="button button--primary"
+        onClick={() => setConfirm(true)}
+        type="button"
+      >
+        Установить {version}
+      </button>
+    )
+  }
+
+  return (
+    <div role="group" aria-label="Подтверждение установки">
+      <p>
+        Установить TEST-сборку {version}?
+        {' '}Во время установки сервис временно недоступен.
+      </p>
+      <button
+        className="button button--primary"
+        onClick={() => {
+          setConfirm(false)
+          void onConfirm(manifestSha256)
+        }}
+        type="button"
+      >
+        Подтвердить установку
+      </button>
+      <button
+        className="button button--ghost"
+        onClick={() => setConfirm(false)}
+        type="button"
+      >
+        Отмена
+      </button>
+    </div>
+  )
+}
+
 export function UpdatesSection({
   visible = true,
   onAccessChange,
@@ -53,7 +106,6 @@ export function UpdatesSection({
   const [job, setJob] = useState<InstallStatus | null>(null)
   const [statusError, setStatusError] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [confirm, setConfirm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [refresh, setRefresh] = useState(0)
   const refreshedInstall = useRef<string | null>(null)
@@ -125,11 +177,24 @@ export function UpdatesSection({
 
   const available = result?.channel === 'test' && result.status === 'available' ? result.available : null
   const canSubmit = available && /^[a-f0-9]{64}$/.test(available.manifestSha256) && job?.status === 'NO_JOB' && !statusError && !submitting
-  const submit = async () => {
-    if (!canSubmit || !available) return
-    setSubmitting(true); setConfirm(false); setSubmitError(null)
+  const submit = async (manifestSha256: string) => {
+    if (
+      !admin ||
+      !visible ||
+      !canSubmit ||
+      !available ||
+      available.manifestSha256 !== manifestSha256
+    ) return
+
+    setSubmitting(true)
+    setSubmitError(null)
+
     try {
-      const accepted = await apiRequest<InstallStatus>({ method: 'POST', url: '/updates/installations', data: { manifestSha256: available.manifestSha256 } })
+      const accepted = await apiRequest<InstallStatus>({
+        method: 'POST',
+        url: '/updates/installations',
+        data: { manifestSha256 },
+      })
       queuedAt.current = Date.now()
       setJob(accepted)
     } catch {
@@ -152,11 +217,13 @@ export function UpdatesSection({
     <p role="status">{job ? statusText(job) : 'Получаем статус установки…'}</p>
     {statusError ? <p role="alert">Связь с сервером статуса прервана. Проверка повторится автоматически; не запускайте установку повторно.</p> : null}
     {submitError ? <p role="alert">{submitError}</p> : null}
-    {canSubmit && !confirm ? <button className="button button--primary" onClick={() => setConfirm(true)} type="button">Установить {available.version}</button> : null}
-    {confirm && available ? <div role="group" aria-label="Подтверждение установки">
-      <p>Установить TEST-сборку {available.version}? Во время установки сервис временно недоступен.</p>
-      <button className="button button--primary" disabled={!canSubmit} onClick={() => void submit()} type="button">Подтвердить установку</button>
-      <button className="button button--ghost" onClick={() => setConfirm(false)} type="button">Отмена</button>
-    </div> : null}
+    {canSubmit && available ? (
+      <InstallConfirmation
+        key={available.manifestSha256}
+        version={available.version}
+        manifestSha256={available.manifestSha256}
+        onConfirm={submit}
+      />
+    ) : null}
   </section>
 }
