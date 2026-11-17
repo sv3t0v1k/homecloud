@@ -38,6 +38,7 @@ describe("SSD upload service portable API orchestration", () => {
   let reserved: boolean;
   let free: bigint;
   let quota: number;
+  let ownerActive: boolean;
   let copyReservedBytes: bigint;
   const bytes = Buffer.from("whole-file durable content");
   const expectedSha256 = createHash("sha256").update(bytes).digest("hex");
@@ -46,7 +47,7 @@ describe("SSD upload service portable API orchestration", () => {
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "hc-ssd-service-"));
     hdd = fs.mkdtempSync(path.join(os.tmpdir(), "hc-hdd-service-"));
-    sessions = []; chunks = []; inTransaction = false; reserved = false; free = 1000000n; quota = 1000000; copyReservedBytes = 0n;
+    sessions = []; chunks = []; inTransaction = false; reserved = false; free = 1000000n; quota = 1000000; ownerActive = true; copyReservedBytes = 0n;
     const sessionRepository = {
       create: jest.fn((data: any) => ({ origin: "owner", ...data, id: sessions.length + 1, createdAt: new Date() })),
       save: jest.fn(async (session: UploadSessionEntity) => { if (!sessions.includes(session)) sessions.push(session); return session; }),
@@ -66,19 +67,42 @@ describe("SSD upload service portable API orchestration", () => {
       if (sql.includes("current_setting")) return [{ fsync: "on", pages: "on" }];
       if (sql.includes("SET LOCAL")) return [];
       if (sql.includes("remaining")) return [{ remaining: sessions.filter((session) => session.status !== "aborted").reduce((sum, session) => sum + session.totalSize - session.uploadedSize, 0), hdd: sessions.filter((session) => session.status !== "aborted").reduce((sum, session) => sum + session.totalSize, 0) }];
-      if (sql.includes('FROM "file_copy_operations"'))
-        return [{ bytes: String(copyReservedBytes) }];
-      if (sql.includes("::text bytes")) return [{ bytes: sessions.filter((session) => ["pending", "uploading"].includes(session.status)).reduce((sum, session) => sum + session.totalSize, 0) }];
+      if (sql.includes('FROM "users" u')) {
+        const active = sessions
+          .filter((session) =>
+            ["pending", "uploading"].includes(session.status),
+          )
+          .reduce((sum, session) => sum + BigInt(session.totalSize), 0n);
+
+        return [{
+          id: 7,
+          isActive: ownerActive,
+          quota: String(quota),
+          used: "0",
+          uploadBytes: String(active),
+          copyBytes: String(copyReservedBytes),
+          activeCopyCount: copyReservedBytes > 0n ? "1" : "0",
+          invalidUploads: "0",
+          invalidCopies: "0",
+        }];
+      }
       if (sql.includes("ssd_finalization_operations")) return reserved ? [{ id: "existing-reservation" }] : [];
       return [];
     });
     manager = {
       query, getRepository: repository,
-      findOne: jest.fn(async (entity: any, options: any) => entity === UserEntity ? { id: 7, storageQuota: quota, storageUsed: 0 } : sessionRepository.findOneBy(options.where)),
+      findOne: jest.fn(async (entity: any, options: any) => entity === UserEntity ? { id: 7, isActive: ownerActive, storageQuota: quota, storageUsed: 0 } : sessionRepository.findOneBy(options.where)),
       create: jest.fn((_entity: any, data: any) => sessionRepository.create(data)),
       save: sessionRepository.save,
     };
-    db = { query, manager, getRepository: repository, transaction: jest.fn(async (callback: any) => { inTransaction = true; try { return await callback(manager); } finally { inTransaction = false; } }) };
+    db = { query, manager, getRepository: repository, transaction: jest.fn(async (isolationOrCallback: any, callback?: any) => {
+      const work = typeof isolationOrCallback === "function"
+        ? isolationOrCallback
+        : callback;
+      inTransaction = true;
+      try { return await work(manager); }
+      finally { inTransaction = false; }
+    }) };
     const io = (callback: (...args: any[]) => any) => jest.fn((...args: any[]) => { expect(inTransaction).toBe(false); return callback(...args); });
     storage = {
       getPreparedSsdRoot: jest.fn(() => root), getStoragePath: jest.fn(() => hdd),
@@ -197,6 +221,69 @@ describe("SSD upload service portable API orchestration", () => {
     ).rejects.toThrow("Copy reservation database unavailable");
 
     expect(sessions).toHaveLength(0);
+  });
+
+
+  it("rejects an inactive SSD owner without creating a reservation", async () => {
+    ownerActive = false;
+
+    await expect(service.createUploadSession(
+      7, "blocked.bin", bytes.length, bytes.length,
+      undefined, expectedSha256,
+    )).rejects.toThrow("User not found");
+
+    expect(sessions).toHaveLength(0);
+    expect(storage.boundary.mkdir).not.toHaveBeenCalled();
+  });
+
+  it("rejects corrupt shared accounting before SSD reservation", async () => {
+    const original = manager.query.getMockImplementation();
+
+    manager.query.mockImplementation(async (
+      sql: string,
+      ...args: unknown[]
+    ) => {
+      const result = await original(sql, ...args);
+
+      if (sql.includes('FROM "users" u')) {
+        return [{ ...result[0], invalidUploads: "1" }];
+      }
+
+      return result;
+    });
+
+    await expect(service.createUploadSession(
+      7, "corrupt.bin", bytes.length, bytes.length,
+      undefined, expectedSha256,
+    )).rejects.toMatchObject({
+      status: 503,
+      response: { code: "STORAGE_ACCOUNTING_UNAVAILABLE" },
+    });
+
+    expect(sessions).toHaveLength(0);
+  });
+
+  it("keeps the active upload limit independent from copy reservations", async () => {
+    service = new SsdUploadsService(
+      db,
+      storage,
+      configuration({ MAX_TOTAL_SIZE: String(bytes.length) }) as any,
+      store,
+    );
+
+    copyReservedBytes = 100n;
+
+    await expect(service.createUploadSession(
+      7, "exact.bin", bytes.length, bytes.length,
+      undefined, expectedSha256,
+    )).resolves.toMatchObject({ status: "pending" });
+
+    await expect(service.createUploadSession(
+      7, "over.bin", 1, 1,
+      undefined, expectedSha256,
+    )).rejects.toThrow("Active upload limit exceeded");
+
+    expect(sessions).toHaveLength(1);
   });
 
   it("reserves owner quota across active sessions", async () => {

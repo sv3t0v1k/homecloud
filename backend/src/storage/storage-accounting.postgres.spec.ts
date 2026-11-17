@@ -3,6 +3,31 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DataSource } from "typeorm";
 
+import { ConfigService } from "@nestjs/config";
+import { FileEntity } from "../entities/file.entity";
+import { FolderEntity } from "../entities/folder.entity";
+import { UserEntity } from "../entities/user.entity";
+import { ShareLinkEntity } from "../entities/share-link.entity";
+import { UploadSessionEntity } from "../entities/upload-session.entity";
+import {
+  LEGACY_UPLOAD_WORKSPACE,
+  SSD_UPLOAD_WORKSPACE,
+} from "../entities/upload-workspace.entity";
+import { UsersService } from "../users/users.service";
+import { StorageService } from "./storage.service";
+import { UploadsService } from "../uploads/uploads.service";
+import { SsdUploadsService } from "../uploads/ssd-uploads.service";
+import { SecureFilesystem } from "../uploads/secure-filesystem";
+import { PreparedSsdWorkspace } from "../uploads/prepared-ssd-workspace";
+import {
+  UploadWorkspaceResolver,
+  UploadWorkspaceIdentity,
+} from "../uploads/upload-workspace";
+import { SharingService } from "../sharing/sharing.service";
+import { PublicFolderService } from "../sharing/public-folder.service";
+import { PublicUploadsService } from "../sharing/public-uploads.service";
+
+
 import appDataSource from "../data-source";
 import {
   LEGACY_UPLOAD_WORKSPACE_ID,
@@ -325,6 +350,743 @@ postgres("Shared storage accounting on migrated PostgreSQL", () => {
 
     throw new Error("Expected PostgreSQL lock wait not observed");
   }
+
+
+  // These admission tests use the actual production services,
+  // repositories, SQL, migration triggers and transactions.
+  //
+  // Only the Linux-native filesystem capability is substituted.
+  // No database accounting, owner lock, quota check, public
+  // proof, receipt or session persistence is mocked.
+  function admissionServices(maxTotal = 1000) {
+    const temp = path.join(root, ".tmp");
+
+    const checkPath = (target: string, base: string): string => {
+      if (
+        target !== base &&
+        !target.startsWith(base + path.sep)
+      ) {
+        throw new Error("Fixture path escapes its scratch root");
+      }
+
+      if (path.resolve(target) !== target) {
+        throw new Error("Noncanonical fixture path");
+      }
+
+      return target;
+    };
+
+    const nativeBoundary = (
+      base: string,
+    ): SecureFilesystem => ({
+      stat: (target: string) =>
+        fs.lstatSync(checkPath(target, base)),
+      lock: jest.fn(),
+      mkdir: (target: string) =>
+        fs.mkdirSync(
+          checkPath(target, base),
+          { recursive: true, mode: 0o700 },
+        ),
+      sync: (target: string) => {
+        const fd = fs.openSync(
+          checkPath(target, base),
+          fs.constants.O_RDONLY,
+        );
+
+        try {
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
+      },
+      close: jest.fn(),
+    }) as unknown as SecureFilesystem;
+
+    const validateIdentity = (
+      record: UploadWorkspaceIdentity | null | undefined,
+      expected: UploadWorkspaceIdentity,
+    ): void => {
+      if (
+        !record ||
+        record.id !== expected.id ||
+        record.machineKey !== expected.machineKey ||
+        record.mountKey !== expected.mountKey ||
+        record.type !== expected.type
+      ) {
+        throw new Error("Unexpected fixture workspace identity");
+      }
+    };
+
+    const legacyBoundary = nativeBoundary(temp);
+    const ssdBoundary = nativeBoundary(ssd);
+
+    const storage = {
+      getTempPath: () => temp,
+      getStoragePath: () => root,
+      assertTrustedPath: (target: string) =>
+        checkPath(target, root),
+      getPreparedSsdRoot: () => ssd,
+      assertPreparedSsdPath: (target: string) =>
+        checkPath(target, ssd),
+    } as unknown as StorageService;
+
+    const config = new ConfigService({
+      STORAGE_PATH: root,
+      JWT_SECRET: "fixture-accounting-public-proof-secret",
+      MAX_FILE_SIZE: 1000,
+      MAX_TOTAL_SIZE: maxTotal,
+      MAX_CHUNK_SIZE: 1000,
+      UPLOAD_SSD_ENABLED: "true",
+      NODE_ENV: "test",
+    });
+
+    const legacy = new UploadsService(
+      db.getRepository(UploadSessionEntity),
+      db.getRepository(FileEntity),
+      db.getRepository(FolderEntity),
+      storage,
+      new UsersService(db.getRepository(UserEntity)),
+      config,
+    );
+
+    const resolver = (
+      legacy as unknown as {
+        workspaceResolver: UploadWorkspaceResolver;
+      }
+    ).workspaceResolver;
+
+    // Keep getWorkspace() and its real repository lookup.
+    // Substitute only the descriptor-backed path adapter.
+    jest.spyOn(resolver, "validate")
+      .mockImplementation((record) =>
+        validateIdentity(record, LEGACY_UPLOAD_WORKSPACE),
+      );
+
+    jest.spyOn(resolver, "root")
+      .mockImplementation((record) => {
+        resolver.validate(record);
+        return temp;
+      });
+
+    jest.spyOn(resolver, "resolve")
+      .mockImplementation((upload, record) => {
+        resolver.validate(record);
+
+        const expected = path.join(temp, upload.uploadId);
+
+        if (
+          upload.workspaceId !== LEGACY_UPLOAD_WORKSPACE.id ||
+          upload.tempPath !== expected
+        ) {
+          throw new Error("Invalid legacy fixture binding");
+        }
+
+        return checkPath(expected, temp);
+      });
+
+    jest.spyOn(resolver, "assertPath")
+      .mockImplementation((target) =>
+        checkPath(target, temp),
+      );
+
+    jest.spyOn(resolver, "filesystem")
+      .mockReturnValue(legacyBoundary);
+
+    const ssdService = new SsdUploadsService(
+      db,
+      storage,
+      config,
+      new PostgresSsdFinalizationStore(db, "ssd"),
+    );
+
+    const prepared = (
+      ssdService as unknown as {
+        prepared: PreparedSsdWorkspace;
+      }
+    ).prepared;
+
+    // Keep the SSD service's actual workspace lookup, root
+    // FD open, capacity SQL and durable database checks.
+    // Only native flock / descriptor I/O are substituted.
+    jest.spyOn(prepared, "root")
+      .mockImplementation((record) => {
+        validateIdentity(record, SSD_UPLOAD_WORKSPACE);
+        return ssd;
+      });
+
+    jest.spyOn(prepared, "filesystem")
+      .mockImplementation((record) => {
+        validateIdentity(record, SSD_UPLOAD_WORKSPACE);
+        return ssdBoundary;
+      });
+
+    const shares = new SharingService(
+      db.getRepository(ShareLinkEntity),
+      db.getRepository(FileEntity),
+      db.getRepository(UserEntity),
+      config,
+      storage,
+    );
+
+    const folders = new PublicFolderService(
+      db, shares, config,
+    );
+
+    const publicUploads = new PublicUploadsService(
+      db, folders, legacy,
+    );
+
+    async function publicAccess(userId: number) {
+      const binding = await publicBinding(userId);
+
+      const [share] = await db.query(
+        `SELECT token FROM share_links WHERE id=$1`,
+        [binding.shareId],
+      );
+
+      const token = share.token as string;
+      const { proof } = await folders.authorize(token);
+
+      return {
+        ...binding,
+        token,
+        proof,
+        create: (size: number, key = randomUUID()) =>
+          publicUploads.create(token, proof, key, {
+            parentId: binding.folderId,
+            filename: "public.bin",
+            totalSize: size,
+            chunkSize: size,
+            expectedSha256: digest,
+          }),
+      };
+    }
+
+    return {
+      legacy,
+      ssd: ssdService,
+      publicUploads,
+      publicAccess,
+      legacyStart: (userId: number, bytes: number) =>
+        legacy.createUploadSession(
+          userId, "legacy.bin", bytes, bytes,
+        ),
+      ssdStart: (userId: number, bytes: number) =>
+        ssdService.createUploadSession(
+          userId,
+          "ssd.bin",
+          bytes,
+          bytes,
+          undefined,
+          digest,
+        ),
+    };
+  }
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  async function waitForAdmissionWaiters(
+    gatePid: number,
+    minimum: number,
+    timeoutMs = 4000,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const [row] = await db.query(
+        `SELECT COUNT(*)::int AS count,
+                COALESCE(
+                  BOOL_OR($1::int=ANY(pg_blocking_pids(a.pid))),
+                  false
+                ) AS blocked
+         FROM pg_stat_activity a
+         WHERE a.datname=current_database()
+           AND a.pid<>pg_backend_pid()
+           AND a.wait_event_type='Lock'
+           AND a.query ILIKE '%FOR UPDATE%'
+           AND a.query ILIKE '%users%'`,
+        [gatePid],
+      );
+
+      if (row.count >= minimum && row.blocked === true) {
+        return;
+      }
+
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, 10),
+      );
+    }
+
+    throw new Error(
+      "Expected real owner-row admission lock wait was not observed",
+    );
+  }
+
+  // -------------------------------------------------------
+  // REAL LEGACY / SSD / PUBLIC SHARED ACCOUNTING
+  // -------------------------------------------------------
+
+  it("admits real legacy SSD and public uploads at exact combined quota and replays the public receipt without new bytes", async () => {
+    const userId = await owner("100", "20");
+    const sourceId = await ordinaryFile(userId, 20);
+    const services = admissionServices();
+    const binding = await services.publicAccess(userId);
+
+    const copyId = await copies.reserve(
+      copyRequest(userId, sourceId, 20),
+    );
+
+    try {
+      const legacy = await services.legacyStart(userId, 20);
+      const ssdUpload = await services.ssdStart(userId, 20);
+
+      expect(legacy.workspaceId)
+        .toBe(LEGACY_UPLOAD_WORKSPACE_ID);
+
+      expect(ssdUpload.workspaceId)
+        .toBe(SSD_UPLOAD_WORKSPACE_ID);
+
+      const key = randomUUID();
+
+      const first = await binding.create(20, key);
+
+      expect(first).toMatchObject({
+        totalSize: 20,
+        status: "pending",
+      });
+
+      const accounting = await readStorageCommitments(
+        db.manager, userId,
+      );
+
+      expect(accounting).toMatchObject({
+        used: 20n,
+        uploadBytes: 60n,
+        copyBytes: 20n,
+        activeCopyCount: 1n,
+        committedBytes: 100n,
+        remainingBytes: 0n,
+      });
+
+      // Public replay must succeed at exhausted quota.
+      const replay = await binding.create(20, key);
+
+      expect(replay.uploadId).toBe(first.uploadId);
+
+      expect(await readStorageCommitments(
+        db.manager, userId,
+      )).toEqual(accounting);
+
+      await expect(
+        services.legacyStart(userId, 1),
+      ).rejects.toMatchObject({
+        status: 403,
+        message: "Storage quota exceeded",
+      });
+
+      await expect(
+        services.ssdStart(userId, 1),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: "Storage quota exceeded",
+      });
+
+      await expect(
+        binding.create(1),
+      ).rejects.toMatchObject({
+        status: 403,
+        message: "Storage quota exceeded",
+      });
+
+      expect(await db.query(
+        `SELECT origin, COUNT(*)::int AS count
+         FROM upload_sessions
+         WHERE "userId"=$1
+         GROUP BY origin
+         ORDER BY origin`,
+        [userId],
+      )).toEqual([
+        { origin: "owner", count: 2 },
+        { origin: "public", count: 1 },
+      ]);
+
+      expect(await db.query(
+        `SELECT "resultUploadSessionId"
+         FROM public_share_operations
+         WHERE "shareLinkId"=$1`,
+        [binding.shareId],
+      )).toHaveLength(1);
+
+      // Same key with changed input cannot allocate a
+      // second reservation or replay the wrong operation.
+      await expect(
+        binding.create(21, key),
+      ).rejects.toMatchObject({
+        status: 409,
+      });
+
+      expect(await readStorageCommitments(
+        db.manager, userId,
+      )).toEqual(accounting);
+    } finally {
+      await copies.releaseAfterOwnedCleanup(
+        copyId, userId, () => undefined,
+      );
+    }
+  });
+
+  it("keeps the active upload cap independent from real copy reservations", async () => {
+    const userId = await owner("2000", "500");
+    const sourceId = await ordinaryFile(userId, 500);
+    const services = admissionServices(60);
+
+    const copyId = await copies.reserve(
+      copyRequest(userId, sourceId, 500),
+    );
+
+    try {
+      await services.legacyStart(userId, 30);
+      await services.ssdStart(userId, 30);
+
+      expect(await readStorageCommitments(
+        db.manager, userId,
+      )).toMatchObject({
+        used: 500n,
+        copyBytes: 500n,
+        uploadBytes: 60n,
+        committedBytes: 1060n,
+        remainingBytes: 940n,
+      });
+
+      await expect(
+        services.legacyStart(userId, 1),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: "Total upload size exceeds allowed maximum",
+      });
+
+      await expect(
+        services.ssdStart(userId, 1),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: "Active upload limit exceeded",
+      });
+
+      expect(await db.getRepository(
+        UploadSessionEntity,
+      ).countBy({ userId })).toBe(2);
+    } finally {
+      await copies.releaseAfterOwnedCleanup(
+        copyId, userId, () => undefined,
+      );
+    }
+  });
+
+  it("rejects corrupt active accounting through all three real upload admission paths", async () => {
+    const userId = await owner("1000");
+    const services = admissionServices();
+    const binding = await services.publicAccess(userId);
+
+    await session(userId, "20");
+    await session(userId, "-1");
+
+    const results = await Promise.allSettled([
+      services.legacyStart(userId, 1),
+      services.ssdStart(userId, 1),
+      binding.create(1),
+    ]);
+
+    for (const result of results) {
+      expect(result).toMatchObject({
+        status: "rejected",
+        reason: {
+          status: 503,
+          response: {
+            code: "STORAGE_ACCOUNTING_UNAVAILABLE",
+          },
+        },
+      });
+    }
+
+    expect(await db.getRepository(
+      UploadSessionEntity,
+    ).countBy({ userId })).toBe(2);
+
+    expect(await db.query(
+      `SELECT id FROM public_share_operations
+       WHERE "shareLinkId"=$1`,
+      [binding.shareId],
+    )).toEqual([]);
+  });
+
+  it("denies inactive owner admissions and denies a previously valid public proof", async () => {
+    const userId = await owner("1000");
+    const services = admissionServices();
+    const binding = await services.publicAccess(userId);
+
+    await db.query(
+      `UPDATE users SET "isActive"=false WHERE id=$1`,
+      [userId],
+    );
+
+    await expect(
+      services.legacyStart(userId, 10),
+    ).rejects.toMatchObject({ status: 403 });
+
+    await expect(
+      services.ssdStart(userId, 10),
+    ).rejects.toMatchObject({ status: 403 });
+
+    await expect(
+      binding.create(10),
+    ).rejects.toMatchObject({ status: 404 });
+
+    expect(await db.getRepository(
+      UploadSessionEntity,
+    ).countBy({ userId })).toBe(0);
+
+    expect(await db.query(
+      `SELECT id FROM public_share_operations
+       WHERE "shareLinkId"=$1`,
+      [binding.shareId],
+    )).toEqual([]);
+  });
+
+  // -------------------------------------------------------
+  // REAL CONCURRENT UPLOAD AND COPY ADMISSION
+  // -------------------------------------------------------
+
+  it.each(["legacy", "ssd"] as const)(
+    "serializes actual %s upload and copy admission on the same remaining quota",
+    async (kind) => {
+      const userId = await owner("120", "60");
+      const sourceId = await ordinaryFile(userId, 60);
+      const services = admissionServices();
+
+      const gate = db.createQueryRunner();
+
+      let uploadResult:
+        Promise<PromiseSettledResult<UploadSessionEntity>[]> |
+        undefined;
+
+      let copyResult:
+        Promise<PromiseSettledResult<string>[]> |
+        undefined;
+
+      let copyId: string | undefined;
+
+      try {
+        await gate.connect();
+        await gate.startTransaction("READ COMMITTED");
+
+        const [identity] = await gate.query(
+          `SELECT pg_backend_pid() AS pid`,
+        );
+
+        await lockStorageCommitments(
+          gate.manager, userId,
+        );
+
+        uploadResult = Promise.allSettled([
+          kind === "legacy"
+            ? services.legacyStart(userId, 60)
+            : services.ssdStart(userId, 60),
+        ]);
+
+        await waitForAdmissionWaiters(
+          identity.pid, 1,
+        );
+
+        // Copy admission has its own 1500 ms lock timeout.
+        // Start it last and observe both actual lock waits
+        // before immediately releasing the owner gate.
+        copyResult = Promise.allSettled([
+          copies.reserve(
+            copyRequest(userId, sourceId, 60),
+          ),
+        ]);
+
+        await waitForAdmissionWaiters(
+          identity.pid, 2, 1000,
+        );
+
+        await gate.commitTransaction();
+
+        const [upload] = await uploadResult;
+        const [copy] = await copyResult;
+
+        if (copy.status === "fulfilled") {
+          copyId = copy.value;
+        }
+
+        expect(
+          [upload.status, copy.status].sort(),
+        ).toEqual(["fulfilled", "rejected"]);
+
+        const accounting = await readStorageCommitments(
+          db.manager, userId,
+        );
+
+        expect(accounting).toMatchObject({
+          used: 60n,
+          committedBytes: 120n,
+          remainingBytes: 0n,
+        });
+
+        const uploadWon = upload.status === "fulfilled";
+
+        const expectedUploadBytes = uploadWon ? 60n : 0n;
+        const expectedCopyBytes = uploadWon ? 0n : 60n;
+
+        const rejectedOperation = uploadWon ? copy : upload;
+
+        const expectedRejectionStatus =
+          uploadWon || kind === "legacy" ? 403 : 400;
+
+        // Both race outcomes must execute every assertion.
+        // A timeout or unrelated rejection cannot pass.
+        expect(accounting.uploadBytes).toBe(expectedUploadBytes);
+        expect(accounting.copyBytes).toBe(expectedCopyBytes);
+
+        expect(rejectedOperation).toMatchObject({
+          status: "rejected",
+          reason: {
+            status: expectedRejectionStatus,
+            message: "Storage quota exceeded",
+          },
+        });
+
+        expect(await db.getRepository(
+          UploadSessionEntity,
+        ).countBy({ userId })).toBe(
+          upload.status === "fulfilled" ? 1 : 0,
+        );
+      } finally {
+        if (gate.isTransactionActive) {
+          await gate.rollbackTransaction();
+        }
+
+        if (uploadResult) await uploadResult;
+
+        if (copyResult) {
+          const [copy] = await copyResult;
+
+          if (copy.status === "fulfilled") {
+            copyId = copy.value;
+          }
+        }
+
+        await gate.release();
+
+        if (copyId) {
+          await copies.releaseAfterOwnedCleanup(
+            copyId, userId, () => undefined,
+          );
+        }
+      }
+    },
+    30000,
+  );
+
+  // -------------------------------------------------------
+  // QUOTA REDUCTION RACES
+  // -------------------------------------------------------
+
+  it.each(["legacy", "ssd", "public"] as const)(
+    "makes real %s admission observe a concurrently reduced quota after the owner lock",
+    async (kind) => {
+      const userId = await owner("100");
+      const services = admissionServices();
+      const binding = kind === "public"
+        ? await services.publicAccess(userId)
+        : undefined;
+
+      const gate = db.createQueryRunner();
+
+      let result:
+        Promise<PromiseSettledResult<unknown>[]> |
+        undefined;
+
+      try {
+        await gate.connect();
+        await gate.startTransaction("READ COMMITTED");
+
+        const [identity] = await gate.query(
+          `SELECT pg_backend_pid() AS pid`,
+        );
+
+        const accounting = await lockStorageCommitments(
+          gate.manager, userId,
+        );
+
+        expect(canSetStorageQuota(
+          accounting, 50n,
+        )).toBe(true);
+
+        // Actual quota-update locking protocol.
+        // Admin HTTP PATCH remains closed until 01.5D.
+        await gate.query(
+          `UPDATE users SET "storageQuota"=50 WHERE id=$1`,
+          [userId],
+        );
+
+        result = Promise.allSettled([
+          kind === "legacy"
+            ? services.legacyStart(userId, 60)
+            : kind === "ssd"
+              ? services.ssdStart(userId, 60)
+              : binding!.create(60),
+        ]);
+
+        await waitForAdmissionWaiters(
+          identity.pid, 1,
+        );
+
+        await gate.commitTransaction();
+
+        expect(await result).toEqual([
+          {
+            status: "rejected",
+            reason: expect.objectContaining({
+              status: kind === "ssd" ? 400 : 403,
+              message: "Storage quota exceeded",
+            }),
+          },
+        ]);
+
+        expect(await readStorageCommitments(
+          db.manager, userId,
+        )).toMatchObject({
+          quota: 50n,
+          used: 0n,
+          uploadBytes: 0n,
+          copyBytes: 0n,
+          committedBytes: 0n,
+        });
+
+        expect(await db.getRepository(
+          UploadSessionEntity,
+        ).countBy({ userId })).toBe(0);
+
+        expect(await db.query(
+          `SELECT id FROM public_share_operations
+           WHERE "userId"=$1`,
+          [userId],
+        )).toEqual([]);
+      } finally {
+        if (gate.isTransactionActive) {
+          await gate.rollbackTransaction();
+        }
+
+        if (result) await result;
+
+        await gate.release();
+      }
+    },
+    30000,
+  );
 
   it("includes legacy, SSD, public and retained copy reservations without counting terminal or foreign sessions", async () => {
     const userId = await owner("1000", "400");
