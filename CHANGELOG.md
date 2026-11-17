@@ -15,4 +15,4 @@
 
 Ограничения: production NOT_READY / NO_GO (реальные host/DNS/CA/registry/offsite/custody/alerts/RPO/RTO/operator gates); Safari полный 50 ГиБ UNQUALIFIED; folder DnD/empty-file/automatic File access recovery не реализованы; discovery без pagination; quota provisioning оператором; local TLS требует явного доверия и recreate на Mac.
 
-[Контракт версии](docs/runbooks/local-release-baseline.md), [50 ГиБ evidence](docs/evidence/browser-50gib-qualification-20261006/report.md), [финальный gate](docs/evidence/local-release-20261006/report.md).
+[Контракт версии](docs/runbooks/local-release-baseline.md), [50 ГиБ evidence](docs/evidence/archive/browser-50gib-qualification-20261006/report.md), [финальный gate](docs/evidence/archive/local-release-20261006/report.md).

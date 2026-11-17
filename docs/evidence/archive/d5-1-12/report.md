@@ -20,22 +20,22 @@ workflows, backend и deployed images не изменены. Mac Docker, mini-PC
 
 ## Подготовленные артефакты
 
-- [`qualification.lock.json`](../../../ops/postgres/qualification.lock.json): exact
+- [`qualification.lock.json`](../../../../ops/postgres/qualification.lock.json): exact
   manifest/config/archive, platform, build vs qualification origin, gosu/APK/Go pins,
   SBOM и25 evidence hashes; UNSIGNED и непринятые риски явно сохранены.
-- [`Dockerfile`](../../../ops/postgres/Dockerfile) и `.dockerignore`: pinned official
+- [`Dockerfile`](../../../../ops/postgres/Dockerfile) и `.dockerignore`: pinned official
   base, exact gosu и vendor APK, hash checks и offline APK install; наследуются
   runtime defaults. Это новый production-recipe candidate, не новый qualified image.
-- [`prepare.py`](../../../ops/postgres/prepare.py): offline evidence/OCI verification
+- [`prepare.py`](../../../../ops/postgres/prepare.py): offline evidence/OCI verification
   и минимальный новый context с отказом при подмене/symlink/overwrite. Не исполняет
   переданные binaries, не обращается к registry и не загружает image в daemon.
-- [`check_compose.py`](../../../ops/postgres/check_compose.py) и
+- [`check_compose.py`](../../../../ops/postgres/check_compose.py) и
   [`compose-contract.json`](./compose-contract.json): статическая проверка exact OCI
   и существующего db Compose contract; вывод не объявлен полным CLI merge.
-- [`README`](../../../ops/postgres/README.md): отдельные пути сохранения точных OCI
+- [`README`](../../../../ops/postgres/README.md): отдельные пути сохранения точных OCI
   bytes и новой сборки, reproducibility protocol, signing/retention/maintenance и
   условия разрешения интеграции.
-- [`rollback`](../../runbooks/postgres-image-rollback.md): cold/logical backup, globals, write
+- [`rollback`](../../../runbooks/postgres-image-rollback.md): cold/logical backup, globals, write
   freeze, DB+HDD consistency, rollback без потери текущих записей только после
   проверки копии; recovery в отдельный каталог и явное решение о возможной потере.
 

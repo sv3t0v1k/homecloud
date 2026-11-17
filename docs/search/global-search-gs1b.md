@@ -84,6 +84,6 @@ StrictMode не дублирует один поисковый запрос; у�
 touch targets 44 px, aria names полного имени файла и reduced-motion сохранены.
 Закрытие предпросмотра и расположения возвращает фокус к исходной кнопке.
 
-Проверки и ограничения: [приёмочный отчёт](evidence/global-search-gs1b/acceptance.md),
-[независимый review](evidence/global-search-gs1b/security-review.md).
+Проверки и ограничения: [приёмочный отчёт](../evidence/global-search-gs1b/acceptance.md),
+[независимый review](../evidence/global-search-gs1b/security-review.md).
 GS-1B не объединять и серверы не обновлять без подтверждения владельца.

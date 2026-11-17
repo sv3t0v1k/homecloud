@@ -430,7 +430,7 @@ Production schedule настраивается после проверки mount
 
 D1 меняет только recovery scripts/tests/docs. Deployment Compose, активация SSD,
 D2/D3 и readiness проекта не изменены; production NO_GO сохраняется.
-[Проверки, baseline и ограничения](evidence/d1-backup-restore-20261013/report.md).
+[Проверки, baseline и ограничения](../evidence/archive/d1-backup-restore-20261013/report.md).
 
 **Обязательная идентичность цели.** Требуется существующий обычный backend
 container выбранного Compose project, включая остановленный. Его полный CID,

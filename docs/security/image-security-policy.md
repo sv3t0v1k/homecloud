@@ -95,7 +95,7 @@ setgroups/setgid/setuid и exec, не TLS handshake. Это доказатель
 о недостижимости, не одобренное исключение и не анализ точного бинарного call graph.
 
 Все 24 high, их affected APIs, installed/fixed versions и ссылки на официальную
-Go OSV разобраны отдельно в [PostgreSQL qualification](../evidence/d5-1-4-20261014/postgres-qualification.md).
+Go OSV разобраны отдельно в [PostgreSQL qualification](../evidence/archive/d5-1-4-20261014/postgres-qualification.md).
 В частности CVE-2026-39836 Windows-only, CVE-2026-39822 относится к os.Root APIs,
 которые не найдены в проверенных исходниках. Нельзя автоматически удалить все
 findings stdlib на основании этих примеров.
@@ -123,7 +123,7 @@ locale/collation/ICU, extensions ABI, UID и permissions. Совпадение m
 
 ## Node/nginx/CI: исправимость и ограничения
 
-Полная [квалификация баз](../evidence/d5-1-4-20261014/base-qualification.md) содержит
+Полная [квалификация баз](../evidence/archive/d5-1-4-20261014/base-qualification.md) содержит
 версии и первичные ссылки. Обновление npm до12.2.0 не гарантирует устранение его
 bundled findings: upstream lock всё ещё содержит brace-expansion5.0.9/undici6.28.0.
 Для CVE-2026-93748 нет подтверждённого поддерживаемого fix;

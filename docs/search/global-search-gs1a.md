@@ -101,4 +101,4 @@ SQLSTATE 57014 превращается в безопасный HTTP 503. Rollba
 | Регрессии остальных функций | полный Linux CI, результаты в evidence |
 
 Итог проверки, ограничения локального macOS-прогона и независимое заключение:
-[evidence](evidence/global-search-gs1a/acceptance.md).
+[evidence](../evidence/global-search-gs1a/acceptance.md).

@@ -1,7 +1,7 @@
 # D5.1 — управление версиями и CI
 
-Статус: D5.1.2 Release Readiness BLOCKED по реальным image high/critical и непринятым residual risks; PR/push CI source9d33bd2 FAILURE только image scans/gate, тесты и OCI dry-run PASS. Production NO_GO. [Evidence D5.1.2](./evidence/d5-1-2-20261014/report.md).
-Единственный roadmap — [ROADMAP.md](../ROADMAP.md). [Фактический аудит и проверки](./evidence/d5-1-20261013/report.md).
+Статус: D5.1.2 Release Readiness BLOCKED по реальным image high/critical и непринятым residual risks; PR/push CI source9d33bd2 FAILURE только image scans/gate, тесты и OCI dry-run PASS. Production NO_GO. [Evidence D5.1.2](../evidence/archive/d5-1-2-20261014/report.md).
+Единственный roadmap — [ROADMAP.md](../ROADMAP.md). [Фактический аудит и проверки](../evidence/archive/d5-1-20261013/report.md).
 
 ## Версии и границы
 
@@ -42,7 +42,7 @@ high или critical — BLOCKED. Moderate/low сохраняются в отч�
 Нет baseline по числу advisories, continue-on-error, автоматического npm audit fix или dependency upgrades.
 Исходный аудит13октября: backend production17, full55, frontend12. D5.1.1 на14октября:
 backend production9moderate, full30moderate; frontend0; high/critical0 без ослабления policy.
-[Реестр устранённых и открытых findings](./evidence/d5-1-1-20261014/report.md). ASF parsing untrusted
+[Реестр устранённых и открытых findings](../evidence/archive/d5-1-1-20261014/report.md). ASF parsing untrusted
 upload headers остаётся открытым release risk; green audit threshold не даёт Production GO.
 Для исключения нужна отдельная согласованная remediation/документированная risk decision и review
 изменения policy; текущий код исключений для high/critical не имеет.
@@ -186,5 +186,5 @@ PR/push dry-run строит локальные OCI archives с attestation mode
 не означает, что объект доступен в registry. GHCR reconciliation, реальный tag/release:
 NOT_PUBLISHED / NOT_TESTED / NOT_CREATED. Dry-run не подменяет release-lock или D1 manifest.
 
-[Итог и конкретные блокеры](./evidence/d5-1-2-20261014/report.md). Production NO_GO,
+[Итог и конкретные блокеры](../evidence/archive/d5-1-2-20261014/report.md). Production NO_GO,
 D5.2 NOT_STARTED, COMPLETE не установлен.

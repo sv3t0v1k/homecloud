@@ -7,7 +7,7 @@ Production: **NOT_READY / NO_GO**. Workstream ненумерованный; но
 | Поле | Результат |
 |---|---|
 | INITIAL_HEAD | `187a642ba30dbeb3d73737a582203d557f7de9bb`, `main` ahead 1; локальный `origin/main` — `07d06e10b3987fef26c1c78e6449b05cf5ec6eef` |
-| ARCHITECTURE_BASELINE | [Архитектура](../../architecture/multi-storage-architecture.md), отдельно утверждённые owner decisions и границы Schema & Legacy Compatibility |
+| ARCHITECTURE_BASELINE | [Архитектура](../../../architecture/multi-storage-architecture.md), отдельно утверждённые owner decisions и границы Schema & Legacy Compatibility |
 | SCHEMA_CHANGES | `storage_locations`: UUID, уникальные machineKey/mountKey, displayName, local_filesystem, timestamps; File: UUID FK RESTRICT + относительный ключ, UNIQUE pair, physical/folder CHECK и consistency trigger; immutable identity trigger |
 | LEGACY_STORAGE_LOCATION | UUID `f2f5c4b0-8d57-4c49-9f8c-0d095b344601`; machineKey = mountKey = `legacy-storage`; имя «Основное хранилище»; deployment binding `STORAGE_PATH`, текущий `/storage` |
 | FILE_PLACEMENT_AUTHORITY | `storageLocationId + relativeObjectKey` для физических файлов; у folder mirrors placement NULL |

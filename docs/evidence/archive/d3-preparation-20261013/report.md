@@ -81,6 +81,6 @@ fencing active-but-failed I/O. One-shot unit не health supervisor; stop при
 
 **Mini-PC не подключали, hardware deploy не выполняли. SSD OFF. Production
 NOT_READY / NO_GO. COMPLETE не установлен.** Аппаратные действия, preflight/deploy
-команды, evening sequence и стоп-критерии: [инструкция оператора](../../runbooks/linux-mini-pc.md).
+команды, evening sequence и стоп-критерии: [инструкция оператора](../../../runbooks/linux-mini-pc.md).
 Остановиться после D3 подготовки; forward SSD migration/activation и другие этапы
 не реализовывать в этой задаче.

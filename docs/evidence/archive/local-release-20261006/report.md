@@ -14,7 +14,7 @@
 
 ## Аудит документации и исправления
 
-Независимый read-only audit проверил все46 tracked текстовых документов, Compose/env examples и соответствующий код. Исправлены: README Router/Compose/clone/registration/resources/hash terminology/private health; Phase/state и current-vs-historical статусы 50ГиБ/O(N²)/Blob/лимитов/TLS/test totals; runtime/Redis/secrets; auth memory/sessionStorage/key invalidation/native cookie boundaries; девятитабличная backup схема и неработающий manual restore пример; qualification index. Исторические failures сохранены. Source of truth — ROADMAP, новых Phase нет. [Полный продуктовый контракт](../../runbooks/local-release-baseline.md), [changelog](../../../CHANGELOG.md).
+Независимый read-only audit проверил все46 tracked текстовых документов, Compose/env examples и соответствующий код. Исправлены: README Router/Compose/clone/registration/resources/hash terminology/private health; Phase/state и current-vs-historical статусы 50ГиБ/O(N²)/Blob/лимитов/TLS/test totals; runtime/Redis/secrets; auth memory/sessionStorage/key invalidation/native cookie boundaries; девятитабличная backup схема и неработающий manual restore пример; qualification index. Исторические failures сохранены. Source of truth — ROADMAP, новых Phase нет. [Полный продуктовый контракт](../../../runbooks/local-release-baseline.md), [changelog](../../../../CHANGELOG.md).
 
 Первый PostgreSQL запуск дал67/68 из-за ECONNRESET проверочного моста с малой listen backlog; увеличение backlog до128 привело к68/68 и825/825. Первый schema regression harness не задавал fixture DB_USER/DB_NAME; исправлен, все случаи повторены. Ошибки инструментов не выданы за продуктовые PASS.
 

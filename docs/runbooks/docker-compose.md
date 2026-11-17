@@ -164,7 +164,7 @@ Recovery allowlist расширен canonical
 Compose knobs; реальные values должны совпадать с активными контейнерами. Явный
 backend.image, image ID/config hash и фактический mount source проверяет D1; external
 volume names и STORAGE_VOLUME не являются альтернативными restore targets.
-[Backup contracts](backup-and-restore.md), [D1 evidence](evidence/d1-backup-restore-20261013/report.md).
+[Backup contracts](backup-and-restore.md), [D1 evidence](../evidence/archive/d1-backup-restore-20261013/report.md).
 Backup/restore требует maintenance write barrier; pending SSD recovery отвергается.
 В этой задаче destructive restore не запускается.
 

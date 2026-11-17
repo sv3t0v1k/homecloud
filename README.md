@@ -1,6 +1,6 @@
 # HomeCloud
 
-**Локальная квалификация на 6 октября 2026:** полный 50 ГиБ Browser E2E — **PASS** в IAB/Chromium через HTTP localhost: три SHA-256 совпали, восстановление той же сессии, отмена и очистка подтверждены [отчётом](docs/evidence/browser-50gib-qualification-20261006/report.md). Safari функциональные сценарии — PASS; Safari полный 50 ГиБ — **UNQUALIFIED**. Production — **NOT_READY / NO_GO**.
+**Локальная квалификация на 6 октября 2026:** полный 50 ГиБ Browser E2E — **PASS** в IAB/Chromium через HTTP localhost: три SHA-256 совпали, восстановление той же сессии, отмена и очистка подтверждены [отчётом](docs/evidence/archive/browser-50gib-qualification-20261006/report.md). Safari функциональные сценарии — PASS; Safari полный 50 ГиБ — **UNQUALIFIED**. Production — **NOT_READY / NO_GO**.
 
 Версия `v0.9.0-local.1` — первая нумерованная предпроизводственная локальная версия, не production deployment и не доля завершённости roadmap. [Контракт версии и ограничения](docs/runbooks/local-release-baseline.md), [изменения](CHANGELOG.md), [план — источник истины](docs/ROADMAP.md).
 
@@ -256,7 +256,7 @@ HomeCloud/
 
 ### Uploads
 
-Архитектура больших файлов: durable unique chunk metadata и компактные counters; streaming finalization с server disk peak≈2S. Лимиты1ТиБ/file и2ТиБ/active user sessions — настраиваемая policy; quota действует отдельно. Текущий полный 50 ГиБ PASS: [браузерная квалификация](docs/evidence/browser-50gib-qualification-20261006/report.md). История изменения архитектуры: [remediation evidence](docs/evidence/large-file-remediation-20261004/report.md). 50 ГиБ — размер квалификации, не максимальный размер файла.
+Архитектура больших файлов: durable unique chunk metadata и компактные counters; streaming finalization с server disk peak≈2S. Лимиты1ТиБ/file и2ТиБ/active user sessions — настраиваемая policy; quota действует отдельно. Текущий полный 50 ГиБ PASS: [браузерная квалификация](docs/evidence/archive/browser-50gib-qualification-20261006/report.md). История изменения архитектуры: [remediation evidence](docs/evidence/archive/large-file-remediation-20261004/report.md). 50 ГиБ — размер квалификации, не максимальный размер файла.
 
 
 | Метод | Endpoint | Описание |

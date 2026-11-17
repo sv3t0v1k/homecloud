@@ -26,7 +26,7 @@ volumes/БД, destructive migration или остановки unrelated конт
 - `docker-compose.production.yml`: только override основного; SSD PostgreSQL bind,
   HDD `/storage` bind, TLS ingress и exact proxy trust. На mini-PC не запускался.
 - `.env.example`: обязательные пустые secret fields, генератор в runbook; не weak defaults.
-- [Точные команды и operator contracts](../../runbooks/docker-compose.md).
+- [Точные команды и operator contracts](../../../runbooks/docker-compose.md).
 
 Главные исправления: отсутствует fixed external preview volume name/container_name;
 project-scoped volumes сохраняют текущие имена при прежнем project. Main/dev больше

@@ -64,7 +64,7 @@ safety supplement, не новая backup policy. Restore на fresh volume тр
 provisioning approved `.tmp` до migration/startup; существующий restore сохраняет `.tmp`.
 Destructive full-stack DR/power-loss сценарии не заявлены.
 
-[Evidence и команды](evidence/upload-workspace-20261010/report.md).
+[Evidence и команды](../evidence/archive/upload-workspace-20261010/report.md).
 
 
 ## MS-3B — activation disabled, операторский gate
@@ -94,7 +94,7 @@ actual mount qualification выбранной платформы, безопас
 Ingress/chunks должны оставаться на одной FS; EXDEV без copy обхода. Существующий finalizer
 пишет legacy finalPath и не является квалифицированным MS-4 протоколом.
 
-[Полный MS-3B report, threat model и platform matrix](evidence/secure-workspace-activation-20261010/report.md).
+[Полный MS-3B report, threat model и platform matrix](../evidence/archive/secure-workspace-activation-20261010/report.md).
 
 
 ## MS-3B-R — операторский контракт остаётся legacy-only
@@ -117,7 +117,7 @@ Tmpfs namespace tests и SIGKILL fixture не подтверждают physical 
 production recovery. Runtime policy не изменена; test-only private namespace UID0
 отображался на host UID1001. Ограничения legacy recovery MS-3B сохраняются.
 Новые roots/workspaces/DB admissions не разрешены; finalizer/MS-4 не изменены.
-[Исследование, реальные probes, reviews и blockers](evidence/secure-filesystem-boundary-20261011/report.md).
+[Исследование, реальные probes, reviews и blockers](../evidence/archive/secure-filesystem-boundary-20261011/report.md).
 
 
 ## Подготовка SSD workspace, этап 1 (2026-10-12)

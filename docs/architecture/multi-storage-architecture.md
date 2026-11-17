@@ -25,7 +25,7 @@ Canonical migration: 6 File сохранились, все 5 физически�
 dump restore проверены; исходные строки и полный FS inventory совпали. Перенос bytes: **0**.
 Full backend с real PostgreSQL: **65 suites / 858 tests PASS**, lint/typecheck/build PASS;
 runtime API smoke и четыре healthy preview контейнера подтверждены. A/B/C review: ACCEPT.
-[Подробный отчёт, доказательства и границы](evidence/multi-storage-schema-20261010/report.md).
+[Подробный отчёт, доказательства и границы](../evidence/archive/multi-storage-schema-20261010/report.md).
 
 Для этого checkpoint выбран portable trusted exclusive-directory профиль: symlink chain
 отвергается, существующие download FD guards сохранены; race-free openat2 не заявлен.
@@ -61,7 +61,7 @@ StorageService, Health, Multer и существующие direct upload FS entr
 к identity/confinement; File placement bridge/schema/IDs и chunk/finalizer protocol сохранены.
 
 [Операторский контракт и границы гарантий](storage-registry-operations.md),
-[MS-2 evidence](evidence/multi-storage-registry-20261010/report.md). Production NO_GO;
+[MS-2 evidence](../evidence/archive/multi-storage-registry-20261010/report.md). Production NO_GO;
 MS-3 не начинается автоматически.
 
 ### MS-3A — Upload Workspace Architecture & Session Binding: COMPLETE
@@ -89,7 +89,7 @@ pause/reload/resume/429/quota/cancel/expiry/recovery + byte/download/share smoke
 три независимых scoped reviews ACCEPT, максимум2 раунда исправлений.
 
 [Операторский контракт](upload-workspace-operations.md),
-[MS-3A evidence и процессное отклонение](evidence/upload-workspace-20261010/report.md).
+[MS-3A evidence и процессное отклонение](../evidence/archive/upload-workspace-20261010/report.md).
 Production **NOT_READY / NO_GO**; следующий checkpoint — MS-3B Secure Workspace Activation
 только по отдельному разрешению владельца. В этом запросе работа остановлена после MS-3A.
 
@@ -114,7 +114,7 @@ Full backend real PostgreSQL68/921 PASS без skips, targeted7/197, lint/typech
 сохраняют confirmed binary bytes/inode/accounting. Canonical11tables/5files/37021bytes exact
 equal, bytes moved0; read-only runtime identity/live200, preview healthy, rollout отсутствует.
 Four independent narrow reviews ACCEPT только blocked outcome. **secureOpen=false**;
-Production **NOT_READY / NO_GO**. [Threat/platform/evidence](evidence/secure-workspace-activation-20261010/report.md).
+Production **NOT_READY / NO_GO**. [Threat/platform/evidence](../evidence/archive/secure-workspace-activation-20261010/report.md).
 Следующий gate — отдельно reviewed descriptor adapter, durable operator identity, actual
 mount qualification, secure session ingress/DB admission; дальше автоматически не идём.
 
@@ -139,7 +139,7 @@ Hashes 11 таблиц и captured FS inventory совпали; 21/21 legacy bin
 lint/typecheck/build PASS, read-only runtime live HTTP200. Два независимых scoped reviews
 приняли только blocked outcome. Дополнительная activation disabled, Production
 NOT_READY/NO_GO; MS-4 не начат.
-[Design, actual evidence, blockers и next gate](evidence/secure-filesystem-boundary-20261011/report.md).
+[Design, actual evidence, blockers и next gate](../evidence/archive/secure-filesystem-boundary-20261011/report.md).
 Работа остановлена после MS-3B-R; 50GiB/push/tag/release/deploy не выполнялись.
 
 ## 1. Исходное состояние и границы аудита
@@ -159,7 +159,7 @@ NOT_READY/NO_GO; MS-4 не начат.
   `homecloud-preview_storage_data` → `/storage`, RW; DB:
   `homecloud-preview_db_data` → `/var/lib/postgresql/data`.
   Runtime backend user — `nextjs`. Окружение и секреты не выводились.
-- Историческая [IAB квалификация 50 ГиБ](evidence/browser-50gib-qualification-20261006/report.md)
+- Историческая [IAB квалификация 50 ГиБ](../evidence/archive/browser-50gib-qualification-20261006/report.md)
   PASS прочитана как evidence: 5120 частей, resume, download, совпадение трёх SHA-256,
   cleanup и сохранение исходных данных. Здесь она не повторялась.
 - Аудит — статическое чтение кода/скриптов/тестов плюс перечисленные read-only Git/Docker
@@ -246,7 +246,7 @@ flowchart TD
 | [previews.service.spec.ts:41](../backend/src/previews/previews.service.spec.ts#L41) | Preview memory limits, не secure multi-location FD |
 | [test-restore-schema.py:49](../scripts/tests/test-restore-schema.py#L49), 49–65 | Known-table generations; понадобится новый exact schema контракт |
 | [test-backup-safety.sh:80](../scripts/tests/test-backup-safety.sh#L80); [test-backup-production-drill.sh:78](../scripts/tests/test-backup-production-drill.sh#L78); [test-recovery-config.py:73](../scripts/tests/test-recovery-config.py#L73) | Legacy single-archive/volume/config fixtures, не N-root restore |
-| [IAB 50 ГиБ](evidence/browser-50gib-qualification-20261006/report.md) | Нынешний browser+single-root pipeline PASS; не SSD→HDD, NAS или power-loss |
+| [IAB 50 ГиБ](../evidence/archive/browser-50gib-qualification-20261006/report.md) | Нынешний browser+single-root pipeline PASS; не SSD→HDD, NAS или power-loss |
 
 Native-download/PostgreSQL ownership, ZIP HTTP/SQL/archive, file copy/delete и health suites,
 backend/bench config/fixtures/FS instrumentation также сохраняют абсолютные placement и
@@ -1006,7 +1006,7 @@ LinuxKit; native Linux target для обязательной отдельной
 По owner stop-условию R2 не начат; MS-4 не начат. `secureOpen=false`, extras disabled,
 Production NOT_READY / NO_GO. Production source/schema/config/runtime/data не изменены.
 Исторические 68/921 и 21/21 не выдаются за новый прогон.
-[Факты остановки, ограничения и варианты владельцу](evidence/secure-filesystem-adapter-r1-20261011/report.md).
+[Факты остановки, ограничения и варианты владельцу](../evidence/archive/secure-filesystem-adapter-r1-20261011/report.md).
 
 
 ## MS-3B-R1 — реализация сохранена, qualification BLOCKED (2026-10-11)
@@ -1027,7 +1027,7 @@ host qualification. **R1_GATE=BLOCKED**, native Linux amd64 host UNQUALIFIED,
 secureOpen=false, additional activation disabled, production NOT_READY/NO_GO.
 R2 не начат; переход только после полного R1 PASS и отдельного решения. MS-4 не начат.
 Durable enrollment/restart substitution остаются вне R1; canonical data/21bindings
-сохранены. [Текущий R1 report/design/evidence](evidence/secure-filesystem-adapter-implementation-r1-20261011/report.md).
+сохранены. [Текущий R1 report/design/evidence](../evidence/archive/secure-filesystem-adapter-implementation-r1-20261011/report.md).
 
 
 ## MS-3B-R1Q — источник ENOSYS локализован, target qualification BLOCKED (2026-10-11)
@@ -1044,7 +1044,7 @@ R1 full/PG/adversarial результаты не становятся native AMD
 scoped review завершён с limitations. Canonical11tables/FS inventory и21/21bindings
 не изменились. secureOpen=false, дополнительные workspace выключены, production NO_GO;
 R2/MS-4 не начаты. Остановка после R1Q; требования следующего native host qualification
-и воспроизводимые probes — в [отчёте R1Q](evidence/secure-filesystem-adapter-native-amd64-r1q-20261011/report.md).
+и воспроизводимые probes — в [отчёте R1Q](../evidence/archive/secure-filesystem-adapter-native-amd64-r1q-20261011/report.md).
 
 
 ## MS-3B-R1Q — native Linux AMD64 квалификация PASS (2026-10-11)
@@ -1065,4 +1065,4 @@ Observed available RAM>=4.157GiB, OOM0; shared swap вырос~197MiB, zero-impa
 Power loss, auth/controller adversarial HTTP и durable enrollment/R2 вне доказанного scope.
 **secureOpen=false; additional activation disabled; production NOT_READY/NO_GO.**
 R2/MS-4 не начаты; остановка после R1Q, продолжение только по отдельному решению владельца.
-[Native qualification report/evidence](evidence/secure-filesystem-adapter-home-server-native-r1q-20261011/report.md).
+[Native qualification report/evidence](../evidence/archive/secure-filesystem-adapter-home-server-native-r1q-20261011/report.md).
