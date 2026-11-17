@@ -1,6 +1,6 @@
 ## Актуальный ненумерованный final-local-prep — 2026-10-02
 
-**OVERALL_PRODUCTION_READINESS: NOT_READY / NO_GO**. Standalone [операторский пакет](./go-live-checklist.md), единственный [external-input master checklist](./external-input-master-checklist.md), [evidence index](./evidence/README.md). Предыдущие матрицы/команды ниже — исторические checkpoint, не текущий порядок deployment. Текущая последовательность требует prepare всей пары до stop и --pull never при переходе; partial rollback не квалифицирован.
+**OVERALL_PRODUCTION_READINESS: NOT_READY / NO_GO**. Standalone [операторский пакет](./go-live-checklist.md), единственный [external-input master checklist](./external-input-master-checklist.md), [evidence index](../evidence/README.md). Предыдущие матрицы/команды ниже — исторические checkpoint, не текущий порядок deployment. Текущая последовательность требует prepare всей пары до stop и --pull never при переходе; partial rollback не квалифицирован.
 
 ### Consolidated blocker matrix
 
@@ -21,7 +21,7 @@
 | Local ingress/browser/operator prep | LOCALLY_QUALIFIED | Fresh exact production template API/browser1440×900/390×844 и standalone operator walkthrough PASS; real host acceptance separate |
 | Real host/browser/operator acceptance | EXTERNAL_INPUT_REQUIRED | Named operator, public endpoint,≥15min observation и owner GO |
 
-RPO/RTO: decimal JSON `*_seconds` подтверждает около31seconds, а не31thousand seconds. Candidate12min математически согласован, но только OWNER_APPROVAL_REQUIRED; см. [точные единицы](./recovery-objectives.md#единицы-baseline-исправление-интерпретации). Исторические ephemeral raw пути не являются текущими dependencies; см. index.
+RPO/RTO: decimal JSON `*_seconds` подтверждает около31seconds, а не31thousand seconds. Candidate12min математически согласован, но только OWNER_APPROVAL_REQUIRED; см. [точные единицы](../architecture/recovery-objectives.md#единицы-baseline-исправление-интерпретации). Исторические ephemeral raw пути не являются текущими dependencies; см. index.
 
 ### Свежий final local acceptance — итог проверок
 
@@ -46,7 +46,7 @@ Security/ops review: no real secrets в docs/index/manifests; helper не выв
 
 ## Контракт и границы
 
-[Фактическая topology/gap matrix](./production-topology.md) и [исполняемый порядок release/migration/rollback](./release-and-rollback.md). Поддерживаемый контракт — один backend, один PostgreSQL, постоянный storage, frontend nginx, внешний TLS ingress с maintenance barrier. Redis optional, не runtime/readiness dependency. Zero downtime, HA и previous-version schema compatibility не заявляются.
+[Фактическая topology/gap matrix](../architecture/production-topology.md) и [исполняемый порядок release/migration/rollback](./release-and-rollback.md). Поддерживаемый контракт — один backend, один PostgreSQL, постоянный storage, frontend nginx, внешний TLS ingress с maintenance barrier. Redis optional, не runtime/readiness dependency. Zero downtime, HA и previous-version schema compatibility не заявляются.
 
 Production config валидируется ConfigModule до TypeORM initialization: разные access/refresh secrets ≥32 символов; PostgreSQL URL с credential ≥16, совпадение DB_PASSWORD при его наличии; optional metrics token ≥32; абсолютный storage root; явный HTTPS frontend origin. Очевидные placeholders и повторяющиеся secrets отклоняются; это baseline, не измерение entropy. Errors содержат только названия settings. Пустой metrics token означает disabled endpoint. Production startup не требует неиспользуемого Redis; старые development/test validators сохранены.
 
@@ -60,7 +60,7 @@ Release helper имеет независимые режимы config/artifact/mi
 - Backend lint: 0 errors / 15 прежних warnings; build и typecheck PASS.
 - Frontend build/typecheck PASS; source/config не менялись, frontend suite не запускался.
 - Compose config quiet PASS, без вывода секретов. Script syntax и diff-check PASS.
-- Backup/restore implementation не менялся; повторные backup safety suites не требуются. Реальный paired restore evidence остаётся в завершённом [Failure/Security checkpoint](./failure-security-checkpoint.md).
+- Backup/restore implementation не менялся; повторные backup safety suites не требуются. Реальный paired restore evidence остаётся в завершённом [Failure/Security checkpoint](../security/failure-security-checkpoint.md).
 
 ## Drill
 
@@ -109,7 +109,7 @@ INDEPENDENT_REVIEW: APPROVE. Reviewer проверил фактические di
 | Security headers | Backend Helmet, HSTS даже на HTTP; frontend policy отсутствовала | TLS ingress владеет HSTS/CSP/headers, HTTP HSTS отсутствует |
 | HTTP→HTTPS | Не реализовано | Canonical308, HTTPS с чужим Host421 |
 
-Trust model и exposure подробно в [topology](./production-topology.md). Два перехода: ingress socket `172.29.0.10` → frontend; frontend socket `172.30.0.10` → backend. Backend доверяет только одному literal IP, default no trust; CIDR/true/hop count не используются. Невалидные multi-hop chains сбрасывают forwarded authority. Все IP limiter keys используют один helper, mapped IPv4 и IPv6 canonicalization. IP logging/high-cardinality labels не добавлены. Frontend same-origin API/share URLs; произвольный cross-origin VITE_API_URL production-контракт не поддерживает.
+Trust model и exposure подробно в [topology](../architecture/production-topology.md). Два перехода: ingress socket `172.29.0.10` → frontend; frontend socket `172.30.0.10` → backend. Backend доверяет только одному literal IP, default no trust; CIDR/true/hop count не используются. Невалидные multi-hop chains сбрасывают forwarded authority. Все IP limiter keys используют один helper, mapped IPv4 и IPv6 canonicalization. IP logging/high-cardinality labels не добавлены. Frontend same-origin API/share URLs; произвольный cross-origin VITE_API_URL production-контракт не поддерживает.
 
 Ingress HTTPS задаёт HSTS без preload/includeSubDomains, nosniff, Referrer-Policy, DENY и CSP frame-ancestors none, минимальный Permissions-Policy. CSP допускает same-origin assets, fonts self+data, inline styles и blob previews. Health/readiness/metrics полностью приватны; отдельный public health route не заявляется. Metrics Bearer остаётся обязательным внутри сети; ingress не пропускает его даже с token. Public external uptime проверяет HTTPS `/`, probes используют private backend.
 
@@ -153,7 +153,7 @@ Commits реализации TLS/proxy: `788ada5` — доверенный proxy
 
 Дата: 2026-09-30, Asia/Vladivostok. Owner-approved ненумерованный блок после TLS/Proxy Boundary. INITIAL_STATE: HEAD `42e1dce180bf6a736ea62c84f1aaa65c2b89355a`, status только запрещённый untracked audit. Audit не читался/не менялся/не stage/commit. Preview и старые containers не использовались. Исторические blockers предыдущих checkpoint описывают состояние на момент их завершения; актуальный status ниже.
 
-[Инвентарь, generation contract, injection, rotation/rollback и leakage boundaries](./secret-lifecycle.md). Реальные secrets: access/refresh JWT, DB password/credential URL, optional metrics, optional unused Redis, external TLS private key; backup encryption key отсутствует. Генератор создаёт external-only exclusive0600 hex64 CSPRNG keys, без вывода значений. Production rejects missing/weak/default/predictable credentials и equal JWT keys до DB initialization, optional metrics empty означает disabled. Формат не доказывает entropy. Docker build contexts исключают env/private-key material. Environment injection сохраняет доступ Docker/root администраторам; secret-manager интеграция не добавлена. Optional production Redis использует private runtime config, пароль не в server/healthcheck argv.
+[Инвентарь, generation contract, injection, rotation/rollback и leakage boundaries](../security/secret-lifecycle.md). Реальные secrets: access/refresh JWT, DB password/credential URL, optional metrics, optional unused Redis, external TLS private key; backup encryption key отсутствует. Генератор создаёт external-only exclusive0600 hex64 CSPRNG keys, без вывода значений. Production rejects missing/weak/default/predictable credentials и equal JWT keys до DB initialization, optional metrics empty означает disabled. Формат не доказывает entropy. Docker build contexts исключают env/private-key material. Environment injection сохраняет доступ Docker/root администраторам; secret-manager интеграция не добавлена. Optional production Redis использует private runtime config, пароль не в server/healthcheck argv.
 
 ### Gates и runtime evidence
 
@@ -334,6 +334,6 @@ Remaining: deferred Linux/DNS/public CA/native bind; внешний registry; ta
 
 ## Независимое offsite / custody / measured budgets — 2026-10-02
 
-Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](./recovery-objectives.md), [raw qualification](./evidence/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
+Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](../architecture/recovery-objectives.md), [raw qualification](./evidence/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
 
 Раздельные итоговые статусы: OFFSITE_FAILURE_DOMAIN_MECHANICS=PASS; REAL_EXTERNAL_OFFSITE=NOT_QUALIFIED; RECOVERY_KEY_CUSTODY_MECHANICS=PASS; REAL_CUSTODIAN_PROCESS=NOT_QUALIFIED; MEASURED_RPO_RTO_BASELINE=PASS; OWNER_APPROVED_RECOVERY_BUDGETS=NOT_AVAILABLE; INDEPENDENT_OFFSITE_RECOVERY_DRILL=PASS; INDEPENDENT_REVIEW=APPROVE; PRODUCTION_BLOCKER_OFFSITE_RECOVERY=PARTIALLY_RESOLVED. Два128MiB прогона: verified RTO31.384/31.543s; подробные component timings, gaps и evidence limits — в recovery objectives. Overall NOT_READY / NO_GO.

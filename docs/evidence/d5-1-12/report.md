@@ -35,7 +35,7 @@ workflows, backend и deployed images не изменены. Mac Docker, mini-PC
 - [`README`](../../../ops/postgres/README.md): отдельные пути сохранения точных OCI
   bytes и новой сборки, reproducibility protocol, signing/retention/maintenance и
   условия разрешения интеграции.
-- [`rollback`](../../postgres-image-rollback.md): cold/logical backup, globals, write
+- [`rollback`](../../runbooks/postgres-image-rollback.md): cold/logical backup, globals, write
   freeze, DB+HDD consistency, rollback без потери текущих записей только после
   проверки копии; recovery в отдельный каталог и явное решение о возможной потере.
 

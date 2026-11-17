@@ -98,4 +98,4 @@ round-trip не проверены. Production NOT_READY / NO_GO. COMPLETE не 
 HTTP→HTTPS redirect пока на внешний443: custom host ports требуют подтверждённого routing;
 прямой custom HTTPS можно пробовать отдельно, HTTP redirect к custom external port не
 квалифицирован. Target hardware/forward SSD enrollment и следующие этапы не начинались.
-Остановиться после этой коррекции. [Точные команды/STOP](../../linux-mini-pc.md).
+Остановиться после этой коррекции. [Точные команды/STOP](../../runbooks/linux-mini-pc.md).

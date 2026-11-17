@@ -22,7 +22,7 @@ Owner-approved ненумерованный блок, 2026-09-30. Vendor-neutral
 | user passwords, refresh JWT, share password/token / DERIVED | application auth/sharing | API → existing hash/token storage | existing password/revocation rules; не deployment keys |
 | .env.example, synthetic smoke credentials / LOCAL-DEV-ONLY | примеры/tests | fixtures | запрещено переносить в production |
 
-Age backup encryption реализовано в [backup productionization](./backup-productionization.md). Private identity и public recipients имеют отдельный lifecycle; custody, redundancy, rotation и emergency access определены в [recovery objectives](./recovery-objectives.md). Реальная организационная custody ещё NOT_QUALIFIED. Не найден static bootstrap admin secret. TLS public provisioning/renewal остаётся отдельным блокером.
+Age backup encryption реализовано в [backup productionization](../runbooks/backup-productionization.md). Private identity и public recipients имеют отдельный lifecycle; custody, redundancy, rotation и emergency access определены в [recovery objectives](../architecture/recovery-objectives.md). Реальная организационная custody ещё NOT_QUALIFIED. Не найден static bootstrap admin secret. TLS public provisioning/renewal остаётся отдельным блокером.
 
 ## Генерация и хранение
 

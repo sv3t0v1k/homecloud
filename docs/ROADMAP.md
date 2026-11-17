@@ -4,7 +4,7 @@
 
 **Исторический test checkpoint на 2026-10-30:** установлен backend `0387feda2496adc3c0e97d2653c7de6bc055a9d7` и frontend `52ddb5dac277a11ec783b4ca9bdeb89e992c4487`. Browser Acceptance QA, включая UX v2, ZIP и Public Sharing, принята в проверенном тестовом объёме; backup/isolated restore, метаданные установленной версии, 30 миграций и health 4/4 — PASS. QA-данные перемещены в корзину, evidence сохранены. [Границы и доказательства](#test-deployment-and-browser-acceptance-2026-10-30). Production — **NO_GO**, Multi-Storage — **DEFERRED**.
 
-**Состояние на 2026-10-13:** полный 50 ГиБ Browser E2E — **PASS** в IAB/localhost ([доказательства](./evidence/browser-50gib-qualification-20261006/report.md)); универсальное хранение и очередь с докачкой подтверждены; единственный Mac тестовый стек — `homecloud-preview`, основной `docker-compose.yml`, HTTP localhost:8080 и постоянные volumes; TLS не требуется для ежедневной работы. Safari 50 ГиБ — **UNQUALIFIED**, production — **NOT_READY / NO_GO**. Предпроизводственная версия `v0.9.0-local.1` не вводит новую Phase. [Контракт версии](./local-release-baseline.md).
+**Состояние на 2026-10-13:** полный 50 ГиБ Browser E2E — **PASS** в IAB/localhost ([доказательства](./evidence/browser-50gib-qualification-20261006/report.md)); универсальное хранение и очередь с докачкой подтверждены; единственный Mac тестовый стек — `homecloud-preview`, основной `docker-compose.yml`, HTTP localhost:8080 и постоянные volumes; TLS не требуется для ежедневной работы. Safari 50 ГиБ — **UNQUALIFIED**, production — **NOT_READY / NO_GO**. Предпроизводственная версия `v0.9.0-local.1` не вводит новую Phase. [Контракт версии](runbooks/local-release-baseline.md).
 
 Разделы выполненных Phase и датированные checkpoints ниже — история на соответствующую дату. Старые 1/10 ГиБ, Blob/100 МиБ, O(N²), BLOCKED/FAIL и временные TLS paths сохраняются как исторические границы; актуальное состояние задают позднейшие ненумерованные checkpoints и эта сводка.
 
@@ -33,17 +33,17 @@
 | Phase 11 — Backend/API Hardening | `COMPLETE` | 11.1–11.5; checkpoint `39dc751` |
 | Phase 12 — Performance & Scalability | `COMPLETE` | 12.1–12.6; checkpoint `e408425` |
 | Phase 13 — Frontend | `COMPLETE` | 13.1–13.7; checkpoint `0147a4c` |
-| Observability & Operations — ненумерованный operational baseline | `COMPLETE` | checkpoint `cefff50`; [evidence](./observability-checkpoint.md) |
-| Failure & Security Testing — ненумерованный checkpoint | `COMPLETE` | [evidence и границы](./failure-security-checkpoint.md) |
+| Observability & Operations — ненумерованный operational baseline | `COMPLETE` | checkpoint `cefff50`; [evidence](runbooks/observability-checkpoint.md) |
+| Failure & Security Testing — ненумерованный checkpoint | `COMPLETE` | [evidence и границы](security/failure-security-checkpoint.md) |
 | Универсальное хранение и докачка — ненумерованный checkpoint | `COMPLETE` | [IAB/Safari functional evidence](./evidence/universal-storage-upload-ux-20261005/report.md) |
-| Единый локальный Docker baseline — ненумерованный checkpoint | `COMPLETE` | `bf97bef` / `f578030`; [runbook и preservation boundaries](./operations-runbook.md) |
+| Единый локальный Docker baseline — ненумерованный checkpoint | `COMPLETE` | `bf97bef` / `f578030`; [runbook и preservation boundaries](runbooks/operations-runbook.md) |
 | D5.1 — Release Management & CI Foundation | `PARTIAL / RELEASE_BLOCKED` | Штатный PR CI подтверждён для PR №5–8; опубликованный совместимый beta-кандидат канала `test` не подтверждён. [Test checkpoint](#test-deployment-and-browser-acceptance-2026-10-30) |
 | Полный 50 ГиБ IAB Browser E2E — ненумерованный checkpoint | `PASS` | `167498d`; [scope/evidence](./evidence/browser-50gib-qualification-20261006/report.md); Safari 50 ГиБ UNQUALIFIED |
 | Test deployment / Browser Acceptance, включая UX v2 и ZIP | `PASS` в проверенном тестовом объёме | Разные SHA backend/frontend, QA, backup/restore, metadata, 30 миграций и health 4/4 подтверждены; [test checkpoint](#test-deployment-and-browser-acceptance-2026-10-30) |
 | Public Folder Sharing v1.0 — анонимная загрузка в общую папку | `PARTIAL` | Safari Browser Acceptance PASS в проверенном тестовом объёме; исторический план и ограничения сохраняются. [Test checkpoint](#test-deployment-and-browser-acceptance-2026-10-30) |
 | TEST Channel v1 — ручная установка и восстановление | `Operational E2E PASS` на VM 120 | UI install I → J, backup, restore, version rollback, 30 миграций, HTTPS/auth и SHA256 файлов; [checkpoint](./evidence/test-channel-v1-operational-20261106.md) |
 | Периодическое обнаружение TEST-сборок | `Operational PASS` на VM 120 | Два разовых и два запуска timer с кодом 0; UI показывает K при установленной J, автоматической установки нет; timer `enabled/active`, `AUTO_UPDATE=false`; [evidence](./evidence/vm120-e2e/test-discovery-2026-11-06.md), [PR #34](https://github.com/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/pull/34) |
-| Production RELEASE | `NO_GO` | TEST qualification не является production release qualification; [production gate](./final-production-acceptance.md) |
+| Production RELEASE | `NO_GO` | TEST qualification не является production release qualification; [production gate](runbooks/final-production-acceptance.md) |
 | Multi-Storage и выбор пользователем места хранения | `DEFERRED` | Исторические checkpoint’ы и зависимости сохранены в соответствующих разделах; продолжение только после отдельного решения |
 
 ## Completed
@@ -58,8 +58,8 @@
 
 Авторитетные документы:
 
-- [`PHASE-5.1-BACKUP-DR-ARCHITECTURE.md`](./PHASE-5.1-BACKUP-DR-ARCHITECTURE.md)
-- [`backup-and-restore.md`](./backup-and-restore.md)
+- [`PHASE-5.1-BACKUP-DR-ARCHITECTURE.md`](phases/PHASE-5.1-BACKUP-DR-ARCHITECTURE.md)
+- [`backup-and-restore.md`](runbooks/backup-and-restore.md)
 
 Acceptance criteria подтверждены checkpoint-тегом `phase-5-backup-dr-complete` (`1297051`) и профильными safety tests.
 
@@ -69,8 +69,8 @@ Acceptance criteria подтверждены checkpoint-тегом `phase-5-back
 
 Авторитетные документы:
 
-- [`phase-6.1-audit-report.md`](./phase-6.1-audit-report.md)
-- [`phase-6.2-remediation-report.md`](./phase-6.2-remediation-report.md)
+- [`phase-6.1-audit-report.md`](security/phase-6.1-audit-report.md)
+- [`phase-6.2-remediation-report.md`](security/phase-6.2-remediation-report.md)
 
 ### Phase 7 — Storage & Filesystem Integrity
 
@@ -104,19 +104,19 @@ Acceptance criteria: F-07 закрыт; migration/entity/tests согласов�
 
 Авторитетные документы:
 
-- [`auth-threat-model.md`](./auth-threat-model.md)
-- [`session-lifecycle.md`](./session-lifecycle.md)
+- [`auth-threat-model.md`](security/auth-threat-model.md)
+- [`session-lifecycle.md`](security/session-lifecycle.md)
 
 Acceptance criteria: lifecycle и threat model документированы; expiry/reuse/revocation/concurrency покрыты regression tests; production-like startup/security configuration проверена.
 
 ### Phase 10 — подтверждённая часть
 
-- **10.1:** access-control matrix и folder-sharing semantics — `22651e6`, документ [`PHASE-10.1-ACCESS-CONTROL.md`](./PHASE-10.1-ACCESS-CONTROL.md).
+- **10.1:** access-control matrix и folder-sharing semantics — `22651e6`, документ [`PHASE-10.1-ACCESS-CONTROL.md`](phases/PHASE-10.1-ACCESS-CONTROL.md).
 - **10.2:** fail-closed expiry check в password verification — `d23f793`.
 - **10.3:** null-safe expiry enforcement в public lookup и download count — `a51ff17`.
 - **10.4:** HTTP single-range streaming, ответы 200/206/416 и confinement storage path — `f45a00a`.
 
-- **10.5:** `maxDownloads` — работа Kilo `9753c97`, исправления и приёмка `951cb2f`; [`отчёт`](./PHASE-10.5-REVIEW.md). 217 backend tests PASS, включая реальную PostgreSQL concurrency и migration up/down; lint/build PASS.
+- **10.5:** `maxDownloads` — работа Kilo `9753c97`, исправления и приёмка `951cb2f`; [`отчёт`](phases/PHASE-10.5-REVIEW.md). 217 backend tests PASS, включая реальную PostgreSQL concurrency и migration up/down; lint/build PASS.
 
 - **10.6:** публичный просмотр потомков общей папки — `60ac7bd`;
 - **10.7:** безопасное scoped download потомка по `fileId` — `60ac7bd`;
@@ -608,19 +608,19 @@ Ownership по подэтапам:
 
 Evidence: focused 64/64 PASS; full backend 609 PASS / 15 SKIPPED (51 suites PASS / 4 SKIPPED); lint 0 errors / 15 прежних warnings; build/typecheck, Compose config, изменённое implementation formatting и `git diff --check` PASS с двумя задокументированными legacy formatting exceptions. Изолированный runtime: healthy 200, DB/storage degradation 503 при live 200, recovery 200, request IDs, защищённая text exposition и privacy marker scan PASS. Independent review APPROVE. `OBSERVABILITY_OPERATIONS_CHECKPOINT: PASS`.
 
-[Эксплуатационный runbook](./operations-runbook.md) и [подробное evidence/ограничения](./observability-checkpoint.md). Внешние scrape/alerts/log shipping, distributed tracing и domain metrics не добавлены; production readiness не заявляется.
+[Эксплуатационный runbook](runbooks/operations-runbook.md) и [подробное evidence/ограничения](runbooks/observability-checkpoint.md). Внешние scrape/alerts/log shipping, distributed tracing и domain metrics не добавлены; production readiness не заявляется.
 
 ### Failure & Security Testing — ненумерованный checkpoint
 
-Статус: `COMPLETE`. Owner-approved направление после Observability & Operations, без новой Phase. Реальные disposable backup/restore с проверкой строк/байтов/квоты, DB/storage failure и recovery, representative ownership/share/session/rate-limit abuse gates пройдены. Focused 34 suites / 453 tests и full 57 suites / 651 tests PASS без пропусков; build/typecheck/lint PASS. Independent review APPROVE. [Evidence, команды и ограничения](./failure-security-checkpoint.md). Phase 13 и observability checkpoint сохраняются COMPLETE; production readiness не заявляется.
+Статус: `COMPLETE`. Owner-approved направление после Observability & Operations, без новой Phase. Реальные disposable backup/restore с проверкой строк/байтов/квоты, DB/storage failure и recovery, representative ownership/share/session/rate-limit abuse gates пройдены. Focused 34 suites / 453 tests и full 57 suites / 651 tests PASS без пропусков; build/typecheck/lint PASS. Independent review APPROVE. [Evidence, команды и ограничения](security/failure-security-checkpoint.md). Phase 13 и observability checkpoint сохраняются COMPLETE; production readiness не заявляется.
 
 ### Production Readiness — Architecture & Release Gate
 
-Ненумерованный checkpoint: COMPLETE; independent review APPROVE. Production topology contract, maintenance release/migration/rollback policy, early production config validation и narrow release helpers добавлены. Full backend 674 PASS; limited same-artifact recovery drill PASS. [Evidence и пределы](./production-readiness-checkpoint.md). Общий Production Readiness INCOMPLETE; на момент Architecture checkpoint TLS/proxy, secret lifecycle и offsite/encrypted backup оставались blocking follow-up; актуальное состояние TLS/proxy см. следующий ненумерованный checkpoint. Phase 13 и предыдущие operational checkpoints COMPLETE сохранены.
+Ненумерованный checkpoint: COMPLETE; independent review APPROVE. Production topology contract, maintenance release/migration/rollback policy, early production config validation и narrow release helpers добавлены. Full backend 674 PASS; limited same-artifact recovery drill PASS. [Evidence и пределы](runbooks/production-readiness-checkpoint.md). Общий Production Readiness INCOMPLETE; на момент Architecture checkpoint TLS/proxy, secret lifecycle и offsite/encrypted backup оставались blocking follow-up; актуальное состояние TLS/proxy см. следующий ненумерованный checkpoint. Phase 13 и предыдущие operational checkpoints COMPLETE сохранены.
 
 ### Production Readiness — TLS / Proxy Boundary & Private Operational Exposure
 
-Ненумерованный checkpoint: COMPLETE; independent review APPROVE. Standalone production ingress завершает TLS, HTTP308 и secure headers, не публикует frontend/backend; exact trusted socket peers и общий normalized clientIp защищают существующие process-local лимиты от forwarded spoofing. Health/readiness/metrics приватны, internal metrics дополнительно Bearer. Focused 54 PASS; full backend 59 suites / 686 tests PASS без skipped integrations; lint/build/typecheck/config gates PASS. Реальные два nginx, self-signed TLS, auth/upload/download/public share, rate-limit spoofing и Chromium fonts/CSP PASS. [Evidence и пределы](./production-readiness-checkpoint.md). Public CA lifecycle/конечный deployment не подтверждены. OVERALL_PRODUCTION_READINESS: NOT_READY; secret lifecycle, encrypted/offsite backup и final recovery/acceptance остаются blocking follow-up. Предыдущие COMPLETE checkpoints сохранены; новая Phase не создана.
+Ненумерованный checkpoint: COMPLETE; independent review APPROVE. Standalone production ingress завершает TLS, HTTP308 и secure headers, не публикует frontend/backend; exact trusted socket peers и общий normalized clientIp защищают существующие process-local лимиты от forwarded spoofing. Health/readiness/metrics приватны, internal metrics дополнительно Bearer. Focused 54 PASS; full backend 59 suites / 686 tests PASS без skipped integrations; lint/build/typecheck/config gates PASS. Реальные два nginx, self-signed TLS, auth/upload/download/public share, rate-limit spoofing и Chromium fonts/CSP PASS. [Evidence и пределы](runbooks/production-readiness-checkpoint.md). Public CA lifecycle/конечный deployment не подтверждены. OVERALL_PRODUCTION_READINESS: NOT_READY; secret lifecycle, encrypted/offsite backup и final recovery/acceptance остаются blocking follow-up. Предыдущие COMPLETE checkpoints сохранены; новая Phase не создана.
 
 ## Planned
 
@@ -720,7 +720,7 @@ session→user / user→session: legacy assembly
 с ancestors/mirrors, исходная цель и состояние сессии, владелец, TTL и квота.
 Уникальные attempt paths, recovery hard link, SHA-256, атомарное имя и преобразование
 reservation→usage сохраняют retry/abort/TTL cleanup и историческое восстановление.
-Миграций нет. [Протокол и ограничения](legacy-upload-publication.md).
+Миграций нет. [Протокол и ограничения](updates/legacy-upload-publication.md).
 
 Linux Node20.20.2 / PostgreSQL16.15, зависимости по текущему package-lock:
 адресные4 suites/199 tests и полный backend84 suites/1195 tests без skips — PASS.
@@ -771,7 +771,7 @@ owner-rate и FK invalidation, блокирующих findings нет. Admission
 public complete требует pool>=3 и делит с owner лимит до2 сборок. Hard link только
 в пределах одной FS; домашний mount/power-loss не квалифицированы. Proof до5мин
 проверяется и перед публикацией; успешность более долгой сборки не заявляется.
-Подробности: [API, ресурсы и ограничения](public-folder-upload-operations.md).
+Подробности: [API, ресурсы и ограничения](public-folders/public-folder-upload-operations.md).
 
 Frontend/загрузка дерева не реализованы. Домашний сервер, CI/CD и production
 Multi-Storage не изменялись; push/merge/release/deployment не выполнялись.
@@ -814,7 +814,7 @@ endpoint не гарантирует размер одного импорта. P
 same-FS hard link и proof<=5мин сохраняются. Перевод часов на6мин проверяет отказ
 публикации и retry после нового proof, но реальная успешная assembly>5мин,
 домашний mount/NAS/power-loss не квалифицированы. Пустые файлы не поддерживаются.
-[Протокол, partial result и ограничения](public-folder-tree-upload.md).
+[Протокол, partial result и ограничения](public-folders/public-folder-tree-upload.md).
 
 Домашний сервер, CI/CD, frontend и production Multi-Storage не изменялись;
 push/merge/release/deployment отсутствуют. Production **NO_GO**, Multi-Storage
@@ -863,7 +863,7 @@ Checkpoint только в памяти вкладки; большой файл/
 не квалифицированы. Серверные границы subtree/session независимо проверены по коду
 и адресной реальной HTTP проверкой в browser harness; backend расширения не нужны.
 
-[Реализация, проверки и повтор harness](public-folder-frontend.md),
+[Реализация, проверки и повтор harness](public-folders/public-folder-frontend.md),
 [review и evidence](evidence/public-folder-stage5-20261023/independent-review.md).
 После этой локальной работы остановка. Этап6/серверное обновление требуют отдельного
 согласования. Production **NO_GO**, Multi-Storage **DEFERRED**; push/merge/release/
@@ -887,22 +887,22 @@ deployment отсутствуют. Домашний сервер остаётс�
 
 ## Production Readiness — Secret Lifecycle
 
-Ненумерованный checkpoint: COMPLETE; independent review APPROVE. Инвентарь actual secrets, strengthened fail-closed validation, external-only CSPRNG generation, Docker context exclusions и vendor-neutral environment delivery завершены. JWT planned maintenance cutover явно инвалидирует старые tokens; DB/metrics rotation и rollback проверены на isolated compiled runtime. Focused106, full backend702 (59 suites, без skipped), generator1, lint/build/typecheck/Compose gates PASS. [Контракт](./secret-lifecycle.md), [evidence и ограничения](./production-readiness-checkpoint.md). Автоматическая JWT ротация не добавлена. OVERALL_PRODUCTION_READINESS: NOT_READY; encrypted/offsite backup, public certificate lifecycle и final recovery/acceptance остаются блокерами. Предыдущие COMPLETE checkpoints сохранены; новая Phase не создана. Рекомендуемый следующий блок — encrypted/offsite backup, автоматически не начинается.
+Ненумерованный checkpoint: COMPLETE; independent review APPROVE. Инвентарь actual secrets, strengthened fail-closed validation, external-only CSPRNG generation, Docker context exclusions и vendor-neutral environment delivery завершены. JWT planned maintenance cutover явно инвалидирует старые tokens; DB/metrics rotation и rollback проверены на isolated compiled runtime. Focused106, full backend702 (59 suites, без skipped), generator1, lint/build/typecheck/Compose gates PASS. [Контракт](security/secret-lifecycle.md), [evidence и ограничения](runbooks/production-readiness-checkpoint.md). Автоматическая JWT ротация не добавлена. OVERALL_PRODUCTION_READINESS: NOT_READY; encrypted/offsite backup, public certificate lifecycle и final recovery/acceptance остаются блокерами. Предыдущие COMPLETE checkpoints сохранены; новая Phase не создана. Рекомендуемый следующий блок — encrypted/offsite backup, автоматически не начинается.
 
 
 ## Production Readiness — Backup Productionization
 
-Ненумерованный checkpoint: COMPLETE в границах реализации и isolated qualification; independent review APPROVE. Standard age encrypted full backups, verified vendor-neutral filesystem replication, atomic generation sets, retention7/30d (minimum2), safe failure signals и encrypted offsite restore поверх существующего v1 tooling. Focused34, legacy backup27, restore validation15 PASS; real offsite-authoritative disposable DB/storage drill и readiness200 PASS. [Контракт, evidence и ограничения](./backup-productionization.md). Production физический offsite mount/failure domain, schedule/alerts, key custody и full-volume RPO/RTO требуют operator validation. Incremental engine не добавлен. OVERALL_PRODUCTION_READINESS: NOT_READY; public certificate lifecycle, final recovery/acceptance и remaining operator/release checks остаются блокерами. Новая Phase не создана; следующий блок автоматически не начинается.
+Ненумерованный checkpoint: COMPLETE в границах реализации и isolated qualification; independent review APPROVE. Standard age encrypted full backups, verified vendor-neutral filesystem replication, atomic generation sets, retention7/30d (minimum2), safe failure signals и encrypted offsite restore поверх существующего v1 tooling. Focused34, legacy backup27, restore validation15 PASS; real offsite-authoritative disposable DB/storage drill и readiness200 PASS. [Контракт, evidence и ограничения](runbooks/backup-productionization.md). Production физический offsite mount/failure domain, schedule/alerts, key custody и full-volume RPO/RTO требуют operator validation. Incremental engine не добавлен. OVERALL_PRODUCTION_READINESS: NOT_READY; public certificate lifecycle, final recovery/acceptance и remaining operator/release checks остаются блокерами. Новая Phase не создана; следующий блок автоматически не начинается.
 
 
 ## Production Readiness — Public Certificate Lifecycle
 
-Ненумерованный checkpoint: COMPLETE в границах native Linux lifecycle mechanics; independent review APPROVE. Certbot issuance/HTTP01 renewal contract, external-only snapshots/key0600, atomic activation, nginx validation/graceful reload/served fingerprint/rollback, configurable expiry JSON signaling завершены. Focused10/10 и native Linux daemon-side bind runtime PASS; public ACME protocol/CA issuance не упражнялись. Docker Desktop/macOS host shared bind не поддерживается из-за stale atomic symlink. [Контракт](./certificate-lifecycle.md), [evidence/ограничения](./production-readiness-checkpoint.md). OVERALL_PRODUCTION_READINESS: NOT_READY. Production CA/domain/bind/scheduler/alerts qualification, final recovery/acceptance и remaining operator/release checks остаются gates. Новая Phase не создана; предыдущие COMPLETE сохранены. Следующий рекомендуемый блок — final acceptance/go-live gate; автоматически не начинается.
+Ненумерованный checkpoint: COMPLETE в границах native Linux lifecycle mechanics; independent review APPROVE. Certbot issuance/HTTP01 renewal contract, external-only snapshots/key0600, atomic activation, nginx validation/graceful reload/served fingerprint/rollback, configurable expiry JSON signaling завершены. Focused10/10 и native Linux daemon-side bind runtime PASS; public ACME protocol/CA issuance не упражнялись. Docker Desktop/macOS host shared bind не поддерживается из-за stale atomic symlink. [Контракт](runbooks/certificate-lifecycle.md), [evidence/ограничения](runbooks/production-readiness-checkpoint.md). OVERALL_PRODUCTION_READINESS: NOT_READY. Production CA/domain/bind/scheduler/alerts qualification, final recovery/acceptance и remaining operator/release checks остаются gates. Новая Phase не создана; предыдущие COMPLETE сохранены. Следующий рекомендуемый блок — final acceptance/go-live gate; автоматически не начинается.
 
 
 ## Final Production Acceptance / Go-Live Gate — 2026-10-01
 
-Ненумерованная финальная кампания; новая Phase не создана. **OVERALL_PRODUCTION_READINESS: NOT_READY**. Fresh backend702/702 и frontend96/96, locked Docker builds, previous-backend compiled rollback и encrypted same-host offsite recovery PASS в явно ограниченных границах. Полный production deployment/TLS E2E остановлен occupied fixed proxy subnets; существующее preview не менялось. Public DNS/CA/target bind, operational scheduler/alert delivery, independent offsite/key custody/approved measured budgets и полный previous backend/frontend immutable-pair/operator acceptance остаются BLOCKING. Исправлен подтверждённый raw-URI/token logging дефект обоих nginx; raw proxy error diagnostics исключены, status/time и backend безопасные logs сохранены. [Матрица, raw evidence, классификации и operator checklist](./final-production-acceptance.md). Предыдущие COMPLETE checkpoints сохранены; запуск не разрешён, следующий workstream автоматически не начинается.
+Ненумерованная финальная кампания; новая Phase не создана. **OVERALL_PRODUCTION_READINESS: NOT_READY**. Fresh backend702/702 и frontend96/96, locked Docker builds, previous-backend compiled rollback и encrypted same-host offsite recovery PASS в явно ограниченных границах. Полный production deployment/TLS E2E остановлен occupied fixed proxy subnets; существующее preview не менялось. Public DNS/CA/target bind, operational scheduler/alert delivery, independent offsite/key custody/approved measured budgets и полный previous backend/frontend immutable-pair/operator acceptance остаются BLOCKING. Исправлен подтверждённый raw-URI/token logging дефект обоих nginx; raw proxy error diagnostics исключены, status/time и backend безопасные logs сохранены. [Матрица, raw evidence, классификации и operator checklist](runbooks/final-production-acceptance.md). Предыдущие COMPLETE checkpoints сохранены; запуск не разрешён, следующий workstream автоматически не начинается.
 
 Independent final review: **NO_GO** по raw evidence. Дополнительно unresolved external-only secret input path legacy backup/restore versus checkout .env; workaround не применён. Dependency audit finding/exposure см. final acceptance.
 
@@ -964,7 +964,7 @@ physical host disk; NFS/Desktop/host disappearance требуют отдельн
 Final Linux backend66/884 с real PostgreSQL без skipped, lint/typecheck/build/bench compile,
 canonical preview identity и API smoke PASS. Original10 tables и5files/37021bytes сохранились,
 перенос0bytes; mounts и DB/frontend/ingress не менялись. Production **NOT_READY / NO_GO**.
-[Архитектура](multi-storage-architecture.md), [операторский контракт](storage-registry-operations.md),
+[Архитектура](architecture/multi-storage-architecture.md), [операторский контракт](architecture/storage-registry-operations.md),
 [MS-2 evidence](evidence/multi-storage-registry-20261010/report.md). MS-3 Workspace abstraction
 не начинается автоматически; расширение доверия/user locations требует secure-open и host
 identity qualification. 50 GiB здесь не запускался.
@@ -984,7 +984,7 @@ pause/reload/resume/429/quota/expiry/recovery PASS; scoped independent reviews A
 сохранены. Процессное нарушение запрета чтения одной audit matching строки зафиксировано
 в evidence; файл не изменён/staged/committed, три исходных untracked сохранены.
 
-[Архитектура](multi-storage-architecture.md), [операторский контракт](upload-workspace-operations.md),
+[Архитектура](architecture/multi-storage-architecture.md), [операторский контракт](architecture/upload-workspace-operations.md),
 [evidence](evidence/upload-workspace-20261010/report.md). **secureOpen=false**, legacy TOCTOU
 и `.tmp` anchor only process lifetime. Production NOT_READY / NO_GO. MS-3B Secure Workspace
 Activation — следующий отдельный checkpoint; второй диск/cross-FS/политики/admin/UI,
@@ -1006,7 +1006,7 @@ rollback/retry и original `.tmp` return+explicit restart regression PASS. Four 
 reviews ACCEPT только disabled outcome, read-only canonical runtime identity/live200,
 preview healthy; rollout не выполнялся.
 
-[Architecture](multi-storage-architecture.md), [operator contract](upload-workspace-operations.md),
+[Architecture](architecture/multi-storage-architecture.md), [operator contract](architecture/upload-workspace-operations.md),
 [MS-3B evidence/platform matrix/blockers](evidence/secure-workspace-activation-20261010/report.md).
 Next gate: reviewed descriptor-safe lifecycle adapter, durable operator identity/recovery,
 actual target mount qualification, secure ingress и DB admission. MS-4 cross-FS finalizer
@@ -1268,8 +1268,8 @@ RAM/RSS для 50+ ГБ и физический SSD→HDD цикл не квал
 **Этап не помечается COMPLETE; production NOT_READY / NO_GO сохраняется.**
 На macOS нельзя подтвердить Linux descriptor boundary и реальные mount.
 Live сервер, Docker/VM, реальные диски, persistent volumes и данные не изменялись.
-Операторский контракт: [Workspace](upload-workspace-operations.md#подготовка-ssd-workspace-этап-1-2026-10-12),
-[Registry](storage-registry-operations.md#два-назначения-на-доверенном-сервере-подготовка-этапа-1).
+Операторский контракт: [Workspace](architecture/upload-workspace-operations.md#подготовка-ssd-workspace-этап-1-2026-10-12),
+[Registry](architecture/storage-registry-operations.md#два-назначения-на-доверенном-сервере-подготовка-этапа-1).
 
 После отчёта остановиться. Cross-FS finalizer, recovery, перенос данных и реальные
 50 GiB испытания требуют отдельного разрешения владельца; автоматически не начинать.
@@ -1426,7 +1426,7 @@ backendwarnings. Recovery/config и release fingerprint совместимост
 Два независимых review: unresolved MUST_FIX0. Backend full baseline
 38FAIL/154SKIP не исправлен и не выдаётся за PASS. Stopped old TLS ingress и собственные
 малые smoke данные сохранены; unrelated containers unchanged.
-[Runbook](docker-compose.md), [отчёт и границы](evidence/compose-20261013/report.md).
+[Runbook](runbooks/docker-compose.md), [отчёт и границы](evidence/compose-20261013/report.md).
 
 Linux SSD DB/HDD storage — только подготовка. Физические disks/mini-PC/TLS/50+GiB/RSS,
 SSD enrollment/recovery и destructive restore не проверены; SSD mapping отсутствует,
@@ -1449,7 +1449,7 @@ reviews: unresolved MUST_FIX0. Mac main/local Compose, backend Dockerfile, migra
 и данные сохранены; работающие Mac сервисы не менялись. Hardware/systemd Linux,
 actual target architecture/build, SSD→HDD/recovery, offsite target restore, reboot/
 powerloss/50+GiB/RSS на8GiB не проверены.
-[Инструкция оператора и STOP](linux-mini-pc.md), [evidence](evidence/d3-preparation-20261013/report.md).
+[Инструкция оператора и STOP](runbooks/linux-mini-pc.md), [evidence](evidence/d3-preparation-20261013/report.md).
 **COMPLETE не установлен; SSD OFF; production NOT_READY/NO_GO.** Подготовка D3
 закончена; остановиться. Следующие аппаратные/SSD действия требуют отдельного задания.
 
@@ -1467,7 +1467,7 @@ boot-order helper. Production ports/origin/subnets задаются явно, ne
 27 gate fixtures,36 preflight/config fixtures,12 D1 config regressions и isolated Docker
 missing-config/direct-restart smoke PASS. Независимое review: оба выявленных P1 исправлены,
 неустранённых критических замечаний нет. Подробные результаты и пределы:
-[evidence](evidence/d3-docker-first-20261013/report.md), [точные команды](linux-mini-pc.md).
+[evidence](evidence/d3-docker-first-20261013/report.md), [точные команды](runbooks/linux-mini-pc.md).
 Mini-PC не подключали; actual Linux UUID/udev/proc/mount/reboot/failure/D1 qualification
 не выполнена. Mac стек/данные и посторонние untracked сохранены. Временные chunks остаются
 на HDD до reviewed SSD forward enrollment; SSD uploads OFF/manual/mapping absent.
@@ -1489,7 +1489,7 @@ Mini-PC не подключали; actual Linux UUID/udev/proc/mount/reboot/fail
 
 Согласованный этап: аудит Mac/GitHub refs, сохранение D4 ancestry, SemVer beta candidates, PR/push CI,
 Linux/amd64 GHCR build/publish только после gates и manual approved tag+SHA, draft prerelease provenance,
-immutable image locks и offline reconciliation. [Политика и release команды](./release-management.md),
+immutable image locks и offline reconciliation. [Политика и release команды](runbooks/release-management.md),
 [фактические проверки и blockers](./evidence/d5-1-20261013/report.md).
 
 Mac main и GitHub main проверены на b5c954f; D4 впереди на 2 коммита, remote D4 отсутствует.
@@ -1565,7 +1565,7 @@ Production код не менялся. Финальный source HEAD прове
 
 ### D5.1.4 — Image Security Policy & Base Qualification (2026-10-14)
 
-**BLOCKED; Production NO_GO.** [Политика и CVE](./image-security-policy.md).
+**BLOCKED; Production NO_GO.** [Политика и CVE](security/image-security-policy.md).
 Runtime D5.1.3 backend/frontend0H/0C; base PostgreSQL1C/24H — Go stdlib в gosu,
 source-inferred недостижимость не является разрешённым исключением. Node8H/nginx3H/
 CI Node4C60H остаются блокерами. Совместимые теги сохранили прежние digests;
@@ -1822,12 +1822,12 @@ Frontend 313/313, lint и build PASS. Локальный IAB: login, созда�
 Реальные Safari/Chromium folder picker и OS drop не квалифицированы; деревья/drop,
 массовые и необратимые операции подтверждены автотестами, live public E2E не запускался.
 Запущен существующий Mac тестовый стек без rebuild/config changes, домашний сервер
-не менялся. [Инструкция, ограничения и границы проверок](ux-v2-local-preview.md).
+не менялся. [Инструкция, ограничения и границы проверок](ux/ux-v2-local-preview.md).
 Остановиться для личного тестирования и корректировок владельцем.
 
 ### UX v2 — массовое скачивание ZIP, локальный вариант (2026-10-24)
 
-Реализованы приватная подготовка одноразового права на ZIP, потоковый ZIP через общий с публичной папкой `archiver` и кнопка «Скачать ZIP» для множественного выделения. Миграция, адресные тесты и независимый security review включены. [Контракт, ограничения и сценарии личной проверки](ux-v2-mass-zip.md). **ОЖИДАЕТ ЛИЧНОЙ ПРОВЕРКИ ВЛАДЕЛЬЦА; UX v2 COMPLETE не установлен; Production NO_GO; Multi-Storage DEFERRED.** Нет push, merge, release или обновления домашнего сервера.
+Реализованы приватная подготовка одноразового права на ZIP, потоковый ZIP через общий с публичной папкой `archiver` и кнопка «Скачать ZIP» для множественного выделения. Миграция, адресные тесты и независимый security review включены. [Контракт, ограничения и сценарии личной проверки](ux/ux-v2-mass-zip.md). **ОЖИДАЕТ ЛИЧНОЙ ПРОВЕРКИ ВЛАДЕЛЬЦА; UX v2 COMPLETE не установлен; Production NO_GO; Multi-Storage DEFERRED.** Нет push, merge, release или обновления домашнего сервера.
 
 ### UX v2 + ZIP — локальная интеграция (2026-10-24)
 
@@ -1839,7 +1839,7 @@ frontend 321 PASS; адресные PostgreSQL/nginx проверки, lint/buil
 независимый review завершены без открытых блокеров. **ЛОКАЛЬНАЯ ИНТЕГРАЦИЯ
 ПРОВЕРЕНА; обновление домашнего сервера ожидает отдельного разрешения;
 Production NO_GO; Multi-Storage DEFERRED.** [План совместимости, обновления и
-отката](ux-v2-zip-integration.md).
+отката](ux/ux-v2-zip-integration.md).
 
 
 ### CI Reset v1 — локальная реализация (2026-10-25)
@@ -1868,7 +1868,7 @@ read-only backend проверку опубликованного beta prereleas
 Отсутствие установленного deployment metadata и недоступность проверки не
 превращаются в ложное сообщение о доступном обновлении. Публикация, установка,
 Docker, backup/restore и миграции не выполнялись; CI/release workflow не менялись.
-[Контракт и конфигурация](updates-stage-1.md). На дату проверки опубликованного
+[Контракт и конфигурация](updates/updates-stage-1.md). На дату проверки опубликованного
 beta release `test` нет.
 
 Адресные backend 5/5 и frontend 13/13 PASS; оба lint и build PASS (backend lint:
@@ -1970,4 +1970,4 @@ read-only проверку. Публикация совместимого beta-�
 подтверждена; доступное обновление не заявляется. Установка в Updates v1 не
 реализована. D5.1 release qualification и D5.2 safe CD не объявляются
 завершёнными. [Санитизированный указатель evidence](./evidence/test-checkpoint-20261030.md),
-[контракт Updates v1](./updates-stage-1.md), [production blockers](./final-production-acceptance.md).
+[контракт Updates v1](updates/updates-stage-1.md), [production blockers](runbooks/final-production-acceptance.md).

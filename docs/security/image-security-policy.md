@@ -32,7 +32,7 @@ Medium/low/unknown сохраняются в evidence для triage. Unfixed и 
 
 PR CI теперь пропускает четыре прямых диагностических скана upstream bases (`node`, `nginx`, `postgres`, `node-ci`). Исключаются только эти base reports и четыре соответствующие base environment records; production/runtime/support image scans, application/dependency/secret checks и обязательные bindings остаются в PR gate. Recovery workflow не менялся. Прямой push в `main` и reusable CI, вызванный release workflow, запускают все четыре скана. Release явно передаёт обязательный `qualification_profile: release`; профиль не выводится из `github.event_name`, поскольку reusable workflow наследует контекст caller. `policy-coverage` маркирует результаты профилем: `pull-request`, `main` или `release`; неизвестный профиль блокируется. PR evidence profile v2 не принимается release validator: публикация требует профиль `release`, все 17 environments, все четыре raw base reports и все прежние runtime/build evidence. Ошибка или неожиданный skip блокирует `gate`; разрешён только `base-image-scan` skip в PR-профиле. Эта оптимизация локально проверяется, но hosted execution не подтверждён. Production остаётся NO_GO.
 
-Backend/frontend квалифицируются из однократно собранных OCI archives; будущая публикация должна использовать их же без пересборки и пройти отдельную строгую проверку publication environment. Профили `main` и `release` сохраняют source/run/attempt, четыре runtime, пять build artifacts, семнадцать execution environments и четыре raw diagnostics. PR-профиль требует все runtime/build и остальные тринадцать environments, но не включает четыре upstream-base diagnostics. Release validator принимает только release-профиль. Collector/final gate проверяют evidence и не производят исполняемый release artifact. Полный список и ограничения: [реализация](./evidence/d5-1-5-policy-implementation-20261015.md).
+Backend/frontend квалифицируются из однократно собранных OCI archives; будущая публикация должна использовать их же без пересборки и пройти отдельную строгую проверку publication environment. Профили `main` и `release` сохраняют source/run/attempt, четыре runtime, пять build artifacts, семнадцать execution environments и четыре raw diagnostics. PR-профиль требует все runtime/build и остальные тринадцать environments, но не включает четыре upstream-base diagnostics. Release validator принимает только release-профиль. Collector/final gate проверяют evidence и не производят исполняемый release artifact. Полный список и ограничения: [реализация](../evidence/d5-1-5-policy-implementation-20261015.md).
 
 Формат closure evidence — `homecloud-skopeo-apt-closure-v2`: он привязывает native Debian architecture и сохраняет `Provides`/`Multi-Arch` из dpkg inventory. Resolver учитывает установленные provider-пакеты и версии virtual Provides, применяет архитектурные qualifiers, а неизвестные/неподдерживаемые выражения по-прежнему блокируют. Это уточнение учёта closure, не изменение severity gate или disposition findings.
 
@@ -95,7 +95,7 @@ setgroups/setgid/setuid и exec, не TLS handshake. Это доказатель
 о недостижимости, не одобренное исключение и не анализ точного бинарного call graph.
 
 Все 24 high, их affected APIs, installed/fixed versions и ссылки на официальную
-Go OSV разобраны отдельно в [PostgreSQL qualification](./evidence/d5-1-4-20261014/postgres-qualification.md).
+Go OSV разобраны отдельно в [PostgreSQL qualification](../evidence/d5-1-4-20261014/postgres-qualification.md).
 В частности CVE-2026-39836 Windows-only, CVE-2026-39822 относится к os.Root APIs,
 которые не найдены в проверенных исходниках. Нельзя автоматически удалить все
 findings stdlib на основании этих примеров.
@@ -123,7 +123,7 @@ locale/collation/ICU, extensions ABI, UID и permissions. Совпадение m
 
 ## Node/nginx/CI: исправимость и ограничения
 
-Полная [квалификация баз](./evidence/d5-1-4-20261014/base-qualification.md) содержит
+Полная [квалификация баз](../evidence/d5-1-4-20261014/base-qualification.md) содержит
 версии и первичные ссылки. Обновление npm до12.2.0 не гарантирует устранение его
 bundled findings: upstream lock всё ещё содержит brace-expansion5.0.9/undici6.28.0.
 Для CVE-2026-93748 нет подтверждённого поддерживаемого fix;

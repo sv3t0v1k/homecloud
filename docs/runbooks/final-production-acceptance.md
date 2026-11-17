@@ -1,6 +1,6 @@
 ## Актуальный ненумерованный final-local-prep — 2026-10-02
 
-**OVERALL_PRODUCTION_READINESS: NOT_READY / NO_GO**. Standalone [операторский пакет](./go-live-checklist.md), единственный [external-input master checklist](./external-input-master-checklist.md), [evidence index](./evidence/README.md). Предыдущие матрицы/команды ниже — исторические checkpoint, не текущий порядок deployment. Текущая последовательность требует prepare всей пары до stop и --pull never при переходе; partial rollback не квалифицирован.
+**OVERALL_PRODUCTION_READINESS: NOT_READY / NO_GO**. Standalone [операторский пакет](./go-live-checklist.md), единственный [external-input master checklist](./external-input-master-checklist.md), [evidence index](../evidence/README.md). Предыдущие матрицы/команды ниже — исторические checkpoint, не текущий порядок deployment. Текущая последовательность требует prepare всей пары до stop и --pull never при переходе; partial rollback не квалифицирован.
 
 ### Consolidated blocker matrix
 
@@ -21,7 +21,7 @@
 | Local ingress/browser/operator prep | LOCALLY_QUALIFIED | Fresh exact production template API/browser1440×900/390×844 и standalone operator walkthrough PASS; real host acceptance separate |
 | Real host/browser/operator acceptance | EXTERNAL_INPUT_REQUIRED | Named operator, public endpoint,≥15min observation и owner GO |
 
-RPO/RTO: decimal JSON `*_seconds` подтверждает около31seconds, а не31thousand seconds. Candidate12min математически согласован, но только OWNER_APPROVAL_REQUIRED; см. [точные единицы](./recovery-objectives.md#единицы-baseline-исправление-интерпретации). Исторические ephemeral raw пути не являются текущими dependencies; см. index.
+RPO/RTO: decimal JSON `*_seconds` подтверждает около31seconds, а не31thousand seconds. Candidate12min математически согласован, но только OWNER_APPROVAL_REQUIRED; см. [точные единицы](../architecture/recovery-objectives.md#единицы-baseline-исправление-интерпретации). Исторические ephemeral raw пути не являются текущими dependencies; см. index.
 
 ### Свежий final local acceptance — итог проверок
 
@@ -76,7 +76,7 @@ HEAD `bb01b5f35ace220e9bf34b8984297784edf629e8`; status содержал тол�
 | Runtime dependency exposure review | BLOCKING security-review input | RESOLVED для GHSA-wrjc-x8rr-h8h6: React Router 7.18.2, bounded review и regression ниже; общий SECURITY_OPS_ACCEPTANCE остаётся INCONCLUSIVE |
 | Backup volume / disk / maintenance / agreed RPO/RTO | BLOCKING | INCONCLUSIVE: нет approved launch-volume budgets и замеров; fixture не доказывает24h/30min |
 
-Отсутствующее evidence не понижено до advisory. Runbook policy требует real public CA/domain/bind qualification до go-live: [certificate lifecycle](./certificate-lifecycle.md), [topology](./production-topology.md). Исполняемая процедура и local smoke недостаточны.
+Отсутствующее evidence не понижено до advisory. Runbook policy требует real public CA/domain/bind qualification до go-live: [certificate lifecycle](./certificate-lifecycle.md), [topology](../architecture/production-topology.md). Исполняемая процедура и local smoke недостаточны.
 
 ## Release artifact qualification
 
@@ -140,7 +140,7 @@ Risk candidates не называются ACCEPTED без отдельного o
 
 ## Operator acceptance checklist
 
-Checklist выполняется на выбранном Linux host, из защищённого deployment checkout; полные команды/inputs находятся в [release/rollback](./release-and-rollback.md), [secrets](./secret-lifecycle.md), [certificates](./certificate-lifecycle.md), [backup](./backup-productionization.md). Проверки не разрешают открыть traffic при любом unresolved blocker.
+Checklist выполняется на выбранном Linux host, из защищённого deployment checkout; полные команды/inputs находятся в [release/rollback](./release-and-rollback.md), [secrets](../security/secret-lifecycle.md), [certificates](./certificate-lifecycle.md), [backup](./backup-productionization.md). Проверки не разрешают открыть traffic при любом unresolved blocker.
 
 1. Зафиксировать release commit, new/previous backend/frontend registry digests, schema compatibility manifest и owner/budgets. Подтвердить project/volume names, storage UID1001, свободные fixed networks, DB/host restart recovery mechanism, внешний maintenance barrier и операторов escalation.
 2. Проверить real PUBLIC_HOST DNS A/AAAA, TCP80/443, внешний challenge и chain/SAN/expiry; выполнить Certbot bootstrap/install по certificate runbook на host. Qualify native coherent bind, renew/reload и served fingerprint. Не применять self-signed fallback.
@@ -333,6 +333,6 @@ Remaining: deferred Linux/DNS/public CA/native bind; внешний registry; ta
 
 ## Независимое offsite / custody / measured budgets — 2026-10-02
 
-Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](./recovery-objectives.md), [raw qualification](./evidence/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
+Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](../architecture/recovery-objectives.md), [raw qualification](./evidence/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
 
 Раздельные итоговые статусы: OFFSITE_FAILURE_DOMAIN_MECHANICS=PASS; REAL_EXTERNAL_OFFSITE=NOT_QUALIFIED; RECOVERY_KEY_CUSTODY_MECHANICS=PASS; REAL_CUSTODIAN_PROCESS=NOT_QUALIFIED; MEASURED_RPO_RTO_BASELINE=PASS; OWNER_APPROVED_RECOVERY_BUDGETS=NOT_AVAILABLE; INDEPENDENT_OFFSITE_RECOVERY_DRILL=PASS; INDEPENDENT_REVIEW=APPROVE; PRODUCTION_BLOCKER_OFFSITE_RECOVERY=PARTIALLY_RESOLVED. Два128MiB прогона: verified RTO31.384/31.543s; подробные component timings, gaps и evidence limits — в recovery objectives. Overall NOT_READY / NO_GO.

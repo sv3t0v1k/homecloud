@@ -1,7 +1,7 @@
 # D5.1 — управление версиями и CI
 
 Статус: D5.1.2 Release Readiness BLOCKED по реальным image high/critical и непринятым residual risks; PR/push CI source9d33bd2 FAILURE только image scans/gate, тесты и OCI dry-run PASS. Production NO_GO. [Evidence D5.1.2](./evidence/d5-1-2-20261014/report.md).
-Единственный roadmap — [ROADMAP.md](./ROADMAP.md). [Фактический аудит и проверки](./evidence/d5-1-20261013/report.md).
+Единственный roadmap — [ROADMAP.md](../ROADMAP.md). [Фактический аудит и проверки](./evidence/d5-1-20261013/report.md).
 
 ## Версии и границы
 
@@ -141,7 +141,7 @@ mini-PC, общей Docker/DNS/mount/volume конфигурации в D5.1.
 
 ### D5.1.4 — квалификация баз и политика image scans
 
-[Политика, конкретные CVE и evidence](./image-security-policy.md). Все существующие
+[Политика, конкретные CVE и evidence](../security/image-security-policy.md). Все существующие
 raw-base/HIGH/CRITICAL blockers сохранены; индивидуальные исключения не согласованы.
 Добавлены DB freshness/target evidence и адресный Perl security patch в CI.
 Выявлены coverage gaps production PostgreSQL/ingress и post-install build/CI images.

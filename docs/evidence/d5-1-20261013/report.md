@@ -105,7 +105,7 @@ D5.1 COMPLETE не установлен. Не создан новый release/ta
 Нужны: подтверждение push отдельной ветки/draft PR в PUBLIC repo; реальные CI results; исправление
 high/critical advisories с независимым review; owner-approved main protection и интеграция без потери
 D4; явно утверждённые tag/SHA; фактический Linux build/publish/digest/provenance/draft acceptance.
-Release команды и version policy: [release-management.md](../../release-management.md).
+Release команды и version policy: [release-management.md](../../runbooks/release-management.md).
 
 Reconciliation сейчас: Mac/GitHub/D4 source различия объяснимы; release/GHCR digests/full applied schema
 UNKNOWN. Snapshot [deployment-reported.json](./deployment-reported.json) — данные предыдущего отчёта,

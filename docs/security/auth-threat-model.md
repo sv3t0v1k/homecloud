@@ -22,7 +22,7 @@ The original Phase 9 analysis is retained below; token storage and key cutover s
 
 Anything **not** present in that code is documented as *not implemented* —
 even if `README.md`, `docs/ROADMAP.md` or the Frontend roadmap mention it.
-Access/refresh authentication does not use HttpOnly cookies. Native download uses a separate resource-bound HttpOnly capability cookie, not a JWT auth session; see [local release contract](./local-release-baseline.md).
+Access/refresh authentication does not use HttpOnly cookies. Native download uses a separate resource-bound HttpOnly capability cookie, not a JWT auth session; see [local release contract](../runbooks/local-release-baseline.md).
 
 ## 2. Implemented — authentication flow
 

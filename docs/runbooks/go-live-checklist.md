@@ -48,7 +48,7 @@ BACKUP_WRITE_BARRIER_CONFIRMED=1 bash scripts/backup-production.sh
 env -i PATH="$PATH" HOME="$HOME" HOMECLOUD_ENV_FILE="$RECOVERY_ENV_FILE" bash "$RELEASE_SOURCE/scripts/restore-offsite.sh" "$GENERATION" --validate-only
 ```
 
-`RECOVERY_ENV_FILE` — отдельный external custodian file; identity не возвращается writer/scheduler. Validation не destructive, но не заменяет measured restore drill. Для первой пустой установки backup исходной DB отсутствует: STOP до зафиксированного initial-install decision и successful backup/recovery перед public GO. [Контракт backup](./backup-productionization.md), [custody/recovery](./recovery-objectives.md).
+`RECOVERY_ENV_FILE` — отдельный external custodian file; identity не возвращается writer/scheduler. Validation не destructive, но не заменяет measured restore drill. Для первой пустой установки backup исходной DB отсутствует: STOP до зафиксированного initial-install decision и successful backup/recovery перед public GO. [Контракт backup](./backup-productionization.md), [custody/recovery](../architecture/recovery-objectives.md).
 
 ## 5–6. Migration/preflight и deploy пары
 
@@ -78,7 +78,7 @@ docker compose up -d --no-build --no-deps ingress
 
 Внутренние live/ready200 и protected/disabled metrics проверить из operator Docker network; backend port не публиковать. `docker compose exec -T frontend nginx -t` и `docker compose exec -T ingress nginx -t`. Через реальный FQDN проверить HTTP308, trusted public certificate chain/SAN/expiry, HTTPS headers/CSP, private health/metrics denial и proxy spoofing. Self-signed local result не квалифицирует public trust.
 
-Закрытый public barrier допускает только operator access: login/session restore, root/nested/create folder, upload/download byte equality, preview, share create/revoke, trash/delete/restore, logout/relogin, desktop+narrow contextual dialogs/routing/no fatal console errors. Удалить disposable smoke data, проверить accounting. Локальный [acceptance evidence index](./evidence/README.md) и harness — regression tools, target acceptance оператор фиксирует отдельно.
+Закрытый public barrier допускает только operator access: login/session restore, root/nested/create folder, upload/download byte equality, preview, share create/revoke, trash/delete/restore, logout/relogin, desktop+narrow contextual dialogs/routing/no fatal console errors. Удалить disposable smoke data, проверить accounting. Локальный [acceptance evidence index](../evidence/README.md) и harness — regression tools, target acceptance оператор фиксирует отдельно.
 
 До install timers qualified wrapper/offsite/recipient обязательны: Persistent timer способен немедленно запустить job. Выполнить scheduler validate/install/list-timers/result/journal по [scheduler commands](./scheduler-alerting.md#внешняя-конфигурация-и-установка), TEST delivery с human receipt/ack и внешний host watchdog. При cert failure действующий valid cert сохраняется; renewal/recovery — [certificate lifecycle](./certificate-lifecycle.md). `INGRESS_ID=$(docker compose ps -q ingress)` используется как реальный `--container`, не guessed name.
 
@@ -98,7 +98,7 @@ docker compose up -d --no-build --no-deps --pull never backend
 docker compose up -d --no-build --no-deps --pull never frontend
 ```
 
-Возвращается вся previous backend/frontend pair. При schema guard failure — STOP, reviewed roll-forward/recovery decision, без down migration. Сверить identity/data/ingress/E2E повторно до открытия barrier. При data corruption сначала forensic snapshot, затем отдельное incident decision на destructive paired restore; [recovery sequence без original host](./recovery-objectives.md#аварийное-восстановление-без-chat-context), `restore-offsite.sh GENERATION --validate-only`, затем только после explicit decision `--yes`. Wrong/missing key/corrupt/unavailable offsite => STOP до mutation; все keys потеряны => unrecoverable. Даже при nonzero restore ingress остаётся закрытым: helper failure path может запустить app.
+Возвращается вся previous backend/frontend pair. При schema guard failure — STOP, reviewed roll-forward/recovery decision, без down migration. Сверить identity/data/ingress/E2E повторно до открытия barrier. При data corruption сначала forensic snapshot, затем отдельное incident decision на destructive paired restore; [recovery sequence без original host](../architecture/recovery-objectives.md#аварийное-восстановление-без-chat-context), `restore-offsite.sh GENERATION --validate-only`, затем только после explicit decision `--yes`. Wrong/missing key/corrupt/unavailable offsite => STOP до mutation; все keys потеряны => unrecoverable. Даже при nonzero restore ingress остаётся закрытым: helper failure path может запустить app.
 
 ## 13. Observation и отдельный GO
 

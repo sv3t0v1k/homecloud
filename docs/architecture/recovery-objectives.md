@@ -17,7 +17,7 @@ Rotation: создать новую identity вне source; сделать дв�
 ## Аварийное восстановление без chat context
 
 1. Объявить incident и записать UTC timestamp; закрыть ingress/writers. Получить независимый offsite inventory и выбрать последнее verified поколение; записать его snapshot timestamp и completion timestamp.
-2. Подготовить новый host/Compose project, PostgreSQL/storage volumes, trusted recovery tools/images и external recovery.env согласно [backup productionization](./backup-productionization.md). Original host не требуется; config/credentials и release images должны быть доступны независимо.
+2. Подготовить новый host/Compose project, PostgreSQL/storage volumes, trusted recovery tools/images и external recovery.env согласно [backup productionization](../runbooks/backup-productionization.md). Original host не требуется; config/credentials и release images должны быть доступны независимо.
 3. Custodian выдаёт нужную identity по аварийной процедуре в private temporary directory. Получить ciphertext только из независимого target, проверить digest по независимому inventory. Смонтировать target read-only для recovery; local staging находится на replacement encrypted filesystem.
 4. Из чистого окружения выполнить `env -i PATH="$PATH" HOME="$HOME" HOMECLOUD_ENV_FILE=/secure/recovery.env bash /opt/homecloud/scripts/restore-offsite.sh GENERATION --validate-only`. После PASS выполнить ту же команду с `--yes` вместо `--validate-only`, при maintenance barrier.
 5. Выполнить documented migrations/reconciliation, запустить backend; readiness200 недостаточно: проверить rows/ownership/shares/trash/quota и file bytes/SHA256. Записать readiness и verification timestamps; только после acceptance открыть traffic.

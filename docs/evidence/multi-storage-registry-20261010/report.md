@@ -20,7 +20,7 @@
 | RUNTIME | New local `homecloud-preview-backend:registry-checkpoint`, Node20.20.2 Linux UID/EUID1001; identity diagnostics + small full API smoke PASS; четыре healthy services; mounts/env/user/network set неизменны, DB/frontend/ingress IDs прежние |
 | INDEPENDENT_REVIEWS | [Filesystem ACCEPT WITH LIMITATIONS, mount ACCEPT, legacy consumers ACCEPT](independent-reviews.md); findings и отозванная stat-only гипотеза явно зафиксированы |
 | OPEN_LIMITATIONS | Legacy TOCTOU/exclusive namespace assumption; marker clone+restart не attestation; Docker VM не physical Mac disk; NFS/SMB/durability/host disappearance и blocking remote IO требуют qualification; capacity-domain/policy/secure descriptors отсутствуют |
-| DOCS | Architecture и ненумерованная ROADMAP обновлены; [operator/bootstrap contract](../../storage-registry-operations.md), design, independent reviews и JSON summaries здесь |
+| DOCS | Architecture и ненумерованная ROADMAP обновлены; [operator/bootstrap contract](../../architecture/storage-registry-operations.md), design, independent reviews и JSON summaries здесь |
 | COMMITS | Implementation: `e034d813214d9213b6f0f74012fa3d22e6bc7ba4` («Добавить реестр разрешённых хранилищ и проверки идентичности основного тома»); отдельный русский docs/evidence commit |
 | FINAL_HEAD | SHA итогового docs commit сообщается в финальном отчёте; собственный SHA документа не дублируется |
 | GIT_STATUS | Три исходных untracked сохранены и не staged; запрещённый audit не read/edit/stage/commit. Только own MS-2 changes; push/tag/release не выполнялись |
