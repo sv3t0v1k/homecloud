@@ -175,6 +175,7 @@ describe("UploadsService - Post-Review Fixes", () => {
         connection: {
           createQueryRunner: jest.fn(() => mockQueryRunner),
         },
+        query: (...args: unknown[]) => mockQueryRunner.manager.query(...args),
       },
     };
     mockFileRepository = {
@@ -960,6 +961,24 @@ describe("UploadsService - Post-Review Fixes", () => {
         1, 8, mockQueryRunner.manager,
       );
       cleanup(dir, finalPath);
+    });
+  });
+
+  describe("getUploadLimits — shared accounting hint", () => {
+    it("reduces the remaining-quota hint by upload and copy reservations", async () => {
+      mockUsersService.findById.mockResolvedValue({ id: 1 });
+      mockQueryRunner.manager.findOne.mockResolvedValue({
+        id: 1, isActive: true, storageQuota: "1000", storageUsed: "400",
+      });
+      // Prime the accounting mock's owner snapshot the same way the
+      // publication path captures it: any UserEntity findOne feeds it.
+      await mockQueryRunner.manager.findOne(UserEntity, { where: { id: 1 } });
+      mockQueryBuilder.getRawOne.mockResolvedValue({ activeTotal: "50" });
+      copyReservedBytes = 150n;
+
+      const limits = await service.getUploadLimits(1);
+
+      expect(limits.quotaRemainingBytes).toBe(400);
     });
   });
 

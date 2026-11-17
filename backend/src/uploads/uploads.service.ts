@@ -839,12 +839,13 @@ export class UploadsService {
       })
       .getRawOne();
     const activeTotal = parseDatabaseSize(active?.activeTotal);
-    const quota = parseDatabaseSize(user.storageQuota);
-    const used = parseDatabaseSize(user.storageUsed);
-    const quotaRemainingBytes = Math.max(
-      0,
-      quota - parseDatabaseSize(used + activeTotal),
+    // Informational hint only. The shared accounting snapshot also covers
+    // copy reservations, so the remaining figure matches admission checks.
+    const accounting = await readStorageCommitments(
+      this.uploadSessionRepository.manager,
+      userId,
     );
+    const quotaRemainingBytes = Number(accounting.remainingBytes);
     const remainingActiveBytes =
       this.maxTotalSize > 0
         ? Math.max(0, this.maxTotalSize - activeTotal)
