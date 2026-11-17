@@ -65,3 +65,9 @@ backend/native/*.node
 
 # Python fixture and CI helper outputs
 __pycache__/
+
+# Намеренно неотслеживаемое QA-evidence (closure-сценарии 2026-09/10,
+# не коммитить: зафиксировано как "forbidden untracked" в квалификациях)
+docs/evidence/frontend-functional/closure-checkpoint.json
+docs/evidence/frontend-functional/closure-controls.json
+scripts/tests/PHASE-5.3.1-TEST-AUDIT.md

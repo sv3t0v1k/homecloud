@@ -8,7 +8,7 @@
 ## Объект и доверие
 
 Источник истины для bytes — `qualification.lock.json`, для доказательств —
-`docs/evidence/d5-1-12/{scan,qualification}/`. Сохранены 25 выбранных evidence, SHA-256
+`docs/evidence/archive/d5-1-12/{scan,qualification}/`. Сохранены 25 выбранных evidence, SHA-256
 сверены с D5.1.11. Локальные абсолютные пути в старых raw records — исторические,
 исполнять их нельзя; используйте новые относительные пути сохранённых копий.
 
@@ -81,7 +81,7 @@ vcs.revision и vcs.modified=false. Требуется совпадение pinn
 APK проверяется по pinned hash; потеря исходного vendor APK — STOP, не floating download.
 В текущем запуске оба точных материала восстановлены чтением allowlisted members
 существующего OCI (без запуска/общей распаковки); layer hashes и paths закреплены в
-`docs/evidence/d5-1-12/materials-binding.json`. Новый локальный context подготовлен
+`docs/evidence/archive/d5-1-12/materials-binding.json`. Новый локальный context подготовлен
 в mirror `outputs/d5-1-12-20261018/context`, его hashes сохранены в context-result.
 Это дополнительная рабочая копия материалов, не независимый долговечный архив.
 
