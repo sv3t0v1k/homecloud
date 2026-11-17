@@ -24,6 +24,10 @@ import {
   validateActorIdentity,
 } from "./admin-users-read.service";
 import {
+  canSetStorageQuota,
+  readStorageCommitments,
+} from "../storage/storage-accounting";
+import {
   AdminUserDto,
   AdminChangePasswordResultDto,
   parseAdminChangePassword,
@@ -173,9 +177,9 @@ export class AdminUsersWriteService {
     );
   }
 
-  // Internal administrative PATCH operation.
-  // Quota changes remain unavailable until storage accounting
-  // and reservation admission share the required transaction locks.
+  // Administrative profile PATCH. Quota changes share the user-row
+  // lock with upload and copy admission, so the shared accounting
+  // snapshot inside the transaction is authoritative.
   async updateProfile(
     actor: AdminActor,
     rawId: unknown,
@@ -196,13 +200,6 @@ export class AdminUsersWriteService {
     const id = parseAdminUserId(rawId);
     const input = parseAdminUpdateUser(rawBody);
 
-    if (input.storageQuota !== undefined) {
-      throw new BadRequestException({
-        code: "VALIDATION_ERROR",
-        message: "Invalid administrator request",
-      });
-    }
-
     return this.database.transaction(
       "READ COMMITTED",
       async (manager) => {
@@ -210,8 +207,28 @@ export class AdminUsersWriteService {
 
         // Explicit field allowlist, never arbitrary entity updates.
         const changes: Partial<
-          Pick<UserEntity, "name" | "email" | "isEmailVerified" | "role">
+          Pick<UserEntity, "name" | "email" | "isEmailVerified" | "role" | "storageQuota">
         > = {};
+
+        if (input.storageQuota !== undefined) {
+          // The target row is already locked: this snapshot sees the
+          // same commitments that admission checks against.
+          const accounting = await readStorageCommitments(manager, id);
+
+          if (!canSetStorageQuota(accounting, BigInt(input.storageQuota))) {
+            throw new ConflictException({
+              code: "QUOTA_BELOW_COMMITMENTS",
+              message:
+                "Storage quota cannot be below used and reserved bytes",
+            });
+          }
+
+          // The decimal string passes verbatim to the bigint column.
+          if (input.storageQuota !== String(target.storageQuota)) {
+            changes.storageQuota =
+              input.storageQuota as unknown as number;
+          }
+        }
 
         if (input.name !== undefined && input.name !== target.name) {
           changes.name = input.name;

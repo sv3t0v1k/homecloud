@@ -12,6 +12,7 @@ import { UsersModule } from "./users.module";
 import { AdminUsersWriteService } from "./admin-users-write.service";
 import { lockAdminTransactions } from "./admin-transaction-lock";
 import { UserEntity, UserRole } from "../entities/user.entity";
+import { LEGACY_UPLOAD_WORKSPACE_ID } from "../entities/upload-workspace.entity";
 import { RefreshTokenEntity } from "../entities/refresh-token.entity";
 import { FileEntity } from "../entities/file.entity";
 import { FolderEntity } from "../entities/folder.entity";
@@ -85,6 +86,12 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     await adminConnection.initialize();
 
     await adminConnection.query(`CREATE SCHEMA "${schema}"`);
+    // The shared storage accounting helper aggregates copy reservations.
+    // That table comes from a migration, not an entity, so the
+    // entity-synchronized test schema needs it added explicitly.
+    await adminConnection.query(
+      `CREATE TABLE IF NOT EXISTS "${schema}"."file_copy_operations" (id serial PRIMARY KEY, "userId" integer NOT NULL, state varchar(32) NOT NULL, bytes bigint NOT NULL DEFAULT 0)`,
+    );
     schemaCreated = true;
 
     const config = new ConfigService({
@@ -480,12 +487,16 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     expect(missing.body.code).toBe("USER_NOT_FOUND");
   });
 
-  it("does not open administrative update endpoints prematurely", async () => {
+  it("keeps the administrative status endpoint closed", async () => {
     const headers = { Authorization: `Bearer ${adminToken}` };
 
-    await request(app.getHttpServer())
+    // The profile/quota PATCH is open since the storage accounting
+    // stages, but an empty body is still rejected before any write.
+    const empty = await request(app.getHttpServer())
       .patch(`${ENDPOINT}/${ordinary.id}`)
-      .set(headers).send({}).expect(404);
+      .set(headers).send({});
+    expect(empty.status).toBe(400);
+    expect(empty.body.code).toBe("VALIDATION_ERROR");
 
     await request(app.getHttpServer())
       .patch(`${ENDPOINT}/${ordinary.id}/status`)
@@ -1051,7 +1062,7 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     };
   }
 
-  it("denies unauthorized profile changes and rejects premature quota edits", async () => {
+  it("denies unauthorized profile changes and unsafe quota edits", async () => {
     const users = db.getRepository(UserEntity);
     const before = await users.findOneByOrFail({ id: ordinary.id });
 
@@ -1075,8 +1086,6 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
 
     for (const patch of [
       {},
-      { storageQuota: "0" },
-      { name: "Valid", storageQuota: "0" },
       { storageUsed: "0" },
       { password: PASSWORD },
       { isActive: false },
@@ -1087,6 +1096,22 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
         String(ordinary.id),
         patch,
       )).rejects.toMatchObject({ status: 400 });
+    }
+
+    // The account already uses 3072 bytes, so a zero quota is a
+    // commitment conflict, not a format error.
+    for (const patch of [
+      { storageQuota: "0" },
+      { name: "Valid", storageQuota: "3071" },
+    ]) {
+      await expect(updateService().updateProfile(
+        administratorActor(),
+        String(ordinary.id),
+        patch,
+      )).rejects.toMatchObject({
+        status: 409,
+        response: { code: "QUOTA_BELOW_COMMITMENTS" },
+      });
     }
 
     await expect(updateService().updateProfile(
@@ -1163,6 +1188,141 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
 
     expect(await users.findOneByOrFail({ id: ordinary.id }))
       .toEqual(after);
+  });
+
+  it("changes the storage quota over HTTP without touching sessions or files", async () => {
+    const users = db.getRepository(UserEntity);
+    const sessions = db.getRepository(RefreshTokenEntity);
+
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+    const tokensBefore = await sessions.findBy({ userId: ordinary.id });
+
+    const response = await request(app.getHttpServer())
+      .patch(`${ENDPOINT}/${ordinary.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ storageQuota: "9007199254740991" })
+      .expect(200);
+
+    expect(response.body.data).toMatchObject({
+      id: ordinary.id,
+      storageQuota: "9007199254740991",
+      storageUsed: "3072",
+    });
+
+    const after = await users.findOneByOrFail({ id: ordinary.id });
+
+    expect(after).toEqual({
+      ...before,
+      storageQuota: "9007199254740991",
+      updatedAt: after.updatedAt,
+    });
+    expect(String(after.sessionVersion)).toBe(String(before.sessionVersion));
+
+    // A quota change is not an identity change: sessions stay valid.
+    expect(await sessions.findBy({ userId: ordinary.id }))
+      .toEqual(tokensBefore);
+    expect((await get(ME, userToken)).status).toBe(200);
+  });
+
+  it("counts upload and copy reservations against the quota guard", async () => {
+    const users = db.getRepository(UserEntity);
+
+    // used=3072; add a 1000-byte upload reservation and a 500-byte copy.
+    await db.query(
+      `INSERT INTO upload_workspaces (id, "machineKey", "mountKey", type)
+       VALUES ($1, $2, $3, 'local_filesystem')
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        LEGACY_UPLOAD_WORKSPACE_ID,
+        `quota-test-${randomUUID()}`,
+        `quota-mount-${randomUUID()}`,
+      ],
+    );
+    await db.query(
+      `INSERT INTO upload_sessions ("uploadId",filename,"totalSize","uploadedSize","chunkSize","totalChunks","uploadedCount","accountingInitialized","tempPath","workspaceId",status,"expiresAt","userId")
+       VALUES ($1,'reservation.bin',1000,0,1000,1,0,true,$2,$3,'pending','2030-01-01',$4)`,
+      [
+        randomUUID(),
+        `/tmp/admin-quota-${randomUUID()}`,
+        LEGACY_UPLOAD_WORKSPACE_ID,
+        ordinary.id,
+      ],
+    );
+    await db.query(
+      `INSERT INTO "file_copy_operations" ("userId", state, bytes) VALUES ($1, 'reserved', 500)`,
+      [ordinary.id],
+    );
+
+    // 3072 + 1000 + 500 = 4572 committed.
+    await request(app.getHttpServer())
+      .patch(`${ENDPOINT}/${ordinary.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ storageQuota: "4571" })
+      .expect(409)
+      .expect((value) => {
+        expect(value.body.code).toBe("QUOTA_BELOW_COMMITMENTS");
+        expect(value.body.message).toBe(
+          "Storage quota cannot be below used and reserved bytes",
+        );
+      });
+
+    // Exactly the committed amount is allowed.
+    const accepted = await request(app.getHttpServer())
+      .patch(`${ENDPOINT}/${ordinary.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ storageQuota: "4572" })
+      .expect(200);
+
+    expect(accepted.body.data.storageQuota).toBe("4572");
+    expect(
+      String((await users.findOneByOrFail({ id: ordinary.id })).storageQuota),
+    ).toBe("4572");
+
+    await db.query(
+      `DELETE FROM upload_sessions WHERE "userId"=$1 AND filename='reservation.bin'`,
+      [ordinary.id],
+    );
+    await db.query(
+      `DELETE FROM "file_copy_operations" WHERE "userId"=$1`,
+      [ordinary.id],
+    );
+  });
+
+  it("serializes concurrent quota patches to one committed value", async () => {
+    const users = db.getRepository(UserEntity);
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+
+    const [first, second] = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`${ENDPOINT}/${ordinary.id}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ storageQuota: "6000" }),
+      request(app.getHttpServer())
+        .patch(`${ENDPOINT}/${ordinary.id}`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ storageQuota: "7000" }),
+    ]);
+
+    expect([first.status, second.status]).toEqual([200, 200]);
+
+    const after = await users.findOneByOrFail({ id: ordinary.id });
+    expect(["6000", "7000"]).toContain(String(after.storageQuota));
+    expect(String(after.sessionVersion))
+      .toBe(String(before.sessionVersion));
+  });
+
+  it("rejects quota patches from ordinary users over HTTP", async () => {
+    const users = db.getRepository(UserEntity);
+    const before = await users.findOneByOrFail({ id: ordinary.id });
+
+    await request(app.getHttpServer())
+      .patch(`${ENDPOINT}/${ordinary.id}`)
+      .set("Authorization", `Bearer ${userToken}`)
+      .send({ storageQuota: "9007199254740991" })
+      .expect(403);
+
+    expect(await users.findOneByOrFail({ id: ordinary.id }))
+      .toMatchObject({ storageQuota: before.storageQuota });
   });
 
   it("changes canonical email and atomically invalidates old access and refresh sessions", async () => {

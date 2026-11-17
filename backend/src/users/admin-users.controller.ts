@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Patch,
   Post,
   Put,
   Req,
@@ -55,6 +56,18 @@ export class AdminUsersController {
         userId: request.user.userId,
         sessionVersion: request.user.sessionVersion,
       },
+      request.body,
+    );
+  }
+
+  @Patch(":id")
+  async updateProfile(@Req() request: AuthenticatedRequest) {
+    return this.writes.updateProfile(
+      {
+        userId: request.user.userId,
+        sessionVersion: request.user.sessionVersion,
+      },
+      request.params.id,
       request.body,
     );
   }
