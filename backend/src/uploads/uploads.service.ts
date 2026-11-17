@@ -1127,12 +1127,11 @@ export class UploadsService {
             throw new BadRequestException("Upload session expired");
           await this.assertLegacyUnreserved(publication, current.id);
           await this.resolveSessionWorkspace(current, publication);
-          const active = await publication.createQueryBuilder(UploadSessionEntity, "session")
-            .select("COALESCE(SUM(session.totalSize),0)", "activeTotal")
-            .where("session.userId = :userId", { userId })
-            .andWhere("session.status IN (:...statuses)", { statuses: ["pending", "uploading"] })
-            .getRawOne();
-          if (parseDatabaseSize(parseDatabaseSize(user.storageUsed) + parseDatabaseSize(active?.activeTotal)) > parseDatabaseSize(user.storageQuota))
+          // The user's upload reservation (including this session) is already
+          // part of the shared accounting; publication only transfers it into
+          // storageUsed, so the guard checks the total commitment coverage.
+          const accounting = await readStorageCommitments(publication, userId);
+          if (!canAddStorageBytes(accounting, 0n))
             throw new ForbiddenException("Storage quota exceeded");
           const chosenName = await allocateNamespaceName(publication, userId, current.parentId, current.filename, "file");
           // Exclusive hard link keeps the attempt discoverable by existing TTL cleanup.

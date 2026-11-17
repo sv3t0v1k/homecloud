@@ -41,6 +41,7 @@ describe("UploadsService - Post-Review Fixes", () => {
   let mockQueryRunner: any;
   let mockQueryBuilder: any;
   let copyReservedBytes: bigint;
+  let assemblyOwner: any;
 
   // These lifecycle/quota tests keep synthetic IDs and paths. Workspace integrity
   // is exercised with the real resolver in the focused workspace/PG suites.
@@ -86,6 +87,7 @@ describe("UploadsService - Post-Review Fixes", () => {
 
   beforeEach(() => {
     copyReservedBytes = 0n;
+    assemblyOwner = { id: 1, isActive: true, storageUsed: 0, storageQuota: Number.MAX_SAFE_INTEGER };
     let lockedOwner: any;
 
     mockQueryBuilder = {
@@ -148,8 +150,10 @@ describe("UploadsService - Post-Review Fixes", () => {
     mockQueryRunner.manager.findOne = new Proxy(queuedFindOne, {
       apply(target, receiver, args: any[]) {
         const [entity, options] = args;
-        if (assemblySession && entity === UserEntity)
-          return Promise.resolve({ id: 1, isActive: true, storageUsed: 0, storageQuota: Number.MAX_SAFE_INTEGER });
+        if (assemblySession && entity === UserEntity) {
+          lockedOwner = assemblyOwner;
+          return Promise.resolve(assemblyOwner);
+        }
         if (assemblySession && entity === UploadSessionEntity && options?.lock)
           return Promise.resolve(assemblySession);
         const result = Reflect.apply(target, receiver, args);
@@ -871,6 +875,91 @@ describe("UploadsService - Post-Review Fixes", () => {
       if (fs.existsSync(finalPath)) {
         fs.rmSync(finalPath, { force: true });
       }
+    });
+  });
+
+  describe("completeUpload — shared storage accounting guard", () => {
+    function preparePublication() {
+      const dir = `/tmp/test-pub-guard-${Date.now()}`;
+      const finalPath = `${dir}-final.jpg`;
+      const session = {
+        uploadId: "abc",
+        userId: 1,
+        filename: "photo.jpg",
+        totalSize: 8,
+        chunkSize: 8,
+        totalChunks: 1,
+        accountingInitialized: true,
+        uploadedCount: 0,
+        uploadedChunks: [0],
+        uploadedSize: 8,
+        workspaceId: LEGACY_UPLOAD_WORKSPACE.id, tempPath: dir,
+        parentId: null,
+        status: "pending",
+        expiresAt: new Date(Date.now() + 86400000),
+      };
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "0"), Buffer.alloc(8));
+      fs.writeFileSync(finalPath, Buffer.alloc(8));
+
+      mockQueryRunner.manager.findOne
+        .mockResolvedValueOnce(session)
+        .mockResolvedValueOnce(null);
+      mockStorageService.generateFinalPath.mockReturnValue(finalPath);
+      mockStorageService.generateSafeFilename.mockReturnValue("photo.jpg");
+      mockFileRepository.create.mockReturnValue({ id: 1 });
+      mockFileRepository.save.mockResolvedValue({ id: 1 });
+      mockQueryRunner.manager.create.mockImplementation(
+        (_entity: unknown, data: unknown) => data,
+      );
+      mockUsersService.updateStorageUsed.mockResolvedValue(undefined);
+      (fileTypeFromBuffer as jest.Mock).mockResolvedValue({
+        mime: "image/jpeg",
+      });
+      return { dir, finalPath };
+    }
+
+    function cleanup(dir: string, finalPath: string) {
+      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+      if (fs.existsSync(finalPath)) fs.rmSync(finalPath, { force: true });
+    }
+
+    it("rejects publication when copy reservations push commitments over quota", async () => {
+      const { dir, finalPath } = preparePublication();
+      assemblyOwner = { id: 1, isActive: true, storageQuota: "1000", storageUsed: "900" };
+      copyReservedBytes = 200n;
+
+      await expect(service.completeUpload(1, "abc")).rejects.toThrow(
+        "Storage quota exceeded",
+      );
+      expect(mockUsersService.updateStorageUsed).not.toHaveBeenCalled();
+      expect(mockQueryRunner.rollbackTransaction).toHaveBeenCalled();
+      cleanup(dir, finalPath);
+    });
+
+    it("rejects publication when the session reservation itself exceeds quota", async () => {
+      const { dir, finalPath } = preparePublication();
+      assemblyOwner = { id: 1, isActive: true, storageQuota: "1000", storageUsed: "901" };
+      mockQueryBuilder.getRawOne.mockResolvedValue({ activeTotal: "100" });
+
+      await expect(service.completeUpload(1, "abc")).rejects.toThrow(
+        "Storage quota exceeded",
+      );
+      expect(mockUsersService.updateStorageUsed).not.toHaveBeenCalled();
+      cleanup(dir, finalPath);
+    });
+
+    it("allows publication exactly at quota including all reservations", async () => {
+      const { dir, finalPath } = preparePublication();
+      assemblyOwner = { id: 1, isActive: true, storageQuota: "1000", storageUsed: "900" };
+      mockQueryBuilder.getRawOne.mockResolvedValue({ activeTotal: "100" });
+
+      const result = await service.completeUpload(1, "abc");
+      expect(result).toBeDefined();
+      expect(mockUsersService.updateStorageUsed).toHaveBeenCalledWith(
+        1, 8, mockQueryRunner.manager,
+      );
+      cleanup(dir, finalPath);
     });
   });
 

@@ -8,6 +8,10 @@ import {
 } from "../entities/upload-workspace.entity";
 import { LEGACY_STORAGE_ID } from "../storage/storage-placement";
 import {
+  canAddStorageBytes,
+  readStorageCommitments,
+} from "../storage/storage-accounting";
+import {
   FinalizationBinding,
   FinalizationChunk,
   FinalizationOperation,
@@ -597,15 +601,16 @@ export class PostgresSsdFinalizationStore implements RecoveryStore {
         !this.matchesSessionBinding(session, row.expectedSha256, row.binding)
       )
         throw new Error("Finalization session changed");
-      const owner = await this.validateOwnerAndParent(
+      await this.validateOwnerAndParent(
         manager,
         row.userId,
         row.parentId,
       );
-      if (
-        BigInt(owner.storageUsed) + BigInt(row.totalSize) >
-        BigInt(owner.storageQuota)
-      )
+      // The session reservation is already part of the shared accounting;
+      // commit only transfers it into storageUsed, so the guard checks
+      // total commitment coverage (uploads and copies included).
+      const accounting = await readStorageCommitments(manager, row.userId);
+      if (!canAddStorageBytes(accounting, 0n))
         throw new Error("Finalization quota exceeded");
       if (
         (
