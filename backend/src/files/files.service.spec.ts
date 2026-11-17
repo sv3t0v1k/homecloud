@@ -9,6 +9,7 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 
 describe("FilesService - Authorization Boundary", () => {
@@ -35,6 +36,20 @@ describe("FilesService - Authorization Boundary", () => {
           return [{ id: params[0] }];
         if (sql.includes("SELECT id FROM users WHERE"))
           return [{ id: params[0] }];
+        if (sql.includes('FROM "users" u'))
+          return [
+            {
+              id: params[0],
+              isActive: true,
+              quota: "9007199254740991",
+              used: "0",
+              uploadBytes: "0",
+              copyBytes: "0",
+              activeCopyCount: "0",
+              invalidUploads: "0",
+              invalidCopies: "0",
+            },
+          ];
         return [];
       }),
       save: jest.fn(),
@@ -54,6 +69,7 @@ describe("FilesService - Authorization Boundary", () => {
       delete: jest.fn(),
       update: jest.fn(),
       manager: {
+        query: jest.fn(),
         connection: {
           createQueryRunner: jest.fn(() => mockQueryRunner),
         },
@@ -420,6 +436,178 @@ describe("FilesService - Authorization Boundary", () => {
         where: { id: 2, userId: 1 },
       });
     });
+
+    const accountingRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 1,
+      isActive: true,
+      quota: "1000",
+      used: "400",
+      uploadBytes: "300",
+      copyBytes: "200",
+      activeCopyCount: "1",
+      invalidUploads: "0",
+      invalidCopies: "0",
+      ...overrides,
+    });
+
+    const mockAccounting = (row: Record<string, unknown>) => {
+      const qr = mockFileRepository.manager.connection.createQueryRunner();
+      qr.manager.query.mockImplementation(
+        async (sql: string, params: unknown[]) => {
+          if (sql.includes('FROM "users" u')) return [row];
+          if (sql.includes("SELECT id FROM folders WHERE"))
+            return [{ id: params[0] }];
+          if (sql.includes("SELECT id FROM users WHERE"))
+            return [{ id: params[0] }];
+          return [];
+        },
+      );
+      qr.manager.create.mockImplementation((_entity: any, data: any) => ({
+        ...data,
+      }));
+      qr.manager.save.mockImplementation(async (value: any) => value);
+      return qr;
+    };
+
+    it("counts active upload and copy reservations and accepts the exact combined quota", async () => {
+      mockUsersService.findById.mockResolvedValue({
+        id: 1,
+        storageQuota: 1000,
+        storageUsed: 400,
+      });
+      mockFolderRepository.findOne.mockResolvedValue(null);
+      const qr = mockAccounting(accountingRow());
+
+      await expect(
+        service.createFile(1, "over.bin", 101, "application/octet-stream"),
+      ).rejects.toThrow("Storage quota exceeded");
+
+      expect(qr.manager.save).not.toHaveBeenCalled();
+      expect(qr.rollbackTransaction).toHaveBeenCalled();
+
+      await expect(
+        service.createFile(1, "exact.bin", 100, "application/octet-stream"),
+      ).resolves.toMatchObject({ size: 100 });
+
+      expect(mockUsersService.updateStorageUsed).toHaveBeenCalledWith(
+        1,
+        100,
+        qr.manager,
+      );
+      expect(qr.commitTransaction).toHaveBeenCalled();
+    });
+
+    it("rejects an inactive owner before charging storage", async () => {
+      mockUsersService.findById.mockResolvedValue({
+        id: 1,
+        isActive: false,
+        storageQuota: 1000,
+        storageUsed: 0,
+      });
+      mockFolderRepository.findOne.mockResolvedValue(null);
+      const qr = mockAccounting(
+        accountingRow({
+          isActive: false,
+          used: "0",
+          uploadBytes: "0",
+          copyBytes: "0",
+          activeCopyCount: "0",
+        }),
+      );
+
+      await expect(
+        service.createFile(1, "blocked.bin", 1, "application/octet-stream"),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(qr.manager.save).not.toHaveBeenCalled();
+      expect(mockUsersService.updateStorageUsed).not.toHaveBeenCalled();
+      expect(qr.rollbackTransaction).toHaveBeenCalled();
+    });
+
+    it("rejects corrupt accounting with the standard 503", async () => {
+      mockUsersService.findById.mockResolvedValue({
+        id: 1,
+        storageQuota: 1000,
+        storageUsed: 0,
+      });
+      mockFolderRepository.findOne.mockResolvedValue(null);
+      const qr = mockAccounting(accountingRow({ invalidCopies: "1" }));
+
+      await expect(
+        service.createFile(1, "corrupt.bin", 1, "application/octet-stream"),
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      expect(qr.manager.save).not.toHaveBeenCalled();
+      expect(qr.rollbackTransaction).toHaveBeenCalled();
+    });
+
+    it("rejects an invalid size before any write", async () => {
+      mockUsersService.findById.mockResolvedValue({
+        id: 1,
+        storageQuota: 1000,
+        storageUsed: 0,
+      });
+      mockFolderRepository.findOne.mockResolvedValue(null);
+      const qr = mockAccounting(accountingRow());
+
+      await expect(
+        service.createFile(1, "bad.bin", -1, "application/octet-stream"),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(qr.manager.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getStorageInfo", () => {
+    const accountingRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 1,
+      isActive: true,
+      quota: "1000",
+      used: "400",
+      uploadBytes: "100",
+      copyBytes: "50",
+      activeCopyCount: "1",
+      invalidUploads: "0",
+      invalidCopies: "0",
+      ...overrides,
+    });
+
+    it("reports reservations and the exact remaining space alongside used bytes", async () => {
+      mockUsersService.findById.mockResolvedValue({
+        id: 1,
+        storageQuota: 1000,
+        storageUsed: 400,
+      });
+      mockFileRepository.manager.query.mockResolvedValue([
+        accountingRow(),
+      ]);
+      mockFileRepository.count.mockResolvedValue(3);
+      mockFolderRepository.count.mockResolvedValue(2);
+
+      await expect(service.getStorageInfo(1)).resolves.toEqual({
+        storageQuota: 1000,
+        storageUsed: 400,
+        storageReserved: "150",
+        storageAvailable: "450",
+        fileCount: 3,
+        folderCount: 2,
+      });
+    });
+
+    it("fails closed with 503 when accounting is corrupt", async () => {
+      mockUsersService.findById.mockResolvedValue({
+        id: 1,
+        storageQuota: 1000,
+        storageUsed: 400,
+      });
+      mockFileRepository.manager.query.mockResolvedValue([
+        accountingRow({ invalidUploads: "1" }),
+      ]);
+
+      await expect(service.getStorageInfo(1)).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+    });
   });
 
   describe("createFolder", () => {
@@ -439,6 +627,20 @@ describe("FilesService - Authorization Boundary", () => {
           query: jest.fn(async (sql: string, params: unknown[]) => {
             if (sql.includes("SELECT id FROM folders WHERE"))
               return [{ id: params[0] }];
+            if (sql.includes('FROM "users" u'))
+              return [
+                {
+                  id: params[0],
+                  isActive: true,
+                  quota: "9007199254740991",
+                  used: "0",
+                  uploadBytes: "0",
+                  copyBytes: "0",
+                  activeCopyCount: "0",
+                  invalidUploads: "0",
+                  invalidCopies: "0",
+                },
+              ];
             return [];
           }),
           save: jest.fn(),

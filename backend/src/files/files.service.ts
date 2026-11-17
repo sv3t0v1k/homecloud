@@ -19,6 +19,10 @@ import { allocateNamespaceName } from "./namespace-name";
 import { searchQuery } from "./search-input";
 import { assertVisibleAncestors } from "./file-visibility";
 import { FileCopyAdmissionService } from "./file-copy-admission.service";
+import {
+  canAddStorageBytes,
+  readStorageCommitments,
+} from "../storage/storage-accounting";
 
 @Injectable()
 export class FilesService {
@@ -265,18 +269,39 @@ export class FilesService {
       throw new ForbiddenException("User not found");
     }
 
+    const bytes = parseDatabaseSize(size, "Invalid file size metadata");
+
     await this.assertFolderOwnership(userId, parentId);
 
     const queryRunner =
       this.fileRepository.manager.connection.createQueryRunner();
     await queryRunner.connect();
-    await queryRunner.startTransaction();
+    await queryRunner.startTransaction("READ COMMITTED");
 
     try {
       await queryRunner.manager.query(
         `SELECT id FROM users WHERE id=$1 FOR UPDATE`,
         [userId],
       );
+
+      // The owner row is locked above. Direct creation charges new
+      // bytes immediately, so admission must cover every existing
+      // obligation: used storage plus active upload and copy
+      // reservations. A plain storageUsed guard would ignore those
+      // reservations and could silently overcommit the quota.
+      const accounting = await readStorageCommitments(
+        queryRunner.manager,
+        userId,
+      );
+
+      if (accounting.isActive !== true) {
+        throw new ForbiddenException("User not found");
+      }
+
+      if (!canAddStorageBytes(accounting, BigInt(bytes))) {
+        throw new ForbiddenException("Storage quota exceeded");
+      }
+
       const chosenName = await allocateNamespaceName(
         queryRunner.manager,
         userId,
@@ -1463,6 +1488,14 @@ export class FilesService {
       throw new ForbiddenException("User not found");
     }
 
+    // Informational snapshot. The user sees every obligation,
+    // including bytes still reserved by active uploads and copies,
+    // so the displayed free space matches admission decisions.
+    const accounting = await readStorageCommitments(
+      this.fileRepository.manager,
+      userId,
+    );
+
     const fileCount = await this.fileRepository.count({
       where: { userId, isDeleted: false, isFolder: false },
     });
@@ -1474,6 +1507,10 @@ export class FilesService {
     return {
       storageQuota: user.storageQuota,
       storageUsed: user.storageUsed,
+      storageReserved: (
+        accounting.uploadBytes + accounting.copyBytes
+      ).toString(),
+      storageAvailable: accounting.remainingBytes.toString(),
       fileCount,
       folderCount,
     };
