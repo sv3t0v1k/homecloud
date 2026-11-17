@@ -52,7 +52,7 @@
 docker run --rm -i --network none --user 1001:1001 --cap-drop ALL \
   --tmpfs /qualified:uid=1001,gid=1001,mode=0700 --entrypoint node \
   homecloud-preview-backend:workspace-checkpoint \
-  < docs/evidence/secure-workspace-activation-20261010/qualification.cjs
+  < docs/evidence/archive/secure-workspace-activation-20261010/qualification.cjs
 ```
 
 Exit0 значит disqualification harness ожидаемо подтвердил blockers, **не secure activation

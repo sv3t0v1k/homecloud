@@ -65,7 +65,7 @@ PostgreSQL/ingress закреплены точными amd64 child digests в pr
 | CI Node Bookworm base | 4 | 60 | 113 |
 
 Полный перечень HIGH/CRITICAL по package/CVE/installed/fixed, исходные counts всех
-severities и SHA256 каждого сохранённого JSON: [findings.json](./evidence/d5-1-4-20261014/findings.json).
+severities и SHA256 каждого сохранённого JSON: [findings.json](./evidence/archive/d5-1-4-20261014/findings.json).
 Числа означают package findings: например, пять util-linux CVE повторяются в восьми
 библиотеках/пакетах; 64 findings CI не означают 64 уникальные CVE.
 

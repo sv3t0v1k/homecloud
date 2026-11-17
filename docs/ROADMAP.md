@@ -1525,7 +1525,7 @@ backup/restore evidence, scoped update, health/smoke и rollback с учётом
 [draft PR №1](https://github.com/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/pull/1). Main/tags не менялись.
 Первый Linux CI: native compile и12PostgreSQL suites выполнялись; полный backend1121PASS/27FAIL/0SKIP
 из-за корректного отказа root. Frontend/secrets PASS; security BLOCKED по high/critical; preflight2errors
-воспроизводятся перестановкой serialized mounts. [Факты](./evidence/d5-1-20261013/github-ci-initial.json).
+воспроизводятся перестановкой serialized mounts. [Факты](./evidence/archive/d5-1-20261013/github-ci-initial.json).
 
 Подготовлены reviewed corrections: backend CI tests под unprivileged node; preflight exact6unique
 mount targets с сохранением всех safety checks,4новых regression tests. Локально76preflight и16release
@@ -1536,7 +1536,7 @@ negative tests PASS; actionlint PASS. Новый CI результат pending; 
 D5.1 второй PR CI на b0a8439: Linux backend1148/1148tests,79/79suites,0SKIP;12PostgreSQL suites,
 lint/compiled build PASS; frontend/secrets PASS. Configuration остаётся FAIL из-за Compose2.38.2
 omitempty false bind flag, причина воспроизведена отдельно. CI pin Compose5.1.3/checksum подготовлен;
-production false flag gate не ослаблен. [Evidence](./evidence/d5-1-20261013/github-ci-backend-pass.json).
+production false flag gate не ослаблен. [Evidence](./evidence/archive/d5-1-20261013/github-ci-backend-pass.json).
 Security/release BLOCKED сохраняется; COMPLETE и D5.2 не меняются.
 
 
@@ -1551,13 +1551,13 @@ inclusive bounds, Sharp0.35.5, dev-only CLI11/Vitest4 и удаление неи
 Локально runtime7/targeted61/frontend278/build/lint/actionlint, release16/preflight76/startup43 и4Compose PASS.
 Свежий [PR CI38482225216](https://github.com/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/actions/runs/38482225216) и [push CI38482221084](https://github.com/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/actions/runs/38482221084) на2f671f1: все9jobs PASS; backend1148/1148,79suites,0FAIL/0SKIP,12PG/154tests;
 frontend278; runtime7; Compose4/preflight76/startup43/release16; Linux-amd642images/musl-native smoke PASS.
-[Точные source/merge refs и raw results](./evidence/d5-1-1-20261014/github-ci.json).
+[Точные source/merge refs и raw results](./evidence/archive/d5-1-1-20261014/github-ci.json).
 Остаточные4leaf/5GHSA включают untrusted file-type ASF risk; Node20EOL/base CVE qualification,
 main/tag protection и registry/provenance/release acceptance открыты. Draft PR№1 обновлён,
 main/tags/release/GHCR/deployment/мини-ПК не меняются. Production NO_GO; D5.2 NOT_STARTED.
 
 На documentation head864c55c PR CI38482861251PASS, push CI38482857360FAIL: frontend Retry-After
-real Date.now999ms vs1000ms (277PASS/1FAIL), gateFAIL сохранён в [incident evidence](./evidence/d5-1-1-20261014/github-ci-timing-incident.json).
+real Date.now999ms vs1000ms (277PASS/1FAIL), gateFAIL сохранён в [incident evidence](./evidence/archive/d5-1-1-20261014/github-ci-timing-incident.json).
 Исправлен только тест: fake timers с отрицательными999ms/положительными1000ms assertions,
 SHA/session/publication не ослаблены; SSD13/fullfrontend278/lint/build и independentreview PASS.
 Production код не менялся. Финальный source HEAD проверяется новым PR/push CI; фактические checks

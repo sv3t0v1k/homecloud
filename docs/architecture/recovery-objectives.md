@@ -1,6 +1,6 @@
 # Независимое offsite recovery и recovery objectives
 
-Ненумерованная remediation, 2026-10-02 Asia/Vladivostok. Overall Production Readiness **NOT_READY / NO_GO**. Evidence и измерения: [qualification](./evidence/offsite-recovery/qualification.json). Локальные Docker volumes одного daemon проверяют логическую и операционную независимость, но не физическую потерю компьютера/диска/daemon.
+Ненумерованная remediation, 2026-10-02 Asia/Vladivostok. Overall Production Readiness **NOT_READY / NO_GO**. Evidence и измерения: [qualification](./evidence/archive/offsite-recovery/qualification.json). Локальные Docker volumes одного daemon проверяют логическую и операционную независимость, но не физическую потерю компьютера/диска/daemon.
 
 ## Контракт production offsite
 

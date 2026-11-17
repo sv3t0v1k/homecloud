@@ -64,7 +64,7 @@ C guard требует tmpfs и root inventory только с `nested`. Contain
 Build context — только эта evidence directory, не root repository:
 
 ```sh
-docker build --pull=false -f docs/evidence/secure-filesystem-boundary-20261011/Dockerfile.probe \
+docker build --pull=false -f docs/evidence/archive/secure-filesystem-boundary-20261011/Dockerfile.probe \
   -t homecloud-ms3br-probe:temporary docs/evidence/secure-filesystem-boundary-20261011
 
 docker run --rm --network none --user 1001:1001 --cap-drop ALL \
@@ -75,12 +75,12 @@ docker run --rm --network none --user 1001:1001 --cap-drop ALL \
 docker run --rm -i --network none --user 1001:1001 --cap-drop ALL \
   --tmpfs /qualified:uid=1001,gid=1001,mode=0700 --entrypoint node \
   homecloud-preview-backend:workspace-checkpoint \
-  < docs/evidence/secure-filesystem-boundary-20261011/runtime-probe.cjs
+  < docs/evidence/archive/secure-filesystem-boundary-20261011/runtime-probe.cjs
 
 docker run --rm -i --network none --user 1001:1001 --cap-drop ALL \
   --security-opt seccomp=unconfined --security-opt no-new-privileges=true \
   --entrypoint unshare homecloud-ms3br-probe:temporary -Urnm node \
-  < docs/evidence/secure-filesystem-boundary-20261011/mount-probe.cjs
+  < docs/evidence/archive/secure-filesystem-boundary-20261011/mount-probe.cjs
 
 docker image rm homecloud-ms3br-probe:temporary
 ```

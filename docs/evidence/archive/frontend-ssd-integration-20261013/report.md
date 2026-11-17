@@ -2,7 +2,7 @@
 
 **Браузерная интеграция и ограниченный Docker gate подтверждены. SSD OFF по умолчанию; COMPLETE не установлен; production NO_GO сохраняется. Мини-ПК и постоянный preview stack не использовались.**
 
-Реальный исходный HEAD точно совпал с `cbeca1d04ab543def8273bd7749d3458f3e5a362`. Репозиторий: `/Users/aleksejkozemakin/Desktop/HomeCloud`; каталог ChatGPT-проекта сам Git-репозиторием не является. До реализации прочитаны фактические `docs/ROADMAP.md` и `docs/evidence/ssd-hdd-integration-20261012/report.md`. Tracked дерево было чистым; два прежних untracked closure JSON сохранены. Запрещённый аудит не читался, не искался, не хешировался и не изменялся; synced sources и прочие посторонние файлы не изменялись.
+Реальный исходный HEAD точно совпал с `cbeca1d04ab543def8273bd7749d3458f3e5a362`. Репозиторий: `/Users/aleksejkozemakin/Desktop/HomeCloud`; каталог ChatGPT-проекта сам Git-репозиторием не является. До реализации прочитаны фактические `docs/ROADMAP.md` и `docs/evidence/archive/ssd-hdd-integration-20261012/report.md`. Tracked дерево было чистым; два прежних untracked closure JSON сохранены. Запрещённый аудит не читался, не искался, не хешировался и не изменялся; synced sources и прочие посторонние файлы не изменялись.
 
 ## Изменения в утверждённом scope
 

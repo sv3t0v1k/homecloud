@@ -8,7 +8,7 @@ actual result/journal/recovery в текущем каталоге. Source SHA с
 Безопасная offline проверка с Mac из repo:
 
 ```sh
-python3 docs/evidence/mount-identity-r2-1b-20261011/runtime-v2/verify-runtime.py
+python3 docs/evidence/archive/mount-identity-r2-1b-20261011/runtime-v2/verify-runtime.py
 ```
 
 Verifier читает original baseline из parent и frozen actual evidence, записывает только
@@ -33,7 +33,7 @@ secureOpen=false, extra workspaces disabled; R2.2/MS-4 не начинать.
 Дополнительная offline проверка native non-root supplier/Docker mapping:
 
 ```sh
-python3 docs/evidence/mount-identity-r2-1b-20261011/runtime-v2/verify-rprivate.py
+python3 docs/evidence/archive/mount-identity-r2-1b-20261011/runtime-v2/verify-rprivate.py
 ```
 
 Expected36PASS. Non-root runtime выполнял run-rprivate-probe.py через exact reviewed

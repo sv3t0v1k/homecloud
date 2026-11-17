@@ -85,7 +85,7 @@ Ingress/frontend access logs содержат только status, bytes и dura
 
 ## Независимое offsite / custody / measured budgets — 2026-10-02
 
-Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](../architecture/recovery-objectives.md), [raw qualification](./evidence/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
+Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](../architecture/recovery-objectives.md), [raw qualification](./evidence/archive/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
 
 ## Передача больших файлов
 

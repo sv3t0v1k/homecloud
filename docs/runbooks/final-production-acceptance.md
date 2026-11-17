@@ -265,7 +265,7 @@ IMMUTABLE_RELEASE_MANIFEST: PASS; CURRENT_PAIR_QUALIFIED: PASS; PREVIOUS_PAIR_QU
 
 ## Scheduler / delivered alerts — 2026-10-01
 
-Ненумерованный bounded remediation, исходный HEAD `aa08dca35615080d5d6d4f9dd011678d3608f307`; status только запрещённый audit (не читался/не менялся/не staged). [Контракт](./scheduler-alerting.md), [raw qualification](./evidence/scheduler-alerting/qualification.json), [receiver requests](./evidence/scheduler-alerting/receiver.json), [systemd runtime](./evidence/scheduler-alerting/systemd-runtime.json).
+Ненумерованный bounded remediation, исходный HEAD `aa08dca35615080d5d6d4f9dd011678d3608f307`; status только запрещённый audit (не читался/не менялся/не staged). [Контракт](./scheduler-alerting.md), [raw qualification](./evidence/archive/scheduler-alerting/qualification.json), [receiver requests](./evidence/archive/scheduler-alerting/receiver.json), [systemd runtime](./evidence/archive/scheduler-alerting/systemd-runtime.json).
 
 SCHEDULER_CONTRACT: PASS. SYSTEMD_RUNTIME: PASS — disposable Debian/systemd PID1,8 units verify/install,4 active timers, manual+accelerated timer execution, systemctl nonzero14/70/75, safe journal, concurrency block. Persistent=yes inspected; настоящий target reboot/missed-run replay не выполнен. ALERT_DELIVERY_MECHANICS: PASS. ALERT_DEDUP_RECOVERY: PASS — actual loopback HTTP acceptance, repeated failure suppression, time-adjusted escalation, recovery/stale,500/unavailable/timeout retries и nonzero delivery failure.
 
@@ -333,6 +333,6 @@ Remaining: deferred Linux/DNS/public CA/native bind; внешний registry; ta
 
 ## Независимое offsite / custody / measured budgets — 2026-10-02
 
-Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](../architecture/recovery-objectives.md), [raw qualification](./evidence/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
+Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](../architecture/recovery-objectives.md), [raw qualification](./evidence/archive/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
 
 Раздельные итоговые статусы: OFFSITE_FAILURE_DOMAIN_MECHANICS=PASS; REAL_EXTERNAL_OFFSITE=NOT_QUALIFIED; RECOVERY_KEY_CUSTODY_MECHANICS=PASS; REAL_CUSTODIAN_PROCESS=NOT_QUALIFIED; MEASURED_RPO_RTO_BASELINE=PASS; OWNER_APPROVED_RECOVERY_BUDGETS=NOT_AVAILABLE; INDEPENDENT_OFFSITE_RECOVERY_DRILL=PASS; INDEPENDENT_REVIEW=APPROVE; PRODUCTION_BLOCKER_OFFSITE_RECOVERY=PARTIALLY_RESOLVED. Два128MiB прогона: verified RTO31.384/31.543s; подробные component timings, gaps и evidence limits — в recovery objectives. Overall NOT_READY / NO_GO.

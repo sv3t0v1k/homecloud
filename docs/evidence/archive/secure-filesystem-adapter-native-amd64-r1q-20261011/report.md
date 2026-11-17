@@ -25,7 +25,7 @@ R2 и MS-4 не начаты. Production adapter, dependencies, Docker/Compose �
 | ACTIVATION_STATUS | secureOpen=false; extra workspace activation disabled; production NOT_READY / NO_GO; R2/MS-4 NOT_STARTED; push/Git tag/release отсутствуют |
 | LIMITATIONS | Нет native AMD64 host-vs-container сравнения, target physical FS/mount/seccomp, power-loss/device durability, native ingress/lifecycle/PG/full regressions. Точная внутренняя Rosetta причина и её версия не доказаны. Same-UID sabotage/durable root enrollment/finalizer output ограничения R1 не изменились |
 | COMMITS | Один отдельный русский docs/evidence checkpoint: «Зафиксировать диагностику ENOSYS Rosetta и блокировку квалификации AMD64»; SHA сообщён в итоговом ответе |
-| FINAL_HEAD / GIT_STATUS | FINAL_HEAD — commit этого report, определяется `git log -1 --format=%H -- docs/evidence/secure-filesystem-adapter-native-amd64-r1q-20261011/report.md`; точный SHA и финальный status сообщены в ответе. Самоссылочный SHA не помещается в commit. Ожидается tracked clean и ровно3 исходных untracked; два разрешённых JSON проверены SHA256. Запрещённый audit не читался/хешировался/менялся/staged/committed |
+| FINAL_HEAD / GIT_STATUS | FINAL_HEAD — commit этого report, определяется `git log -1 --format=%H -- docs/evidence/archive/secure-filesystem-adapter-native-amd64-r1q-20261011/report.md`; точный SHA и финальный status сообщены в ответе. Самоссылочный SHA не помещается в commit. Ожидается tracked clean и ровно3 исходных untracked; два разрешённых JSON проверены SHA256. Запрещённый audit не читался/хешировался/менялся/staged/committed |
 | NEXT_OWNER_ACTION | Предоставить разрешённый доступ к существующему native Linux x86_64 host/VM на x86-64 CPU с Docker и disposable storage/PG. Требования и порядок ниже. Остановиться после R1Q; R2 требует отдельного решения после полного R1 PASS |
 
 ## Экспериментальная локализация
@@ -71,7 +71,7 @@ Online seccomp source содержит openat2, но не выдается за 
 [orchestrator](reproduce.py). Запуск на этой macOS/Docker Desktop ARM среде:
 
 ```sh
-python3 docs/evidence/secure-filesystem-adapter-native-amd64-r1q-20261011/reproduce.py \
+python3 docs/evidence/archive/secure-filesystem-adapter-native-amd64-r1q-20261011/reproduce.py \
   --repo /Users/aleksejkozemakin/Desktop/HomeCloud \
   --output /tmp/homecloud-r1q-next-reproduction
 ```

@@ -120,7 +120,7 @@ gh release download "$RELEASE_TAG" --repo "$REPO" --pattern release-lock.json --
 python3 scripts/ci/release.py reconcile \
   --mac-root /Users/aleksejkozemakin/Desktop/HomeCloud \
   --github-sha b5c954f35b7ea9d81ffc4aa41d78e56fc7fc8ec4 \
-  --deployment docs/evidence/d5-1-20261013/deployment-reported.json
+  --deployment docs/evidence/archive/d5-1-20261013/deployment-reported.json
 # Позже добавить --manifest /path/to/release-lock.json.
 ```
 

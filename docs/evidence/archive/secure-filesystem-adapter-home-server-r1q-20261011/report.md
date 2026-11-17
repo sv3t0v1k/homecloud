@@ -35,7 +35,7 @@
 ```sh
 cd /Users/aleksejkozemakin/Desktop/HomeCloud
 remote_script=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes hs@192.168.3.44 'umask 077; mktemp /tmp/homecloud-r1q-owner.XXXXXX.py') &&
-scp -o BatchMode=yes -o StrictHostKeyChecking=yes /Users/aleksejkozemakin/Desktop/HomeCloud/docs/evidence/secure-filesystem-adapter-home-server-r1q-20261011/owner-prepare-storage.py "hs@192.168.3.44:$remote_script" &&
+scp -o BatchMode=yes -o StrictHostKeyChecking=yes /Users/aleksejkozemakin/Desktop/HomeCloud/docs/evidence/archive/secure-filesystem-adapter-home-server-r1q-20261011/owner-prepare-storage.py "hs@192.168.3.44:$remote_script" &&
 printf 'На сервере выполнить: sudo python3 %s\n' "$remote_script"
 ```
 
