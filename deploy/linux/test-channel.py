@@ -950,6 +950,9 @@ def require_checkpoint_refs(state):
 def restart_inventory():
     """Inspect all original services without assuming they are running."""
     result = {}
+    expected_project = env_values().get('COMPOSE_PROJECT_NAME', '')
+    require(bool(re.fullmatch(r'[a-z0-9][a-z0-9_-]*', expected_project)),
+            'missing TEST compose project in runtime env')
     for role in ('db', 'backend', 'frontend', 'ingress'):
         cid = compose('ps', '--all', '-q', role)
         require(bool(re.fullmatch(r'[a-f0-9]{12,64}', cid)),
@@ -963,7 +966,7 @@ def restart_inventory():
         require(bool(re.fullmatch(r'[a-f0-9]{64}', item.get('Id', '')))
                 and item['Id'].startswith(cid)
                 and bool(IMAGE_ID.fullmatch(item.get('Image', '')))
-                and labels.get('com.docker.compose.project') == 'homecloud-test'
+                and labels.get('com.docker.compose.project') == expected_project
                 and labels.get('com.docker.compose.service') == role
                 and labels.get('com.docker.compose.oneoff', '').lower() == 'false',
                 'restart container identity mismatch')

@@ -22,6 +22,7 @@ HASH = re.compile(r'[a-f0-9]{64}\Z')
 DIGEST = re.compile(r'sha256:[a-f0-9]{64}\Z')
 GID = 65533
 STATUS_READY = False
+NETWORK_ERRORS = ()
 
 
 def require(ok, reason):
@@ -166,9 +167,18 @@ def recheck_cache(value, modules, client, head):
                item['workflow_run'].get('head_sha') == head]
     source.require(len(matches) == 1, 'verified TEST artifact expired or removed')
     provenance = modules['provenance']
-    repository = 'sv3t0v1k/https---github.com-sv3t0v1k-homecloud'
+    repositories = ('sv3t0v1k/homecloud',
+                    'sv3t0v1k/https---github.com-sv3t0v1k-homecloud')
     for role in ('backend', 'frontend'):
-        provenance.Registry(repository + '/' + role).index(value[role + 'Digest'])
+        digest = value[role + 'Digest']
+        for repository in repositories:
+            try:
+                provenance.Registry(repository + '/' + role).index(digest)
+                break
+            except Exception:
+                continue
+        else:
+            require(False, 'verified provenance index unavailable')
 
 
 def fetch_protected_target(source, current, head):
@@ -182,7 +192,7 @@ def fetch_protected_target(source, current, head):
 
 
 def main():
-    global STATUS_READY
+    global STATUS_READY, NETWORK_ERRORS
     require(os.geteuid() == 0 and sys.flags.isolated and sys.flags.no_site and
             Path(__file__).absolute() == ANCHOR and len(sys.argv) == 1,
             'requires installed isolated root discovery')
@@ -190,6 +200,7 @@ def main():
     trusted_anchor_path(VERIFIER)
     anchor = runpy.run_path(str(VERIFIER))
     modules = anchor['load_helpers'](ROOT)
+    NETWORK_ERRORS = (modules['update_source'].SourceError,)
     boundary = modules['boundary']
     boundary.trusted_path(ANCHOR)
     boundary.trusted_path(VERIFIER)
@@ -264,6 +275,7 @@ def invalidate():
 if __name__ == '__main__':
     try:
         main()
-    except Exception:
-        invalidate()
+    except Exception as error:
+        if not isinstance(error, NETWORK_ERRORS):
+            invalidate()
         sys.exit('STOP: TEST discovery unavailable; no candidate published')

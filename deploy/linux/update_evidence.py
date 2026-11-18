@@ -1,7 +1,12 @@
 """Read-only TEST evidence binding. No networking or installation."""
 import re
 
-REPOSITORY = "sv3t0v1k/https---github.com-sv3t0v1k-homecloud"
+# Переходный период переименования: оба имени принимаются, пока оба
+# встречаются в опубликованных манифестах.
+REPOSITORIES = frozenset({
+    "sv3t0v1k/homecloud",
+    "sv3t0v1k/https---github.com-sv3t0v1k-homecloud",
+})
 HASH = re.compile(r"[a-f0-9]{64}")
 
 
@@ -22,7 +27,7 @@ def verify(request_hash, branch, run, artifact, manifest, shape):
     validated = shape(manifest)
 
     require(type(validated) is dict and
-            validated.get("repository") == REPOSITORY and
+            validated.get("repository") in REPOSITORIES and
             validated.get("manifest_sha256") == request_hash,
             "Manifest identity mismatch")
 

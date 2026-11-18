@@ -91,10 +91,11 @@ class SourceHttpTests(unittest.TestCase):
             client.read("https://api.github.com/test", 10, True)
 
     def test_rejects_api_redirect(self):
-        client = self.client(redirect(BLOB))
+        client = self.client(redirect(BLOB), redirect(BLOB))
         with self.assertRaises(SourceError):
             client.api_json("/branches/test")
-        self.assertEqual(len(client.opener.requests), 1)
+        # Оба имени репозитория опробованы, редиректу не следовали.
+        self.assertEqual(len(client.opener.requests), 2)
 
     def test_valid_zip_never_leaks_token(self):
         payload = {"format": "example"}
@@ -113,10 +114,31 @@ class SourceHttpTests(unittest.TestCase):
         self.assertEqual(second.full_url, BLOB)
 
     def test_rejects_untrusted_redirect(self):
-        client = self.client(redirect("https://evil.example/file"))
+        client = self.client(
+            redirect("https://evil.example/file"),
+            redirect("https://evil.example/file"),
+        )
         with self.assertRaises(SourceError):
             client.artifact_json(42)
-        self.assertEqual(len(client.opener.requests), 1)
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_falls_back_to_legacy_repository_name(self):
+        missing = Response(b"{}")
+        missing.status = 404
+        client = self.client(missing, Response(b'{"ok":true}'))
+        self.assertEqual(client.api_json("/branches/test"), {"ok": True})
+        self.assertEqual(len(client.opener.requests), 2)
+        self.assertIn("/sv3t0v1k/homecloud/", client.opener.requests[0].full_url)
+        self.assertIn("/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/",
+                      client.opener.requests[1].full_url)
+
+    def test_unavailable_on_both_repository_names(self):
+        missing = Response(b"{}")
+        missing.status = 404
+        client = self.client(missing, missing)
+        with self.assertRaises(SourceError):
+            client.api_json("/branches/test")
+        self.assertEqual(len(client.opener.requests), 2)
 
     def test_rejects_corrupt_zip(self):
         client = self.client(redirect(BLOB), Response(b"bad zip"))

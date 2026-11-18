@@ -9,8 +9,12 @@ import zipfile
 
 from update_evidence import verify, EvidenceError
 
-REPO = "sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud"
-API = "https://api.github.com/repos/" + REPO
+# Переходный период переименования репозитория: клиент принципиально не
+# следует за HTTP-редиректами, поэтому основное (новое) и запасное (старое)
+# имя пробуются явно, пока оба варианта встречаются в опубликованных данных.
+REPOSITORIES = ("sv3t0v1k/homecloud",
+                "sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud")
+APIS = tuple("https://api.github.com/repos/" + repo for repo in REPOSITORIES)
 MAX_JSON = 1_000_000
 MAX_ZIP = 2_000_000
 SHA = re.compile(r"[a-f0-9]{40}\Z")
@@ -77,33 +81,54 @@ class GitHubClient:
         require(type(path) is str and path.startswith("/")
                 and ".." not in path and "//" not in path,
                 "Invalid GitHub API path")
-        data = self.read(API + path, MAX_JSON, authenticated=True)
+        last = None
+        for base in APIS:
+            try:
+                data = self.read(base + path, MAX_JSON, authenticated=True)
+                return json.loads(data)
+            except SourceError as error:
+                last = error
+            except (ValueError, UnicodeDecodeError) as error:
+                raise SourceError("Invalid GitHub JSON") from error
+        raise SourceError("Remote evidence unavailable") from last
+
+    def _artifact_location(self, base, artifact_id, headers):
         try:
-            return json.loads(data)
-        except (ValueError, UnicodeDecodeError) as error:
-            raise SourceError("Invalid GitHub JSON") from error
+            self.opener.open(
+                urllib.request.Request(
+                    base + f"/actions/artifacts/{artifact_id}/zip",
+                    headers=headers),
+                timeout=10,
+            )
+        except urllib.error.HTTPError as error:
+            code = error.code
+            location = error.headers.get("Location")
+            error.close()
+            if code == 302:
+                return verify_blob_url(location)
+            raise SourceError("Unexpected artifact response")
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise SourceError("Remote evidence unavailable") from error
+        raise SourceError("Missing artifact redirect")
 
     def artifact_json(self, artifact_id):
         require(type(artifact_id) is int and artifact_id > 0,
                 "Invalid artifact ID")
-        url = API + f"/actions/artifacts/{artifact_id}/zip"
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "HomeCloud-Host-Evidence/1",
         }
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
-        try:
-            self.opener.open(
-                urllib.request.Request(url, headers=headers),
-                timeout=10,
-            )
-        except urllib.error.HTTPError as error:
-            require(error.code == 302, "Unexpected artifact response")
-            location = verify_blob_url(error.headers.get("Location"))
-            error.close()
+        last = None
+        for base in APIS:
+            try:
+                location = self._artifact_location(base, artifact_id, headers)
+                break
+            except SourceError as error:
+                last = error
         else:
-            raise SourceError("Missing artifact redirect")
+            raise SourceError("Remote evidence unavailable") from last
 
         # A completely new request: never forward GitHub Authorization.
         archive = self.read(location, MAX_ZIP, authenticated=False)

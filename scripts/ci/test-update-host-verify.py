@@ -31,10 +31,10 @@ class Tests(unittest.TestCase):
             migrations.append(dict(name=host.re.findall(r'export class ([A-Za-z0-9]+)', raw.decode())[0],
                                    file=Path(path).name, sha256=hashlib.sha256(raw).hexdigest()))
         def image(role):
-            return dict(repository='ghcr.io/' + modules['update_evidence'].REPOSITORY + '/' + role,
+            return dict(repository='ghcr.io/' + sorted(modules['update_evidence'].REPOSITORIES)[0] + '/' + role,
                         digest='sha256:'+'1'*64, platform_digest='sha256:'+'2'*64,
                         statement_digest='sha256:'+'3'*64, revision=commit, version='test-'+commit)
-        self.manifest = dict(format=contract.FORMAT, repository=modules['update_evidence'].REPOSITORY,
+        self.manifest = dict(format=contract.FORMAT, repository=sorted(modules['update_evidence'].REPOSITORIES)[0],
                              commit=commit, platform='linux/amd64',
                              images={role:image(role) for role in ('backend','frontend')},
                              schema_migrations=migrations,

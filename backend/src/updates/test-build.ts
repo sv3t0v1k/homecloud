@@ -1,8 +1,8 @@
 import { createHash } from "crypto";
 import { inflateRawSync } from "zlib";
 
-const REPOSITORY = "sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud";
-const API = `https://api.github.com/repos/${REPOSITORY}`;
+const REPOSITORIES = ["sv3t0v1k/homecloud", "sv3t0v1k/https---github.com-sv3t0v1k-homecloud"];
+const APIS = REPOSITORIES.map((repository) => `https://api.github.com/repos/${repository}`);
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const MAX_ARCHIVE = 2_000_000;
@@ -42,12 +42,20 @@ async function request(url: string, token: string): Promise<Response> {
   return response;
 }
 
-async function json(url: string, token: string): Promise<unknown> {
-  const response = await request(url, token);
-  requireValid(response.ok && response.status < 300 && Number(response.headers.get("content-length") || 0) <= MAX_MANIFEST);
-  const text = await response.text();
-  requireValid(Buffer.byteLength(text) <= MAX_MANIFEST);
-  return JSON.parse(text);
+async function json(path: string, token: string): Promise<unknown> {
+  let lastError: unknown = null;
+  for (const base of APIS) {
+    try {
+      const response = await request(base + path, token);
+      requireValid(response.ok && response.status < 300 && Number(response.headers.get("content-length") || 0) <= MAX_MANIFEST);
+      const text = await response.text();
+      requireValid(Buffer.byteLength(text) <= MAX_MANIFEST);
+      return JSON.parse(text);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error("Invalid TEST build evidence");
 }
 
 async function boundedBytes(response: Response): Promise<Buffer> {
@@ -96,8 +104,19 @@ function artifactJson(zip: Buffer): unknown {
 
 async function downloadArtifact(id: number, token: string): Promise<unknown> {
   requireValid(Number.isSafeInteger(id) && id > 0);
-  const response = await request(`${API}/actions/artifacts/${id}/zip`, token);
-  requireValid(response.status === 302);
+  let response: Response | null = null;
+  let lastError: unknown = null;
+  for (const base of APIS) {
+    try {
+      const attempt = await request(`${base}/actions/artifacts/${id}/zip`, token);
+      if (attempt.status === 302) { response = attempt; break; }
+      lastError = new Error("Unexpected artifact response");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  requireValid(response !== null || lastError === null);
+  if (!response) throw lastError ?? new Error("Unexpected artifact response");
   const location = response.headers.get("location");
   requireValid(location);
   const redirect = new URL(location);
@@ -114,7 +133,7 @@ function verifiedManifest(raw: unknown, commit: string, runId: number, attempt: 
   const value = raw as TestManifest;
   const keys = Object.keys(value).sort().join(",");
   requireValid(keys === "ci,commit,format,images,manifest_sha256,platform,repository,schema_migrations,source_files" &&
-    value.format === "homecloud-test-channel-v1" && value.repository === REPOSITORY.toLowerCase() &&
+    value.format === "homecloud-test-channel-v1" && REPOSITORIES.includes(value.repository) &&
     value.commit === commit && value.platform === "linux/amd64" && SHA.test(value.commit) &&
     value.ci?.run_id === String(runId) && value.ci?.attempt === String(attempt) &&
     value.ci?.workflow === "ci-v2-fast.yml" &&
@@ -134,7 +153,7 @@ function verifiedManifest(raw: unknown, commit: string, runId: number, attempt: 
     const image = value.images[role];
     requireValid(image && Object.keys(image).sort().join(",") ===
       "digest,platform_digest,repository,revision,statement_digest,version" &&
-      image.repository === `ghcr.io/${REPOSITORY.toLowerCase()}/${role}` &&
+      image.repository === `ghcr.io/${value.repository}/${role}` &&
       DIGEST.test(image.digest) && DIGEST.test(image.platform_digest) &&
       DIGEST.test(image.statement_digest) && image.revision === commit && image.version === `test-${commit}`);
   }
@@ -146,28 +165,31 @@ function verifiedManifest(raw: unknown, commit: string, runId: number, attempt: 
 
 async function digestExists(role: "backend" | "frontend", digest: string,
   token: string, user: string): Promise<boolean> {
-  try {
-    const repository = `${REPOSITORY.toLowerCase()}/${role}`;
-    const auth: Record<string, string> = token && user ? { Authorization: `Basic ${Buffer.from(`${user}:${token}`).toString("base64")}` } : {};
-    const issued = await fetch(`https://ghcr.io/token?service=ghcr.io&scope=${encodeURIComponent(`repository:${repository}:pull`)}`, {
-      redirect: "manual", signal: AbortSignal.timeout(4000), headers: auth });
-    if (!issued.ok || issued.status !== 200) return false;
-    const grant = await issued.json() as { token?: string };
-    if (!grant.token || grant.token.length > 10000) return false;
-    const response = await fetch(`https://ghcr.io/v2/${repository}/manifests/${digest}`, {
-      method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(4000),
-      headers: { Authorization: `Bearer ${grant.token}`,
-        Accept: "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" } });
-    return response.status === 200 && response.headers.get("docker-content-digest") === digest;
-  } catch { return false; }
+  for (const candidate of REPOSITORIES) {
+    const repository = `${candidate}/${role}`;
+    try {
+      const auth: Record<string, string> = token && user ? { Authorization: `Basic ${Buffer.from(`${user}:${token}`).toString("base64")}` } : {};
+      const issued = await fetch(`https://ghcr.io/token?service=ghcr.io&scope=${encodeURIComponent(`repository:${repository}:pull`)}`, {
+        redirect: "manual", signal: AbortSignal.timeout(4000), headers: auth });
+      if (!issued.ok || issued.status !== 200) continue;
+      const grant = await issued.json() as { token?: string };
+      if (!grant.token || grant.token.length > 10000) continue;
+      const response = await fetch(`https://ghcr.io/v2/${repository}/manifests/${digest}`, {
+        method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(4000),
+        headers: { Authorization: `Bearer ${grant.token}`,
+          Accept: "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" } });
+      if (response.status === 200 && response.headers.get("docker-content-digest") === digest) return true;
+    } catch { /* пробуем следующее имя репозитория */ }
+  }
+  return false;
 }
 
 export async function discoverTestBuildEvidence(installed: Installed, token: string, user: string): Promise<VerifiedTestBuild | null> {
-  const branch = await json(`${API}/branches/test`, token) as { protected?: boolean; commit?: { sha?: string } };
+  const branch = await json("/branches/test", token) as { protected?: boolean; commit?: { sha?: string } };
   const head = branch.commit?.sha;
   requireValid(branch.protected === true && typeof head === "string" && SHA.test(head));
   if (head === installed.gitSha) return null;
-  const results = await json(`${API}/actions/runs?branch=test&event=push&head_sha=${head}&per_page=10`, token) as {
+  const results = await json(`/actions/runs?branch=test&event=push&head_sha=${head}&per_page=10`, token) as {
     workflow_runs?: { id: number; event: string; path: string; head_sha: string;
       head_branch: string; status: string; conclusion: string; run_attempt: number }[] };
   requireValid(Array.isArray(results.workflow_runs));
@@ -176,7 +198,7 @@ export async function discoverTestBuildEvidence(installed: Installed, token: str
     item.path === ".github/workflows/ci-v2-fast.yml" && item.status === "completed" &&
     item.conclusion === "success" && Number.isSafeInteger(item.id) && Number.isSafeInteger(item.run_attempt));
   if (!run) return null;
-  const list = await json(`${API}/actions/runs/${run.id}/artifacts?per_page=100`, token) as {
+  const list = await json(`/actions/runs/${run.id}/artifacts?per_page=100`, token) as {
     artifacts?: { id: number; name: string; expired: boolean; workflow_run?: { id: number; head_sha: string } }[] };
   requireValid(Array.isArray(list.artifacts));
   const matching = list.artifacts.filter((a) => a.name === `test-channel-${run.run_attempt}` &&
@@ -186,7 +208,7 @@ export async function discoverTestBuildEvidence(installed: Installed, token: str
   const actual = [...manifest.schema_migrations.map((item) => item.name)].sort();
   requireValid(installed.schemaMigrations.length > 0);
   if (JSON.stringify(actual) !== JSON.stringify([...installed.schemaMigrations].sort())) return null;
-  const comparison = await json(`${API}/compare/${installed.gitSha}...${head}`, token) as { status?: string };
+  const comparison = await json(`/compare/${installed.gitSha}...${head}`, token) as { status?: string };
   if (comparison.status !== "ahead") return null;
   if (!(await digestExists("backend", manifest.images.backend.digest, token, user)) ||
       !(await digestExists("frontend", manifest.images.frontend.digest, token, user)))

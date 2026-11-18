@@ -92,13 +92,14 @@ class RestartTests(unittest.TestCase):
             with self.subTest(corrupt=corrupt):
                 with patch.object(installer, "compose", return_value="" if corrupt == "missing" else "1" * 64):
                     with patch.object(installer, "run", return_value=json.dumps(inspected)):
-                        # Every later service would have the wrong service label too.
-                        if corrupt is None:
-                            with self.assertRaisesRegex(installer.Stop, "identity mismatch"):
-                                installer.restart_inventory()
-                        else:
-                            with self.assertRaises(installer.Stop):
-                                installer.restart_inventory()
+                        with patch.object(installer, "env_values", return_value={"COMPOSE_PROJECT_NAME": "homecloud-test"}):
+                            # Every later service would have the wrong service label too.
+                            if corrupt is None:
+                                with self.assertRaisesRegex(installer.Stop, "identity mismatch"):
+                                    installer.restart_inventory()
+                            else:
+                                with self.assertRaises(installer.Stop):
+                                    installer.restart_inventory()
 
 
 if __name__ == "__main__":
