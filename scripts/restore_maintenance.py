@@ -55,7 +55,7 @@ def runtime(snapshot):
         "Restore requires qualified bind storage",
     )
 
-    if snapshot.get("project") == "homecloud-test":
+    if storage.test_channel(snapshot.get("project")):
         require(ROOT == TEST_ROOT, "Wrong TEST checkout")
 
         state = ROOT / ".runtime/maintenance"
@@ -359,7 +359,7 @@ def begin(snapshot, state, lock, operation_fd, token):
 
     hold_operation(lock, operation_fd, acquire=True)
 
-    if snapshot["project"] == "homecloud-test":
+    if storage.test_channel(snapshot["project"]):
         require(
             missing(lock.parent / "pending.json"),
             "Pending TEST installation prevents restore",

@@ -152,6 +152,28 @@ TEST_MAINTENANCE_ROOT = (
 )
 RELEASE_MAINTENANCE_ROOT = Path("/etc/homecloud/maintenance")
 
+# Qualified TEST checkout: this root is fixed when the stand is
+# provisioned and the installer refuses to run from any other path,
+# so it anchors TEST channel identity better than a Compose project
+# name, which stays host-local (for example homecloud-e2e-120).
+TEST_PROJECT_ROOT = Path("/home/hs/homecloud-test")
+
+
+def test_channel(project, checkout=None):
+    """TEST channel identity comes from provisioned host state.
+
+    The checkout root is recorded at provisioning time; the historical
+    project name remains only as a legacy fallback for direct and
+    fixture invocations that do not run from the qualified checkout.
+    """
+    root = (
+        Path(__file__).resolve().parent.parent
+        if checkout is None
+        else Path(checkout)
+    )
+    return project == "homecloud-test" or root == TEST_PROJECT_ROOT
+
+
 MAINTENANCE_MARKER = "maintenance.inhibit"
 MAINTENANCE_PAYLOAD = b"homecloud-maintenance-v1\n"
 
@@ -222,7 +244,7 @@ def verify_backup_inhibitor(
 
     root = (
         TEST_MAINTENANCE_ROOT
-        if project == "homecloud-test"
+        if test_channel(project)
         else RELEASE_MAINTENANCE_ROOT
     )
 
@@ -665,10 +687,10 @@ def verify_backup_capture(snapshot, operation_fd, marker_identity):
         and marker_identity[1] > 0,
         "Invalid capture marker identity",
     )
-    state = (TEST_MAINTENANCE_ROOT if snapshot["project"] == "homecloud-test"
+    state = (TEST_MAINTENANCE_ROOT if test_channel(snapshot["project"])
              else RELEASE_MAINTENANCE_ROOT)
     lock = (state.parent / "test-channel" / "install.lock"
-            if snapshot["project"] == "homecloud-test"
+            if test_channel(snapshot["project"])
             else state / RELEASE_OPERATION_LOCK)
     verify_inherited_operation_lock(lock, operation_fd)
     qualified_state_path(state)
@@ -677,7 +699,7 @@ def verify_backup_capture(snapshot, operation_fd, marker_identity):
                 for name in os.listdir(state)),
         "Unfinished restore prevents backup capture",
     )
-    if snapshot["project"] == "homecloud-test":
+    if test_channel(snapshot["project"]):
         backup_require(read_test_backup_checkpoint(None, capturing=True) == marker_identity,
                        "Capture differs from TEST backup checkpoint")
     backend = verify_backup_writers(snapshot)
@@ -736,7 +758,7 @@ def verify_backup_completion_data(snapshot, allow_retained_swap=False):
 
 def finish_test_backup(snapshot, marker_identity):
     backup_require(
-        snapshot.get("project") == "homecloud-test"
+        test_channel(snapshot.get("project"))
         and snapshot.get("type") == "bind",
         "Only qualified TEST backup may complete maintenance",
     )
@@ -1083,7 +1105,7 @@ def release_backup_window():
         snapshot = resolve_storage()
 
         backup_require(
-            snapshot.get("project") != "homecloud-test"
+            not test_channel(snapshot.get("project"))
             and snapshot.get("type") == "bind"
             and snapshot.get("target") == "/storage",
             "Qualified RELEASE legacy bind storage required",
@@ -1170,7 +1192,7 @@ def main():
             backup_local_daemon()
             snapshot = resolve_storage()
             backup_require(
-                snapshot['project'] == 'homecloud-test'
+                test_channel(snapshot['project'])
                 and snapshot['type'] == 'bind'
                 and snapshot['target'] == '/storage'
                 and snapshot['image_id'] == sys.argv[2],
