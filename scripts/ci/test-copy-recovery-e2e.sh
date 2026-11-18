@@ -899,7 +899,7 @@ docker exec "$DB_CID" \
   validate_restored_database current
 
   test "$(validator_sql -c \
-    "SELECT count(*) FROM migrations;")" = 31
+    "SELECT count(*) FROM migrations;")" = 34
 
   test "$(validator_sql -c \
     "SELECT count(*) FROM file_copy_operations WHERE state='released';")" = 2

@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DataSource } from "typeorm";
@@ -63,10 +64,9 @@ postgres("Shared storage accounting on migrated PostgreSQL", () => {
   beforeAll(async () => {
     // Disposable storage fixture only. No checkout, worktree,
     // repository copy, or production storage directory.
-    fixtureRoot = fs.mkdtempSync(path.join(
-      fs.realpathSync(path.join(__dirname, "../../node_modules")),
-      ".hc-accounting-",
-    ));
+    // The CI integration step runs as an unprivileged user, so the
+    // fixture must live in the system temp dir, not in root-owned node_modules.
+    fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), ".hc-accounting-"));
 
     root = path.join(fixtureRoot, "hdd");
     ssd = path.join(fixtureRoot, "ssd");

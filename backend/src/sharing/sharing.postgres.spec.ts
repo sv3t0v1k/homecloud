@@ -20,6 +20,7 @@ import { CreateShareLinksTable1746824930000 } from "../migrations/1746824930000-
 import { CreateUsersTable1746824900000 } from "../migrations/1746824900000-CreateUsersTable";
 import { ShareLinksTokenUnique1746825040000 } from "../migrations/1746825040000-ShareLinksTokenUnique";
 import { ShareLockedUntilTimestamptz1746825120000 } from "../migrations/1746825120000-ShareLockedUntilTimestamptz";
+import { AddUserRolesAndSessionVersion1792831400000 } from "../migrations/1792831400000-AddUserRolesAndSessionVersion";
 import { SharingService } from "./sharing.service";
 import { StorageService } from "../storage/storage.service";
 import * as bcrypt from "bcryptjs";
@@ -76,6 +77,9 @@ describePostgres("SharingService — реальный PostgreSQL", () => {
     await migration.up(migrationRunner);
     await new AddShareFailedAttempts1746825100000().up(migrationRunner);
     await new ShareLockedUntilTimestamptz1746825120000().up(migrationRunner);
+    // Текущий код выбирает role/sessionVersion пользователя; без этой
+    // миграции entity-запросы падают с «column ...user.role does not exist».
+    await new AddUserRolesAndSessionVersion1792831400000().up(migrationRunner);
     // This historical migration fixture is also read by the current entity.
     await migrationRunner.query(`ALTER TABLE share_links ADD COLUMN "allowUpload" boolean NOT NULL DEFAULT false`);
     await migrationRunner.query(`ALTER TABLE files ADD COLUMN "storageLocationId" uuid, ADD COLUMN "relativeObjectKey" text`);
