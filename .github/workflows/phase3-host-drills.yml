@@ -91,18 +91,28 @@ jobs:
               print('PASS: unchanged helper tree and target sources accepted')
           print('PASS: root trust, six SHA256 pins, current protected TEST evidence')
           PY
-          sudo setfacl -m u:1001:r-- /usr/local/sbin/homecloud-update-install
+          # Overlayfs-backed runner roots may not expose POSIX ACL xattrs via
+          # listxattr, which would silently defeat this drill. Run the ACL
+          # refusal check against an anchor on a fresh tmpfs instead.
+          sudo mount -t tmpfs tmpfs /mnt
+          sudo install -o root -g root -m 0755 /home/hs/homecloud-test/deploy/linux/update-install-bridge.py /mnt/homecloud-update-install
+          sudo setfacl -m u:1001:r-- /mnt/homecloud-update-install
           sudo /usr/bin/python3 -I -S - <<'PY'
+          import os
+          from pathlib import Path
           import runpy
-          worker = runpy.run_path('/usr/local/sbin/homecloud-update-install')
+          anchor = Path('/mnt/homecloud-update-install')
+          if 'system.posix_acl_access' not in os.listxattr(anchor, follow_symlinks=False):
+              raise AssertionError('filesystem does not expose ACL xattrs for the drill')
+          worker = runpy.run_path(str(anchor))
           try:
-              worker['trusted_anchor_path'](worker['WORKER'])
+              worker['trusted_anchor_path'](anchor)
           except worker['Stop']:
               print('PASS: installed worker ACL refused')
           else:
               raise AssertionError('ACL-bearing worker accepted')
           PY
-          sudo setfacl -b -k /usr/local/sbin/homecloud-update-install
+          sudo umount /mnt
           test -f deploy/systemd/homecloud-update-install.service
           test ! -e /etc/systemd/system/homecloud-update-install.service
           if sudo /usr/bin/python3 -I -S /usr/local/sbin/homecloud-update-install > "$RUNNER_TEMP/worker-stop.txt" 2>&1; then
