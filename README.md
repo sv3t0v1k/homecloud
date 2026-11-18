@@ -1,8 +1,8 @@
 # HomeCloud
 
-**Локальная квалификация на 6 октября 2026:** полный 50 ГиБ Browser E2E — **PASS** в IAB/Chromium через HTTP localhost: три SHA-256 совпали, восстановление той же сессии, отмена и очистка подтверждены [отчётом](docs/evidence/browser-50gib-qualification-20261006/report.md). Safari функциональные сценарии — PASS; Safari полный 50 ГиБ — **UNQUALIFIED**. Production — **NOT_READY / NO_GO**.
+**Локальная квалификация на 6 октября 2026:** полный 50 ГиБ Browser E2E — **PASS** в IAB/Chromium через HTTP localhost: три SHA-256 совпали, восстановление той же сессии, отмена и очистка подтверждены [отчётом](docs/evidence/archive/browser-50gib-qualification-20261006/report.md). Safari функциональные сценарии — PASS; Safari полный 50 ГиБ — **UNQUALIFIED**. Production — **NOT_READY / NO_GO**.
 
-Версия `v0.9.0-local.1` — первая нумерованная предпроизводственная локальная версия, не production deployment и не доля завершённости roadmap. [Контракт версии и ограничения](docs/local-release-baseline.md), [изменения](CHANGELOG.md), [план — источник истины](docs/ROADMAP.md).
+Версия `v0.9.0-local.1` — первая нумерованная предпроизводственная локальная версия, не production deployment и не доля завершённости roadmap. [Контракт версии и ограничения](docs/runbooks/local-release-baseline.md), [изменения](CHANGELOG.md), [план — источник истины](docs/ROADMAP.md).
 
 **Self-hosted универсальное хранилище файлов** с загрузкой по частям, публичными ссылками, превью и веб-интерфейсом. Расширение, MIME и содержимое определяют возможность превью. Они не ограничивают допуск к хранению: бинарные артефакты, архивы, файлы с неизвестным расширением и без расширения принимаются без списка разрешённых типов. Размер ограничивают квота и технические пределы инфраструктуры.
 
@@ -100,7 +100,7 @@ cd HomeCloud
 Основной файл теперь **`docker-compose.yml`**: PostgreSQL + backend + frontend,
 HTTP localhost:8080, постоянные project volumes, Redis OFF и SSD uploads OFF.
 Секреты генерируются из `.env.example`; точная подготовка первого запуска и
-использование существующей БД описаны в [Compose runbook](docs/docker-compose.md).
+использование существующей БД описаны в [Compose runbook](docs/runbooks/docker-compose.md).
 
 ```sh
 docker compose config --quiet
@@ -123,8 +123,8 @@ UI: http://localhost:8080/login, API: http://localhost:8080/api/v1.
 Первый администратор создаётся локальной операторской CLI после применения
 миграций. Для существующей БД предусмотрено повышение точно выбранного
 пользователя до ADMIN; автоматически администратор не назначается.
-Инструкции: [bootstrap администратора](docs/admin-bootstrap.md) и
-[первый запуск Compose](docs/docker-compose.md#первый-пользователь-и-квота).
+Инструкции: [bootstrap администратора](docs/runbooks/admin-bootstrap.md) и
+[первый запуск Compose](docs/runbooks/docker-compose.md#первый-пользователь-и-квота).
 Начальная квота нового администратора — 0.
 Health/metrics закрыты на nginx; проверка внутри backend:
 `docker compose exec -T backend node docker/healthcheck.cjs`.
@@ -262,7 +262,7 @@ HomeCloud/
 
 ### Uploads
 
-Архитектура больших файлов: durable unique chunk metadata и компактные counters; streaming finalization с server disk peak≈2S. Лимиты1ТиБ/file и2ТиБ/active user sessions — настраиваемая policy; quota действует отдельно. Текущий полный 50 ГиБ PASS: [браузерная квалификация](docs/evidence/browser-50gib-qualification-20261006/report.md). История изменения архитектуры: [remediation evidence](docs/evidence/large-file-remediation-20261004/report.md). 50 ГиБ — размер квалификации, не максимальный размер файла.
+Архитектура больших файлов: durable unique chunk metadata и компактные counters; streaming finalization с server disk peak≈2S. Лимиты1ТиБ/file и2ТиБ/active user sessions — настраиваемая policy; quota действует отдельно. Текущий полный 50 ГиБ PASS: [браузерная квалификация](docs/evidence/archive/browser-50gib-qualification-20261006/report.md). История изменения архитектуры: [remediation evidence](docs/evidence/archive/large-file-remediation-20261004/report.md). 50 ГиБ — размер квалификации, не максимальный размер файла.
 
 
 | Метод | Endpoint | Описание |
@@ -335,7 +335,7 @@ HomeCloud/
 
 ## Резервное копирование
 
-См. [docs/backup-and-restore.md](docs/backup-and-restore.md).
+См. [docs/backup-and-restore.md](docs/runbooks/backup-and-restore.md).
 
 ## Переменные окружения
 
@@ -359,7 +359,7 @@ HomeCloud/
 
 ## Разработка
 
-Канонический запуск — функция `hc` выше и [runbook](docs/operations-runbook.md). Команды ниже предназначены для отдельного запуска исходников при заранее настроенных зависимостях и внешнем runtime config; они не создают второй Compose-стек. Не публикуйте PostgreSQL/backend для обычной работы. Для воспроизводимой установки используйте lock-файлы:
+Канонический запуск — функция `hc` выше и [runbook](docs/runbooks/operations-runbook.md). Команды ниже предназначены для отдельного запуска исходников при заранее настроенных зависимостях и внешнем runtime config; они не создают второй Compose-стек. Не публикуйте PostgreSQL/backend для обычной работы. Для воспроизводимой установки используйте lock-файлы:
 
 ### Backend
 
@@ -379,7 +379,7 @@ npm run dev
 
 ## Безопасность
 
-Production **NOT_READY / NO_GO**. Используйте существующий [TLS/proxy contract](docs/production-topology.md), [secret lifecycle](docs/secret-lifecycle.md), [backup/recovery](docs/backup-productionization.md) и [external gate checklist](docs/external-input-master-checklist.md). Canonical Compose уже закрывает DB/backend ports; публичный запуск требует фактической приёмки целевого окружения.
+Production **NOT_READY / NO_GO**. Используйте существующий [TLS/proxy contract](docs/architecture/production-topology.md), [secret lifecycle](docs/security/secret-lifecycle.md), [backup/recovery](docs/runbooks/backup-productionization.md) и [external gate checklist](docs/runbooks/external-input-master-checklist.md). Canonical Compose уже закрывает DB/backend ports; публичный запуск требует фактической приёмки целевого окружения.
 
 ## Лицензия
 

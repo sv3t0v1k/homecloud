@@ -2,6 +2,7 @@
 """Offline tests with the real TEST manifest contract."""
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -24,7 +25,7 @@ evidence = load("update_evidence",
 
 class EvidenceTests(unittest.TestCase):
     def setUp(self):
-        repo = evidence.REPOSITORY
+        repo = sorted(evidence.REPOSITORIES)[0]
         sha = "b" * 40
 
         def image(role):
@@ -108,6 +109,29 @@ class EvidenceTests(unittest.TestCase):
 
     def test_valid_evidence(self):
         self.assertEqual(self.check(), self.manifest)
+
+    def test_valid_evidence_with_either_repository_name(self):
+        for repo in evidence.REPOSITORIES:
+            manifest = json.loads(json.dumps(self.manifest))
+            manifest["repository"] = repo
+            for role in ("backend", "frontend"):
+                manifest["images"][role]["repository"] = f"ghcr.io/{repo}/{role}"
+            manifest["manifest_sha256"] = contract.identity(manifest)
+            self.assertEqual(
+                self.check(request_hash=manifest["manifest_sha256"], manifest=manifest),
+                manifest,
+            )
+
+    def test_rejects_unknown_repository_name(self):
+        manifest = json.loads(json.dumps(self.manifest))
+        manifest["repository"] = "sv3t0v1k/someone-else"
+        for role in ("backend", "frontend"):
+            manifest["images"][role]["repository"] = (
+                f"ghcr.io/{manifest['repository']}/{role}"
+            )
+        manifest["manifest_sha256"] = contract.identity(manifest)
+        with self.assertRaises(evidence.EvidenceError):
+            self.check(request_hash=manifest["manifest_sha256"], manifest=manifest)
 
     def test_invalid_request_identity(self):
         with self.assertRaises(evidence.EvidenceError):

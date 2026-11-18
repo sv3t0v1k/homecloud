@@ -169,7 +169,8 @@ def perform_recovery(channel, inhibitor, operation):
         project = values.get("COMPOSE_PROJECT_NAME", "")
 
         require(
-            project == "homecloud-test",
+            project == "homecloud-test"
+            or str(channel.ROOT) == "/home/hs/homecloud-test",
             "Wrong TEST Compose project",
         )
 

@@ -99,7 +99,7 @@ describe("updates discovery", () => {
     expect(service.isAdmin(8)).toBe(false);
     let draft = true;
     global.fetch = jest.fn(async (url: string) => {
-      if (url.includes("/releases?")) return Response.json([{ draft, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/releases/assets/42` }] }]);
+      if (url.includes("/releases?")) return Response.json([{ draft, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` }] }]);
       if (url.includes("/releases/assets/42")) return Response.json(lock(newSha, "v0.9.1-beta.1"));
       if (url.includes("/compare/")) return Response.json({ status: "ahead" });
       if (url.includes("/actions/runs/123")) return Response.json({ conclusion: "success", head_sha: newSha, event: "workflow_dispatch", path: ".github/workflows/release.yml", run_attempt: 1 });
@@ -119,7 +119,7 @@ describe("updates discovery", () => {
     await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
     const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") : "" } as ConfigService);
     global.fetch = jest.fn(async (url: string) => {
-      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/releases/assets/42` }] }]);
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` }] }]);
       if (url.includes("/releases/assets/42")) return Response.json(lock(newSha, "v0.9.1-beta.1"));
       if (url.includes("/compare/")) return Response.json({ status: "ahead" });
       if (url.includes("/actions/runs/123")) return Response.json({ conclusion: "success", head_sha: newSha, event: "workflow_dispatch", path: ".github/workflows/release.yml", run_attempt: 1 });
