@@ -4,12 +4,12 @@ import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import { discoverTestBuild } from "./test-build";
 import { readHostTestCandidate } from "./host-test-candidate";
+import { isNewerVersion, isVersion, withRetry } from "./versions";
 
 const REPOSITORY = "sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud";
 const API = `https://api.github.com/repos/${REPOSITORY}`;
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
-const VERSION = /^v0\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.([1-9]\d*)$/;
 
 type Image = { repository: string; digest: string; revision: string; version: string; platform: string; provenance_verification: { index_digest: string; verified: string } };
 type Lock = { format: string; repository: string; tag: string; tag_object: string; commit: string; manifest_sha256: string; deployment_status: string; schema_migrations: string[]; ci: { status: string; run_id: string; attempt: string; url: string }; production_qualification: { format: string; status: string; coverage: string; qualification_profile: string; source_commit: string; ci: { run_id: string; attempt: string } }; images: { backend: Image; frontend: Image } };
@@ -37,7 +37,7 @@ export function verifiedLock(value: unknown): Lock | null {
   const lock = value as Lock;
   try {
     if (lock.format !== "homecloud-ci-candidate-v1" || lock.repository !== REPOSITORY.toLowerCase() ||
-        !VERSION.test(lock.tag) || !SHA.test(lock.commit) || !SHA.test(lock.tag_object) || lock.deployment_status !== "NOT_DEPLOYED" ||
+        !isVersion(lock.tag) || !SHA.test(lock.commit) || !SHA.test(lock.tag_object) || lock.deployment_status !== "NOT_DEPLOYED" ||
         lock.ci.status !== "success" || !/^\d+$/.test(lock.ci.run_id) || !/^\d+$/.test(lock.ci.attempt) ||
         lock.ci.url !== `https://github.com/${lock.repository}/actions/runs/${lock.ci.run_id}` ||
         lock.production_qualification.format !== "homecloud-production-qualification-v2" ||
@@ -62,7 +62,7 @@ export function verifiedLock(value: unknown): Lock | null {
   } catch { return null; }
 }
 
-async function githubJson(url: string, token: string, accept = "application/vnd.github+json"): Promise<unknown> {
+async function githubJsonOnce(url: string, token: string, accept = "application/vnd.github+json"): Promise<unknown> {
   let response = await fetch(url, {
     headers: { Accept: accept, "X-GitHub-Api-Version": "2022-11-28", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     redirect: "manual",
@@ -79,7 +79,12 @@ async function githubJson(url: string, token: string, accept = "application/vnd.
   return JSON.parse(body);
 }
 
-async function registryDigest(lock: Lock, role: "backend" | "frontend", token: string, user: string): Promise<boolean> {
+// Медленный или прерывистый канал пользователя не должен сразу давать check_unavailable.
+async function githubJson(url: string, token: string, accept?: string): Promise<unknown> {
+  return withRetry(() => accept === undefined ? githubJsonOnce(url, token) : githubJsonOnce(url, token, accept));
+}
+
+async function registryDigestOnce(lock: Lock, role: "backend" | "frontend", token: string, user: string): Promise<boolean> {
   try {
     const scope = `repository:${lock.repository}/${role}:pull`;
     const auth: Record<string, string> = token && user ? { Authorization: `Basic ${Buffer.from(`${user}:${token}`).toString("base64")}` } : {};
@@ -98,14 +103,14 @@ async function registryDigest(lock: Lock, role: "backend" | "frontend", token: s
   } catch { return false; }
 }
 
+async function registryDigest(lock: Lock, role: "backend" | "frontend", token: string, user: string): Promise<boolean> {
+  try {
+    return await withRetry(() => registryDigestOnce(lock, role, token, user), 2);
+  } catch { return false; }
+}
+
 function newer(candidate: string, installed: string): boolean {
-  const a = VERSION.exec(candidate)?.slice(1).map(Number);
-  const b = VERSION.exec(installed)?.slice(1).map(Number);
-  if (!a || !b) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return a[i] > b[i];
-  }
-  return false;
+  return isNewerVersion(candidate, installed);
 }
 
 @Injectable()
@@ -151,8 +156,8 @@ export class UpdatesService {
       const releases = await githubJson(`${API}/releases?per_page=20`, token) as Release[];
       if (!Array.isArray(releases)) throw new Error("Invalid releases");
       for (const release of releases) {
-        if (release.draft || !release.prerelease || !VERSION.test(release.tag_name) ||
-            (VERSION.test(installed.version) && !newer(release.tag_name, installed.version))) continue;
+        if (release.draft || !release.prerelease || !isVersion(release.tag_name) ||
+            (isVersion(installed.version) && !newer(release.tag_name, installed.version))) continue;
         const asset = release.assets?.find((item) => item.name === "release-lock.json" && item.url.startsWith(`${API}/releases/assets/`) && /^\d+$/.test(item.url.slice(`${API}/releases/assets/`.length)));
         if (!asset) continue;
         const lock = verifiedLock(await githubJson(asset.url, token, "application/octet-stream"));
