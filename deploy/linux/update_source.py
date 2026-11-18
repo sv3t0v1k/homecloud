@@ -89,17 +89,23 @@ class GitHubClient:
         require(type(path) is str and path.startswith("/")
                 and ".." not in path and "//" not in path,
                 "Invalid GitHub API path")
-        last = None
+        logical = network = None
         for base in APIS:
             try:
                 data = self.read(base + path, MAX_JSON, authenticated=True)
                 return json.loads(data)
+            except NetworkError as error:
+                network = error
             except SourceError as error:
-                last = error
+                logical = error
             except (ValueError, UnicodeDecodeError) as error:
                 raise SourceError("Invalid GitHub JSON") from error
-        if last is not None:
-            raise last
+        # Логический отказ важнее сетевой недоступности: при смешанной паре
+        # имён он должен привести к invalidate(), а не сохранению кэша.
+        if logical is not None:
+            raise logical
+        if network is not None:
+            raise network
         raise SourceError("Remote evidence unavailable")
 
     def _artifact_location(self, base, artifact_id, headers):
@@ -130,16 +136,22 @@ class GitHubClient:
         }
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
-        last = None
+        logical = network = None
+        location = None
         for base in APIS:
             try:
                 location = self._artifact_location(base, artifact_id, headers)
                 break
+            except NetworkError as error:
+                network = error
             except SourceError as error:
-                last = error
-        else:
-            if last is not None:
-                raise last
+                logical = error
+        if location is None:
+            # Логический отказ важнее сетевой недоступности (см. api_json).
+            if logical is not None:
+                raise logical
+            if network is not None:
+                raise network
             raise SourceError("Remote evidence unavailable")
 
         # A completely new request: never forward GitHub Authorization.

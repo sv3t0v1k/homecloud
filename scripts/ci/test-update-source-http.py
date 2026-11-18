@@ -183,6 +183,47 @@ class SourceHttpTests(unittest.TestCase):
         with self.assertRaises(SourceError):
             client.artifact_json(42)
 
+    def test_logical_error_wins_over_later_network_error(self):
+        # primary: логический отказ; fallback: сетевая недоступность.
+        # Логический отказ важнее независимо от порядка имён.
+        import urllib.error
+        client = self.client(
+            Response(b"x" * (MAX_JSON + 1)), urllib.error.URLError("down"))
+        with self.assertRaises(SourceError) as caught:
+            client.api_json("/branches/test")
+        self.assertNotIsInstance(caught.exception, NetworkError)
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_logical_error_wins_after_earlier_network_error(self):
+        # Обратный порядок: сеть падает первой, логический отказ вторым.
+        import urllib.error
+        client = self.client(
+            urllib.error.URLError("down"), Response(b"x" * (MAX_JSON + 1)))
+        with self.assertRaises(SourceError) as caught:
+            client.api_json("/branches/test")
+        self.assertNotIsInstance(caught.exception, NetworkError)
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_artifact_logical_error_wins_over_later_network_error(self):
+        import urllib.error
+        client = self.client(
+            redirect("https://evil.example/file"),
+            urllib.error.URLError("down"))
+        with self.assertRaises(SourceError) as caught:
+            client.artifact_json(42)
+        self.assertNotIsInstance(caught.exception, NetworkError)
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_artifact_logical_error_wins_after_earlier_network_error(self):
+        import urllib.error
+        client = self.client(
+            urllib.error.URLError("down"),
+            redirect("https://evil.example/file"))
+        with self.assertRaises(SourceError) as caught:
+            client.artifact_json(42)
+        self.assertNotIsInstance(caught.exception, NetworkError)
+        self.assertEqual(len(client.opener.requests), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
