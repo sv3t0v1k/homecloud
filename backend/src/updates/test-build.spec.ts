@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { deflateRawSync } from "zlib";
 import { discoverTestBuild } from "./test-build";
 
-const repo = "sv3t0v1k/https---github.com-sv3t0v1k-homecloud";
+const repo = "sv3t0v1k/homecloud";
 const oldSha = "a".repeat(40);
 const nextSha = "b".repeat(40);
 const backend = `sha256:${"1".repeat(64)}`;

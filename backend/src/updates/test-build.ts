@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { inflateRawSync } from "zlib";
 
-const REPOSITORY = "sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud";
+const REPOSITORY = "sv3t0v1k/homecloud";
 const API = `https://api.github.com/repos/${REPOSITORY}`;
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
