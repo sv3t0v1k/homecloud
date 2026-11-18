@@ -854,5 +854,39 @@ class ReleaseBackupLifecycleTests(unittest.TestCase):
         )
 
 
+class TestChannelIdentityTests(unittest.TestCase):
+
+    def test_legacy_project_name_selects_test_channel(self):
+        self.assertTrue(
+            storage.test_channel("homecloud-test", checkout="/tmp/anywhere")
+        )
+
+    def test_qualified_checkout_selects_test_channel_for_host_project_name(self):
+        self.assertTrue(
+            storage.test_channel(
+                "homecloud-e2e-120",
+                checkout=str(storage.TEST_PROJECT_ROOT),
+            )
+        )
+
+    def test_release_checkout_and_project_stay_release(self):
+        self.assertFalse(
+            storage.test_channel(
+                "homecloud",
+                checkout=str(storage.RELEASE_PROJECT_ROOT),
+            )
+        )
+
+    def test_other_checkout_with_host_project_name_stays_release(self):
+        self.assertFalse(
+            storage.test_channel("homecloud-e2e-120", checkout="/opt/other")
+        )
+
+    def test_missing_project_name_does_not_select_test_channel(self):
+        self.assertFalse(
+            storage.test_channel(None, checkout=str(storage.RELEASE_PROJECT_ROOT))
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
