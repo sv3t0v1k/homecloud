@@ -136,6 +136,18 @@ sudo /usr/bin/python3 -I -S /usr/local/sbin/homecloud-update-verify; echo "exit=
    CHECKOUT…COMPLETE на новых helper'ах, включая вылеченные дискриминаторы
    (backup-fence в TEST-ветке при `homecloud-e2e-120`; restart-identity по
    runtime-имени проекта). Записать backup_id из last-status.json.
+
+   В момент перехода UI/API-инициирование недоступно: backend-гейт требует
+   `sourceGitSha == installed.gitSha`, а после ff-merge (шаг 4) они
+   расходятся до первой установки. Заявку подаём записью в inbox
+   (байт-в-байт формат, который пишет backend): файл
+   `/var/lib/homecloud-update/inbox/request.json`, владелец `1001:65533`,
+   mode 0600, атомарно через tmp + hardlink; затем
+   `systemctl start homecloud-update-admission.service`. В штатном потоке
+   (installed == checkout HEAD) пользовательский путь через UI работает
+   без изменений. Внимание: заявка с commit, равным installed, получит от
+   установщика `SKIP` и будет отклонена мостом как ambiguous — для
+   drill'ов нужен кандидат с новым коммитом.
 2. **Отказ до бэкапа**: заявка с несуществующим `manifestSha256` →
    статус STOP, `pending.json` отсутствует, данные и контейнеры не тронуты.
 3. **Потерянное подтверждение**: SIGKILL установщика после фазы BACKUP →
