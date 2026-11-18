@@ -87,8 +87,19 @@ jobs:
               assert changed and str(error) == 'root helper tree changed; separate qualification required'
               print('PASS: actual helper tree change refused by target gate')
           else:
-              assert not changed
-              print('PASS: unchanged helper tree and target sources accepted')
+              if changed:
+                  # Accepted helper-tree changes must stay inside the CI-only
+                  # script whitelist enforced by the target gate.
+                  diff = source.git('diff-tree', '-r', '-z', '--no-renames',
+                                    '--name-only', current, manifest['commit'],
+                                    '--', 'scripts')
+                  changed_paths = {path.decode('utf-8')
+                                   for path in diff.split(bytes([0])) if path}
+                  assert changed_paths <= verifier['CI_ONLY_SCRIPT_CHANGES'], \
+                      'accepted helper tree change outside the CI-only whitelist'
+                  print('PASS: CI-only script change accepted by target gate')
+              else:
+                  print('PASS: unchanged helper tree and target sources accepted')
           print('PASS: root trust, six SHA256 pins, current protected TEST evidence')
           PY
           # Overlayfs-backed runner roots may not expose POSIX ACL xattrs via
