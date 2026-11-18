@@ -17,7 +17,12 @@ for stage in deps builder; do
       --label "org.opencontainers.image.revision=$source" --label "io.homecloud.role=$role" \
       --provenance=false --output "type=oci,dest=$archive" \
       --metadata-file "$output/$role.build.json" "./$component" 2> "$output/$role.progress.jsonl"; then
-    if sh scripts/ci/scan-image.sh "$scanner" archive "$archive" "$output/$role.scan.json" &&
+    # Build stages never ship: the strict 0C/0H release verdict stays on the
+    # final runtime image (scan-image.sh strict mode there), while stage
+    # findings are retained in evidence under an explicit DIAGNOSTIC verdict.
+    # Dev-only toolchains can carry unfixed HIGH advisories (for example a
+    # CVE without a patched release) that must not freeze every merge.
+    if sh scripts/ci/scan-image.sh "$scanner" archive "$archive" "$output/$role.scan.json" diagnostic &&
        python3 scripts/ci/oci-scan-binding.py --archive "$archive" --report "$output/$role.scan.json" \
          --role "$role" --source "$source" --output "$output/$role.binding.json"; then
       python3 scripts/ci/stage-cache-proof.py \
