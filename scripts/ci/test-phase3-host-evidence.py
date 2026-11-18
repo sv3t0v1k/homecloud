@@ -30,7 +30,7 @@ class Client:
         self.commit, self.run_id = commit, run_id
         self.moved, self.protected, self.event = moved, protected, event
         self.branch_reads = 0
-        repository = evidence.REPOSITORY
+        repository = sorted(evidence.REPOSITORIES)[0]
         proofs = {role: dict(index_digest='sha256:' + digit * 64,
                              platform_digest='sha256:' + ('3' if role == 'backend' else '4') * 64,
                              statement_digest='sha256:' + ('5' if role == 'backend' else '6') * 64,

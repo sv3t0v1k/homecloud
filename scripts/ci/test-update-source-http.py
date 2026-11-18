@@ -11,7 +11,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "deploy/linux"))
 
-from update_source import GitHubClient, SourceError, MAX_JSON
+from update_source import GitHubClient, NetworkError, SourceError, MAX_JSON
 
 
 class Response:
@@ -139,6 +139,27 @@ class SourceHttpTests(unittest.TestCase):
         with self.assertRaises(SourceError):
             client.api_json("/branches/test")
         self.assertEqual(len(client.opener.requests), 2)
+
+    def test_transport_failures_raise_network_error(self):
+        import urllib.error
+        client = self.client(
+            urllib.error.URLError("down"), urllib.error.URLError("down"))
+        with self.assertRaises(NetworkError):
+            client.api_json("/branches/test")
+
+    def test_http_error_status_raises_network_error(self):
+        failure = Response(b"{}")
+        failure.status = 500
+        client = self.client(failure, failure)
+        with self.assertRaises(NetworkError):
+            client.api_json("/branches/test")
+
+    def test_logical_refusal_stays_source_error(self):
+        # 200 с перекрытым телом — логический отказ, не недоступность сети.
+        client = self.client(Response(b"x" * 20))
+        with self.assertRaises(SourceError) as caught:
+            client.read("https://api.github.com/test", 10, True)
+        self.assertNotIsInstance(caught.exception, NetworkError)
 
     def test_rejects_corrupt_zip(self):
         client = self.client(redirect(BLOB), Response(b"bad zip"))

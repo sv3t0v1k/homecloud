@@ -25,6 +25,11 @@ class SourceError(ValueError):
     pass
 
 
+class NetworkError(SourceError):
+    """Транспортная недоступность; не отменяет ранее проверенный кэш."""
+    pass
+
+
 def require(ok, reason):
     if not ok:
         raise SourceError(reason)
@@ -66,7 +71,8 @@ class GitHubClient:
         try:
             request = urllib.request.Request(url, headers=headers)
             with self.opener.open(request, timeout=10) as response:
-                require(response.status == 200, "Unexpected HTTP response")
+                if response.status != 200:
+                    raise NetworkError("Unexpected HTTP response")
                 length = response.headers.get("Content-Length")
                 if length is not None:
                     require(length.isdecimal() and int(length) <= limit,
@@ -74,8 +80,10 @@ class GitHubClient:
                 data = response.read(limit + 1)
                 require(len(data) <= limit, "Oversized HTTP body")
                 return data
+        except NetworkError:
+            raise
         except (urllib.error.URLError, TimeoutError, OSError) as error:
-            raise SourceError("Remote evidence unavailable") from error
+            raise NetworkError("Remote evidence unavailable") from error
 
     def api_json(self, path):
         require(type(path) is str and path.startswith("/")
@@ -90,7 +98,9 @@ class GitHubClient:
                 last = error
             except (ValueError, UnicodeDecodeError) as error:
                 raise SourceError("Invalid GitHub JSON") from error
-        raise SourceError("Remote evidence unavailable") from last
+        if last is not None:
+            raise last
+        raise SourceError("Remote evidence unavailable")
 
     def _artifact_location(self, base, artifact_id, headers):
         try:
@@ -108,7 +118,7 @@ class GitHubClient:
                 return verify_blob_url(location)
             raise SourceError("Unexpected artifact response")
         except (urllib.error.URLError, TimeoutError, OSError) as error:
-            raise SourceError("Remote evidence unavailable") from error
+            raise NetworkError("Remote evidence unavailable") from error
         raise SourceError("Missing artifact redirect")
 
     def artifact_json(self, artifact_id):
@@ -128,7 +138,9 @@ class GitHubClient:
             except SourceError as error:
                 last = error
         else:
-            raise SourceError("Remote evidence unavailable") from last
+            if last is not None:
+                raise last
+            raise SourceError("Remote evidence unavailable")
 
         # A completely new request: never forward GitHub Authorization.
         archive = self.read(location, MAX_ZIP, authenticated=False)

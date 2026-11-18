@@ -80,26 +80,28 @@ class RestartTests(unittest.TestCase):
                     installer.restart_existing_services()
 
     def test_real_inspection_contract(self):
-        for corrupt in (None, "project", "service", "oneoff", "image", "id", "multiple", "missing"):
-            item = copy.deepcopy(self.inventory["db"])
-            if corrupt in ("project", "service", "oneoff"):
-                item["Config"]["Labels"]["com.docker.compose." + corrupt] = "wrong"
-            elif corrupt == "image":
-                item["Image"] = "mutable:tag"
-            elif corrupt == "id":
-                item["Id"] = "f" * 64
-            inspected = [item, item] if corrupt == "multiple" else [item]
-            with self.subTest(corrupt=corrupt):
-                with patch.object(installer, "compose", return_value="" if corrupt == "missing" else "1" * 64):
-                    with patch.object(installer, "run", return_value=json.dumps(inspected)):
-                        with patch.object(installer, "env_values", return_value={"COMPOSE_PROJECT_NAME": "homecloud-test"}):
-                            # Every later service would have the wrong service label too.
-                            if corrupt is None:
-                                with self.assertRaisesRegex(installer.Stop, "identity mismatch"):
-                                    installer.restart_inventory()
-                            else:
-                                with self.assertRaises(installer.Stop):
-                                    installer.restart_inventory()
+        for project in ("homecloud-test", "homecloud-e2e-120"):
+            for corrupt in (None, "project", "service", "oneoff", "image", "id", "multiple", "missing"):
+                item = copy.deepcopy(self.inventory["db"])
+                item["Config"]["Labels"]["com.docker.compose.project"] = project
+                if corrupt in ("project", "service", "oneoff"):
+                    item["Config"]["Labels"]["com.docker.compose." + corrupt] = "wrong"
+                elif corrupt == "image":
+                    item["Image"] = "mutable:tag"
+                elif corrupt == "id":
+                    item["Id"] = "f" * 64
+                inspected = [item, item] if corrupt == "multiple" else [item]
+                with self.subTest(project=project, corrupt=corrupt):
+                    with patch.object(installer, "compose", return_value="" if corrupt == "missing" else "1" * 64):
+                        with patch.object(installer, "run", return_value=json.dumps(inspected)):
+                            with patch.object(installer, "env_values", return_value={"COMPOSE_PROJECT_NAME": project}):
+                                # Every later service would have the wrong service label too.
+                                if corrupt is None:
+                                    with self.assertRaisesRegex(installer.Stop, "identity mismatch"):
+                                        installer.restart_inventory()
+                                else:
+                                    with self.assertRaises(installer.Stop):
+                                        installer.restart_inventory()
 
 
 if __name__ == "__main__":

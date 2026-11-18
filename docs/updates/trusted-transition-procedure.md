@@ -82,15 +82,22 @@ install_from_git deploy/linux/update-admission.py         /usr/local/libexec/hom
 Контрольные точки (обязательны, каждая — до следующего шага):
 
 ```bash
-# 1. Каждый якорь побайтово равен blob'у коммита батча
-for f in update-host-verify.py update-install-bridge.py update-status-archive.py update-host-discover.py update-admission.py; do
-  a=$(sudo sha256sum /usr/local/sbin/homecloud-update-$f 2>/dev/null || sudo sha256sum /usr/local/libexec/homecloud/update-admission.py)
-  b=$(sudo git -C /home/hs/homecloud-test show $BATCH:deploy/linux/$f | sha256sum)
-  [ "$a" = "$b" ] && echo "OK $f" || { echo "РАСХОЖДЕНИЕ $f"; exit 1; }
-done
+# 1. Каждый якорь побайтово равен blob'у коммита батча (сверка только хэшей)
+check_anchor () {  # check_anchor <git-path> <anchor-path>
+  a=$(sudo sha256sum "$2" | awk '{print $1}')
+  b=$(sudo git -C /home/hs/homecloud-test show "$BATCH:$1" | sha256sum | awk '{print $1}')
+  if [ "$a" = "$b" ]; then echo "OK $2"; else echo "РАСХОЖДЕНИЕ $2"; exit 1; fi
+}
+check_anchor deploy/linux/update-host-verify.py    /usr/local/sbin/homecloud-update-verify
+check_anchor deploy/linux/update-install-bridge.py /usr/local/sbin/homecloud-update-install
+check_anchor deploy/linux/update-status-archive.py /usr/local/sbin/homecloud-update-archive
+check_anchor deploy/linux/update-host-discover.py  /usr/local/sbin/homecloud-update-discover
+check_anchor deploy/linux/update-admission.py      /usr/local/libexec/homecloud/update-admission.py
 
 # 2. Метаданные: владелец root, без ACL, без symlinks
-sudo stat -c '%U:%G %a %F %n' /usr/local/sbin/homecloud-update-* /usr/local/libexec/homecloud/update-admission.py
+sudo stat -c '%U:%G %a %F %n' /usr/local/sbin/homecloud-update-verify /usr/local/sbin/homecloud-update-install \
+  /usr/local/sbin/homecloud-update-archive /usr/local/sbin/homecloud-update-discover \
+  /usr/local/libexec/homecloud/update-admission.py
 ```
 
 ## 4. Передвинуть checkout-бейзлайн

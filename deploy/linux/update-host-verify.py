@@ -17,7 +17,7 @@ QUALIFIED = {
     'boundary': ('deploy/linux/root-boundary.py', 'f8199f84ff581cd34c27e20f29fc06398986de7b8722dcef10954c01526b8903'),
     'admission': ('deploy/linux/update-admission.py', '51cda835a4bbbd16f2821404e75e920aa8240a86c2bbcbeddce0eaf803b2f1f2'),
     'update_evidence': ('deploy/linux/update_evidence.py', '66e8d3934aa7295d261ad34a3de5e2f8eb3ae42fa000b1393266ff24c0702cef'),
-    'update_source': ('deploy/linux/update_source.py', '804177c5936eba365b3c0c396a60eeecae72488bbbde37d79f4b51d33766bd97'),
+    'update_source': ('deploy/linux/update_source.py', 'ee9403e4564c4248a907bd9801391e2a2d44992a665526f7628a867475c82a73'),
     'provenance': ('scripts/ci/provenance.py', '40b97dd41b7a84d0c4a380992dcb2e7d9380b1c01bf2515a7846b5405c8818dc'),
     'test_contract': ('scripts/ci/test-channel.py', '458197501f93e4784d51d576964a1a47b43e9925ca3eb9ee6d961eb023c5f03c'),
 }

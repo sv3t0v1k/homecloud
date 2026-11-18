@@ -200,7 +200,7 @@ def main():
     trusted_anchor_path(VERIFIER)
     anchor = runpy.run_path(str(VERIFIER))
     modules = anchor['load_helpers'](ROOT)
-    NETWORK_ERRORS = (modules['update_source'].SourceError,)
+    NETWORK_ERRORS = (modules['update_source'].NetworkError,)
     boundary = modules['boundary']
     boundary.trusted_path(ANCHOR)
     boundary.trusted_path(VERIFIER)
