@@ -13,7 +13,7 @@ set -euo pipefail
 #   - Old storage data is NEVER deleted before new data is verified in staging.
 #   - Storage switch uses atomic rename (mv) on the same filesystem.
 #   - DB restore is fail-closed: ON_ERROR_STOP=1, schema wipe, post-restore
-#     validation (known 7/8/9/10/11/13/15/17-table schemas, column and pending-SSD checks).
+#     validation (known 7/8/9/10/11/13/15/17/18-table schemas, column and pending-SSD checks).
 #   - Checksum/size mismatches, malformed .meta, unsupported format_version
 #     all abort BEFORE any destructive operation.
 #   - Migration failure aborts restore (no WARNING+continue).
@@ -174,7 +174,7 @@ validation_psql() {
 }
 
 validate_restored_database() {
-  local TABLE_COUNT EXPECTED_TABLE_NAMES t EXISTS FILES_COLS USERS_COUNT MIGRATIONS EXPECTED_CURRENT_MIGRATIONS EXPECTED_ADMIN_MIGRATIONS EXPECTED_SESSION_MIGRATIONS EXPECTED_EMAIL_MIGRATIONS EXPECTED_HISTORICAL_MIGRATIONS
+  local TABLE_COUNT EXPECTED_TABLE_NAMES t EXISTS FILES_COLS USERS_COUNT MIGRATIONS EXPECTED_CURRENT_MIGRATIONS EXPECTED_ADMIN_MIGRATIONS EXPECTED_SESSION_MIGRATIONS EXPECTED_EMAIL_MIGRATIONS EXPECTED_DELETION_MIGRATIONS EXPECTED_HISTORICAL_MIGRATIONS
   TABLE_COUNT=$(validation_psql -tAc \
     "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'" | tr -d '[:space:]')
   EXPECTED_TABLE_NAMES="$CORE_TABLE_NAMES"
@@ -187,14 +187,15 @@ validate_restored_database() {
     13) EXPECTED_TABLE_NAMES="$EXPECTED_TABLE_NAMES upload_chunks download_capabilities storage_locations upload_workspaces ssd_finalization_operations ssd_finalization_chunks" ;;
     15) EXPECTED_TABLE_NAMES="$EXPECTED_TABLE_NAMES upload_chunks download_capabilities storage_locations upload_workspaces ssd_finalization_operations ssd_finalization_chunks public_share_operations archive_download_capabilities" ;;
     17) EXPECTED_TABLE_NAMES="$EXPECTED_TABLE_NAMES upload_chunks download_capabilities storage_locations upload_workspaces ssd_finalization_operations ssd_finalization_chunks public_share_operations archive_download_capabilities file_copy_admission file_copy_operations" ;;
-    *) die "Database validation failed: expected a known 7/8/9/10/11/13/15/17-table schema, found $TABLE_COUNT" ;;
+    18) EXPECTED_TABLE_NAMES="$EXPECTED_TABLE_NAMES upload_chunks download_capabilities storage_locations upload_workspaces ssd_finalization_operations ssd_finalization_chunks public_share_operations archive_download_capabilities file_copy_admission file_copy_operations user_deletion_operations" ;;
+    *) die "Database validation failed: expected a known 7/8/9/10/11/13/15/17/18-table schema, found $TABLE_COUNT" ;;
   esac
   for t in $EXPECTED_TABLE_NAMES; do
     EXISTS=$(validation_psql -tAc \
       "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='$t' AND table_type='BASE TABLE'" | tr -d '[:space:]')
     [ "$EXISTS" = "1" ] || die "Database validation failed: table '$t' missing after restore"
   done
-  if [ "$TABLE_COUNT" = 15 ] || [ "$TABLE_COUNT" = 17 ]; then
+  if [ "$TABLE_COUNT" = 15 ] || [ "$TABLE_COUNT" = 17 ] || [ "$TABLE_COUNT" = 18 ]; then
     # Confirm both new tables and the exact migration set before running any
     # migration against an isolated or target database.
     validation_psql -tAc 'SELECT id, "shareLinkId", "shareRootFolderId", "userId", kind, "idempotencyKey", "requestSha256", "resultFolderId", "resultUploadSessionId", "createdAt", "expiresAt" FROM public.public_share_operations WHERE false' >/dev/null \
@@ -232,14 +233,14 @@ validate_restored_database() {
 1746825230000:PublicUploadParentInvalidation1746825230000
 1792831200000:CreateArchiveDownloadCapabilities1792831200000'
 
-    if [ "$TABLE_COUNT" = 17 ]; then
+    if [ "$TABLE_COUNT" = 17 ] || [ "$TABLE_COUNT" = 18 ]; then
       EXPECTED_CURRENT_MIGRATIONS="$EXPECTED_CURRENT_MIGRATIONS
 1792831300000:FileCopyAdmission1792831300000"
     fi
 
     MIGRATIONS=$(validation_psql -tAc "SELECT timestamp::text || ':' || name FROM public.migrations ORDER BY timestamp, name") \
       || die "Current schema migration metadata unavailable"
-    if [ "$TABLE_COUNT" = 17 ]; then
+    if [ "$TABLE_COUNT" = 17 ] || [ "$TABLE_COUNT" = 18 ]; then
       EXPECTED_ADMIN_MIGRATIONS="$EXPECTED_CURRENT_MIGRATIONS
 1792831400000:AddUserRolesAndSessionVersion1792831400000"
 
@@ -249,7 +250,16 @@ validate_restored_database() {
       EXPECTED_EMAIL_MIGRATIONS="$EXPECTED_SESSION_MIGRATIONS
 1792831600000:NormalizeUserEmails1792831600000"
 
-      if [ "$MIGRATIONS" = "$EXPECTED_EMAIL_MIGRATIONS" ] || {
+      if [ "$TABLE_COUNT" = 18 ]; then
+        EXPECTED_DELETION_MIGRATIONS="$EXPECTED_EMAIL_MIGRATIONS
+1792831700000:UserDeletionCleanup1792831700000"
+        [ "$MIGRATIONS" = "$EXPECTED_DELETION_MIGRATIONS" ] \
+          || die "Schema migration set differs from confirmed inventory"
+        validation_psql -tAc 'SELECT id, role, "sessionVersion" FROM public.users WHERE false' >/dev/null \
+          || die "Current schema administrative users columns are missing"
+        validation_psql -tAc 'SELECT "userId", payload, "createdAt" FROM public.user_deletion_operations WHERE false' >/dev/null \
+          || die "Current schema user deletion journal columns are missing"
+      elif [ "$MIGRATIONS" = "$EXPECTED_EMAIL_MIGRATIONS" ] || {
         [ "${1:-historical}" != current ] && {
           [ "$MIGRATIONS" = "$EXPECTED_ADMIN_MIGRATIONS" ] ||
           [ "$MIGRATIONS" = "$EXPECTED_SESSION_MIGRATIONS" ];
@@ -283,7 +293,7 @@ validate_restored_database() {
   case "$USERS_COUNT" in ''|*[!0-9]*) die "Database validation failed: invalid users row count" ;; esac
   validation_psql < "$SCRIPT_DIR/recovery-pending.sql" >/dev/null || die "Unsupported pending SSD/copy state or failed recovery check; refusing restore"
   if [ "${1:-historical}" = current ]; then
-    [ "$TABLE_COUNT" = 17 ] || die "Migration compatibility failed: expected current 17-table schema"
+    [ "$TABLE_COUNT" = 18 ] || die "Migration compatibility failed: expected current 18-table schema"
     # These are the fields consumed by reconciliation and the current recovery
     # gate. This deliberately does not claim complete constraint/type parity.
     validation_psql -tAc 'SELECT id, "storagePath", "storageLocationId", "relativeObjectKey", size, "userId", "isFolder", "isDeleted" FROM public.files WHERE false' >/dev/null \

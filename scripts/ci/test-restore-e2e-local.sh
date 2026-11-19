@@ -679,7 +679,7 @@ require(
 )
 
 require(
-    sql("SELECT count(*) FROM public.migrations;") == "34",
+    sql("SELECT count(*) FROM public.migrations;") == "35",
     "fresh installation migration inventory mismatch",
 )
 
@@ -688,7 +688,7 @@ require(
     "fresh installation unexpectedly contains users",
 )
 
-passed("fresh database, 34 migrations, no automatic administrator")
+passed("fresh database, 35 migrations, no automatic administrator")
 
 email = "bootstrap-admin@example.invalid"
 password = secrets.token_hex(24)
@@ -902,7 +902,7 @@ require(
 )
 
 require(
-    sql("SELECT count(*) FROM public.migrations;") == "34",
+    sql("SELECT count(*) FROM public.migrations;") == "35",
     "bootstrap changed migration inventory",
 )
 

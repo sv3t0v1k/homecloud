@@ -16,7 +16,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 CORE = 'users files folders share_links upload_sessions refresh_tokens migrations'
-CURRENT = CORE + ' upload_chunks download_capabilities storage_locations upload_workspaces ssd_finalization_operations ssd_finalization_chunks public_share_operations archive_download_capabilities file_copy_admission file_copy_operations'
+COPY_CURRENT = CORE + ' upload_chunks download_capabilities storage_locations upload_workspaces ssd_finalization_operations ssd_finalization_chunks public_share_operations archive_download_capabilities file_copy_admission file_copy_operations'
+CURRENT = COPY_CURRENT + ' user_deletion_operations'
 MIGRATIONS = []
 for path in sorted((ROOT / 'backend/src/migrations').glob('*.ts')):
     timestamp = path.name.split('-', 1)[0]
@@ -24,20 +25,22 @@ for path in sorted((ROOT / 'backend/src/migrations').glob('*.ts')):
     if not match or not match.group(1).endswith(timestamp):
         raise AssertionError('Unexpected migration source: ' + path.name)
     MIGRATIONS.append(timestamp + ':' + match.group(1))
-if len(MIGRATIONS) != 34:
-    raise AssertionError('Expected 34 source migrations')
-if MIGRATIONS[-4] != '1792831300000:FileCopyAdmission1792831300000':
+if len(MIGRATIONS) != 35:
+    raise AssertionError('Expected 35 source migrations')
+if MIGRATIONS[-5] != '1792831300000:FileCopyAdmission1792831300000':
     raise AssertionError('Unexpected copy migration')
-if MIGRATIONS[-3] != '1792831400000:AddUserRolesAndSessionVersion1792831400000':
+if MIGRATIONS[-4] != '1792831400000:AddUserRolesAndSessionVersion1792831400000':
     raise AssertionError('Unexpected administrative users migration')
-if MIGRATIONS[-2] != '1792831500000:RevokeLegacyRefreshTokens1792831500000':
+if MIGRATIONS[-3] != '1792831500000:RevokeLegacyRefreshTokens1792831500000':
     raise AssertionError('Unexpected session migration')
-if MIGRATIONS[-1] != '1792831600000:NormalizeUserEmails1792831600000':
+if MIGRATIONS[-2] != '1792831600000:NormalizeUserEmails1792831600000':
     raise AssertionError('Unexpected email migration')
+if MIGRATIONS[-1] != '1792831700000:UserDeletionCleanup1792831700000':
+    raise AssertionError('Unexpected user deletion migration')
 
-COPY_MIGRATIONS = MIGRATIONS[:-3]
-ADMIN_MIGRATIONS = MIGRATIONS[:-2]
-SESSION_MIGRATIONS = MIGRATIONS[:-1]
+COPY_MIGRATIONS = MIGRATIONS[:-4]
+ADMIN_MIGRATIONS = MIGRATIONS[:-3]
+SESSION_MIGRATIONS = MIGRATIONS[:-2]
 
 class RestorePreflight(unittest.TestCase):
     def run_fixture(self, tables=CURRENT, replay_fail=False, pending_fail=False,
@@ -59,7 +62,9 @@ class RestorePreflight(unittest.TestCase):
                 entry.size = 4
                 writer.addfile(entry, io.BytesIO(b'data'))
             env = dict(os.environ, TEST_ARCHIVE=str(archive), TEST_TMP=tmp, TEST_DUMP=str(dump),
-                       TEST_SCRIPT_DIR=str(ROOT / 'scripts'), TEST_TABLES=tables,
+                       TEST_SCRIPT_DIR=str(ROOT / 'scripts'),
+                       TEST_TABLES=(COPY_CURRENT if legacy_copy or legacy_admin or
+                                    legacy_session else tables),
                        TEST_MIGRATIONS='\n'.join(MIGRATIONS), TEST_CURRENT=CURRENT,
                        TEST_INITIAL_MIGRATIONS='\n'.join(
                            COPY_MIGRATIONS if legacy_copy else

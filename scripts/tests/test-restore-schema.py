@@ -26,25 +26,29 @@ def source_migrations():
         if not match or not match.group(1).endswith(timestamp):
             raise AssertionError('Unexpected migration source: ' + path.name)
         rows.append(timestamp + ':' + match.group(1))
-    if len(rows) != 34:
-        raise AssertionError('Expected 34 source migrations')
-    if rows[-4] != '1792831300000:FileCopyAdmission1792831300000':
+    if len(rows) != 35:
+        raise AssertionError('Expected 35 source migrations')
+    if rows[-5] != '1792831300000:FileCopyAdmission1792831300000':
         raise AssertionError('Unexpected copy migration')
-    if rows[-3] != '1792831400000:AddUserRolesAndSessionVersion1792831400000':
+    if rows[-4] != '1792831400000:AddUserRolesAndSessionVersion1792831400000':
         raise AssertionError('Unexpected admin migration')
-    if rows[-2] != '1792831500000:RevokeLegacyRefreshTokens1792831500000':
+    if rows[-3] != '1792831500000:RevokeLegacyRefreshTokens1792831500000':
         raise AssertionError('Unexpected session migration')
-    if rows[-1] != '1792831600000:NormalizeUserEmails1792831600000':
+    if rows[-2] != '1792831600000:NormalizeUserEmails1792831600000':
         raise AssertionError('Unexpected email migration')
+    if rows[-1] != '1792831700000:UserDeletionCleanup1792831700000':
+        raise AssertionError('Unexpected user deletion migration')
     return rows
 
 CURRENT_MIGRATIONS = [] if BASELINE else source_migrations()
-HISTORICAL_MIGRATIONS = CURRENT_MIGRATIONS[:-4]
-COPY_MIGRATIONS = CURRENT_MIGRATIONS[:-3]
-ADMIN_MIGRATIONS = CURRENT_MIGRATIONS[:-2]
-SESSION_MIGRATIONS = CURRENT_MIGRATIONS[:-1]
+HISTORICAL_MIGRATIONS = CURRENT_MIGRATIONS[:-5]
+COPY_MIGRATIONS = CURRENT_MIGRATIONS[:-4]
+ADMIN_MIGRATIONS = CURRENT_MIGRATIONS[:-3]
+SESSION_MIGRATIONS = CURRENT_MIGRATIONS[:-2]
 COPY_EXTRA = {'file_copy_admission', 'file_copy_operations'}
-CURRENT_TABLES = CORE | CURRENT_EXTRA | COPY_EXTRA
+DELETION_EXTRA = {'user_deletion_operations'}
+COPY_TABLES = CORE | CURRENT_EXTRA | COPY_EXTRA
+CURRENT_TABLES = COPY_TABLES | DELETION_EXTRA
 
 class RestoreSchema(unittest.TestCase):
     def gate(self, tables, count=None, query_fail=False, views=(), current=False,
@@ -60,7 +64,7 @@ class RestoreSchema(unittest.TestCase):
             block = source[start:end] + ('\nvalidate_restored_database current\n' if current else '\nvalidate_restored_database\n')
         if migrations is None:
             migrations = (
-                CURRENT_MIGRATIONS if len(tables) == 17
+                CURRENT_MIGRATIONS if len(tables) == 18
                 else HISTORICAL_MIGRATIONS
             )
         env = dict(os.environ, TEST_TABLES=' '.join(tables),
@@ -156,41 +160,41 @@ validation_psql() {
 
     def test_legacy_copy_schema_accepted_before_migration(self):
         self.assertEqual(
-            self.gate(CURRENT_TABLES, migrations=COPY_MIGRATIONS).returncode, 0
+            self.gate(COPY_TABLES, migrations=COPY_MIGRATIONS).returncode, 0
         )
         self.assertNotEqual(
-            self.gate(CURRENT_TABLES, migrations=COPY_MIGRATIONS,
+            self.gate(COPY_TABLES, migrations=COPY_MIGRATIONS,
                       current=True).returncode, 0
         )
 
     def test_admin_schema_before_session_revocation_migration(self):
         self.assertEqual(
-            self.gate(CURRENT_TABLES, migrations=ADMIN_MIGRATIONS).returncode,
+            self.gate(COPY_TABLES, migrations=ADMIN_MIGRATIONS).returncode,
             0,
         )
         self.assertNotEqual(
-            self.gate(CURRENT_TABLES, migrations=ADMIN_MIGRATIONS,
+            self.gate(COPY_TABLES, migrations=ADMIN_MIGRATIONS,
                       current=True).returncode,
             0,
         )
         self.assertNotEqual(
-            self.gate(CURRENT_TABLES, migrations=ADMIN_MIGRATIONS,
+            self.gate(COPY_TABLES, migrations=ADMIN_MIGRATIONS,
                       missing_columns='users').returncode,
             0,
         )
 
     def test_session_schema_before_email_normalization(self):
         self.assertEqual(
-            self.gate(CURRENT_TABLES, migrations=SESSION_MIGRATIONS).returncode,
+            self.gate(COPY_TABLES, migrations=SESSION_MIGRATIONS).returncode,
             0,
         )
         self.assertNotEqual(
-            self.gate(CURRENT_TABLES, migrations=SESSION_MIGRATIONS,
+            self.gate(COPY_TABLES, migrations=SESSION_MIGRATIONS,
                       current=True).returncode,
             0,
         )
         self.assertNotEqual(
-            self.gate(CURRENT_TABLES, migrations=SESSION_MIGRATIONS,
+            self.gate(COPY_TABLES, migrations=SESSION_MIGRATIONS,
                       missing_columns='users').returncode,
             0,
         )
