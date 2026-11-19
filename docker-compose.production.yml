@@ -110,7 +110,7 @@ services:
         ipv4_address: ${FRONTEND_PROXY_IP:?Укажите exact frontend peer IP}
       ingress_frontend:
   ingress:
-    image: docker.io/library/nginx:1.30.6-alpine3.24-slim@sha256:8f06fd647c6687eae0fd7bee8a43df66e61edb9f093bb0a9079d69cb355b879b
+    image: docker.io/library/nginx:1.30.7-alpine3.24-slim@sha256:8c950211a641ec5b23f265450517001f6bcca533666120ebe36cb4cff3d00a55
     platform: linux/amd64
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?Укажите публичное DNS имя}

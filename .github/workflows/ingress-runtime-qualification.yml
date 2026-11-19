@@ -43,7 +43,7 @@ jobs:
           import json, re
           from pathlib import Path
           image = json.loads(Path('scripts/ci/production-images.lock.json').read_text())['ingress']
-          assert re.fullmatch(r'docker\.io/library/nginx:1\.30\.6-alpine3\.24-slim@sha256:[a-f0-9]{64}', image)
+          assert re.fullmatch(r'docker\.io/library/nginx:1\.30\.7-alpine3\.24-slim@sha256:[a-f0-9]{64}', image)
           compose = Path('docker-compose.production.yml').read_text()
           assert re.search(r'(?m)^  ingress:\n    image: ' + re.escape(image) + r'\n    platform: linux/amd64\n', compose)
           Path('evidence/production-pin.txt').write_text(image + '\n')
@@ -101,12 +101,12 @@ jobs:
           docker run --rm --platform linux/amd64 --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --entrypoint sh \
             "$IMAGE" -ec '
-              test "$(nginx -v 2>&1)" = "nginx version: nginx/1.30.6"
+              test "$(nginx -v 2>&1)" = "nginx version: nginx/1.30.7"
               test "$(cut -d. -f1,2 /etc/alpine-release)" = 3.24
               cat /etc/alpine-release
               nginx -v
               apk --no-network info -v' 2>&1 | tee evidence/runtime-versions.txt
-          grep -Fx 'nginx-1.30.6-r1' evidence/runtime-versions.txt
+          grep -Fx 'nginx-1.30.7-r0' evidence/runtime-versions.txt
           grep -Fx 'pcre2-10.49-r0' evidence/runtime-versions.txt
           if grep -E '^(brotli-libs|curl|libcurl|libexpat|libx11)-' evidence/runtime-versions.txt; then exit 1; fi
 
