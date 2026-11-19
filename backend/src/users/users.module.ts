@@ -9,10 +9,11 @@ import { AdminUsersWriteService } from "./admin-users-write.service";
 import { AuthModule } from "../auth/auth.module";
 import { StorageModule } from "../storage/storage.module";
 import { AdminUserDeletionService } from "./admin-user-deletion.service";
+import { UserDeletionEntity } from "../entities/user-deletion.entity";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UserEntity]),
+    TypeOrmModule.forFeature([UserEntity, UserDeletionEntity]),
     AuthModule,
     StorageModule,
   ],

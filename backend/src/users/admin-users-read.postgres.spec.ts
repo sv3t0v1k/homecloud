@@ -21,6 +21,8 @@ import { StorageLocationEntity } from "../entities/storage-location.entity";
 import { UploadWorkspaceEntity } from "../entities/upload-workspace.entity";
 import { UploadSessionEntity } from "../entities/upload-session.entity";
 import { UploadChunkEntity } from "../entities/upload-chunk.entity";
+import { UserDeletionEntity } from "../entities/user-deletion.entity";
+import { AdminUserDeletionService } from "./admin-user-deletion.service";
 import { HttpExceptionFilter } from "../common/errors/http-exception.filter";
 import { TransformInterceptor } from "../common/interceptors/transform.interceptor";
 import { StorageService } from "../storage/storage.service";
@@ -145,6 +147,7 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
             UploadWorkspaceEntity,
             UploadSessionEntity,
             UploadChunkEntity,
+            UserDeletionEntity,
           ],
         }),
         UsersModule,
@@ -697,10 +700,66 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
       .not.toBeNull();
   });
 
-  it("reports physical cleanup pending after the committed deletion", async () => {
-    const { user } = await alternativeAccessFixture(
-      "delete-cleanup-pending@example.test",
+  it.each(["pending", "uploading"]) (
+    "keeps account and data while a %s legacy upload can own an unpublished final link",
+    async (status) => {
+      const { user, credentials, file } = await alternativeAccessFixture(
+        `delete-${status}-upload@example.test`,
+      );
+
+      await db.query(
+        `INSERT INTO upload_workspaces (id, "machineKey", "mountKey", type)
+         VALUES ($1, $2, $3, 'local_filesystem')
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          LEGACY_UPLOAD_WORKSPACE_ID,
+          `delete-test-${randomUUID()}`,
+          `delete-mount-${randomUUID()}`,
+        ],
+      );
+      await db.query(
+        `INSERT INTO upload_sessions (
+          "uploadId", filename, "totalSize", "uploadedSize", "chunkSize",
+          "totalChunks", "uploadedCount", "accountingInitialized", "tempPath",
+          "workspaceId", status, "expiresAt", "userId"
+        ) VALUES ($1, 'pending.bin', 1, 0, 1, 1, 0, true, $2, $3, $4,
+          '2030-01-01', $5)`,
+        [
+          randomUUID(),
+          `/tmp/admin-delete-${randomUUID()}`,
+          LEGACY_UPLOAD_WORKSPACE_ID,
+          status,
+          user.id,
+        ],
+      );
+
+      const response = await request(app.getHttpServer())
+        .delete(`${ENDPOINT}/${user.id}`)
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe("USER_STORAGE_OPERATIONS_ACTIVE");
+      expect(await db.getRepository(UserEntity).findOneBy({ id: user.id }))
+        .not.toBeNull();
+      expect(await db.getRepository(FileEntity).findOneBy({ id: file.id }))
+        .not.toBeNull();
+      expect(await db.getRepository(RefreshTokenEntity).countBy({
+        userId: user.id,
+        revoked: false,
+      })).toBe(1);
+      expect(await db.getRepository(UserDeletionEntity).countBy({
+        userId: user.id,
+      })).toBe(0);
+      expect((await get(ME, credentials.accessToken)).status).toBe(200);
+      expect(deletePhysicalFile).not.toHaveBeenCalledWith(file.storagePath);
+    },
+  );
+
+  it("retains physical cleanup and retries it after a repeated DELETE", async () => {
+    const { user, file } = await alternativeAccessFixture(
+      "delete-cleanup-retry@example.test",
     );
+    const journal = db.getRepository(UserDeletionEntity);
     deletePhysicalFile.mockClear();
     deletePhysicalFile.mockRejectedValueOnce(new Error("fixture unlink failure"));
 
@@ -715,6 +774,47 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     });
     expect(await db.getRepository(UserEntity).findOneBy({ id: user.id }))
       .toBeNull();
+    expect(await journal.findOneBy({ userId: user.id })).toMatchObject({
+      payload: { files: [{ path: file.storagePath }], uploads: [] },
+    });
+
+    const retry = await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(retry.body.data).toEqual({
+      deleted: true,
+      cleanupPending: false,
+    });
+    expect(await journal.countBy({ userId: user.id })).toBe(0);
+    expect(deletePhysicalFile).toHaveBeenCalledTimes(2);
+    expect(deletePhysicalFile).toHaveBeenNthCalledWith(2, file.storagePath);
+  });
+
+  it("resumes retained physical cleanup during module initialization", async () => {
+    const { user, file } = await alternativeAccessFixture(
+      "delete-cleanup-startup@example.test",
+    );
+    const journal = db.getRepository(UserDeletionEntity);
+    deletePhysicalFile.mockClear();
+    deletePhysicalFile.mockRejectedValueOnce(new Error("fixture restart failure"));
+
+    await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.cleanupPending).toBe(true);
+      });
+
+    expect(await journal.countBy({ userId: user.id })).toBe(1);
+    deletePhysicalFile.mockClear();
+
+    await app.get(AdminUserDeletionService).onModuleInit();
+
+    expect(deletePhysicalFile).toHaveBeenCalledWith(file.storagePath);
+    expect(await journal.countBy({ userId: user.id })).toBe(0);
   });
 
   async function waitForReadLock() {

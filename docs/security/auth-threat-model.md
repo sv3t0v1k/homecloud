@@ -59,9 +59,13 @@ download capabilities so reactivation cannot revive them.
 Deletion forbids self-deletion and removal of the last active administrator.
 Database-owned rows are removed by existing cascades, followed by physical
 file and legacy upload-workspace cleanup. Immutable SSD recovery journals,
-nonstandard upload workspaces and unresolved copy operations fail closed
-with explicit conflict codes. A post-commit filesystem failure returns
-`cleanupPending: true`; it must not be presented as complete physical cleanup.
+pending/uploading legacy sessions, nonstandard upload workspaces and
+unresolved copy operations fail closed with explicit conflict codes. The
+physical destinations are committed in `user_deletion_operations` atomically
+with account deletion. A post-commit filesystem failure retains that journal
+and returns `cleanupPending: true`; a repeated DELETE or backend startup
+resumes cleanup, and the journal is removed only after successful completion.
+A pending response must not be presented as complete physical cleanup.
 
 Persistent administrative audit and restore-time session invalidation remain
 outside this contract. No persistent audit trail or backup-restore identity

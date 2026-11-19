@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
   OnModuleDestroy,
+  OnModuleInit,
 } from "@nestjs/common";
 import { DataSource } from "typeorm";
 
@@ -11,6 +12,10 @@ import { UserEntity, UserRole } from "../entities/user.entity";
 import { FileEntity } from "../entities/file.entity";
 import { UploadSessionEntity } from "../entities/upload-session.entity";
 import { UploadWorkspaceEntity } from "../entities/upload-workspace.entity";
+import {
+  UserDeletionCleanupPayload,
+  UserDeletionEntity,
+} from "../entities/user-deletion.entity";
 import {
   LEGACY_UPLOAD_WORKSPACE,
   LEGACY_UPLOAD_WORKSPACE_ID,
@@ -29,7 +34,7 @@ export interface AdminUserDeletionResult {
 }
 
 @Injectable()
-export class AdminUserDeletionService implements OnModuleDestroy {
+export class AdminUserDeletionService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AdminUserDeletionService.name);
   private readonly workspaceResolver: UploadWorkspaceResolver;
 
@@ -38,6 +43,10 @@ export class AdminUserDeletionService implements OnModuleDestroy {
     private readonly storage: StorageService,
   ) {
     this.workspaceResolver = new UploadWorkspaceResolver(storage);
+  }
+
+  onModuleInit(): Promise<void> {
+    return this.resumeCleanup();
   }
 
   onModuleDestroy(): void {
@@ -63,7 +72,7 @@ export class AdminUserDeletionService implements OnModuleDestroy {
     assertAdminActor(actor, current);
     const id = parseAdminUserId(rawId);
 
-    const owned = await this.database.transaction(
+    const payload = await this.database.transaction(
       "READ COMMITTED",
       async (manager) => {
         await lockAdminTransactions(manager);
@@ -80,6 +89,12 @@ export class AdminUserDeletionService implements OnModuleDestroy {
         const target = locked.get(id);
 
         if (!target) {
+          const retained = await manager.findOne(UserDeletionEntity, {
+            where: { userId: id },
+          });
+
+          if (retained) return retained.payload;
+
           throw new NotFoundException({
             code: "USER_NOT_FOUND",
             message: "User not found",
@@ -106,7 +121,7 @@ export class AdminUserDeletionService implements OnModuleDestroy {
           }
         }
 
-        // Immutable recovery journals and live copy reservations are explicit
+        // Immutable recovery journals and live storage operations are explicit
         // operator barriers. Never discard them to make account deletion pass.
         const recovery = await manager.query(
           `SELECT id FROM "ssd_finalization_operations"
@@ -143,8 +158,21 @@ export class AdminUserDeletionService implements OnModuleDestroy {
           where: { userId: id },
         });
 
+        // A pending legacy session can own an unpublished final hard link after
+        // an uncertain COMMIT. Only completed/aborted sessions have a defined
+        // physical lifecycle; all other states require their existing recovery.
         if (sessions.some((session) =>
-          session.workspaceId !== LEGACY_UPLOAD_WORKSPACE_ID
+          session.status === "pending" || session.status === "uploading"
+        )) {
+          throw new ConflictException({
+            code: "USER_STORAGE_OPERATIONS_ACTIVE",
+            message: "User has unresolved upload operations",
+          });
+        }
+
+        if (sessions.some((session) =>
+          session.workspaceId !== LEGACY_UPLOAD_WORKSPACE_ID ||
+          (session.status !== "completed" && session.status !== "aborted")
         )) {
           throw new ConflictException({
             code: "USER_RECOVERY_REQUIRED",
@@ -152,6 +180,23 @@ export class AdminUserDeletionService implements OnModuleDestroy {
           });
         }
 
+        // Resolve every physical destination before deleting its metadata.
+        // The journal is committed atomically with the account tombstone.
+        const payload: UserDeletionCleanupPayload = {
+          files: files.flatMap((file) => file.storagePath
+            ? [{ path: this.storage.resolveFilePath(file, true) }]
+            : []),
+          uploads: sessions.map((session) => ({
+            workspaceId: session.workspaceId,
+            uploadId: session.uploadId,
+            tempPath: session.tempPath,
+          })),
+        };
+
+        await manager.insert(UserDeletionEntity, {
+          userId: id,
+          payload,
+        });
         await revokeLockedUserSessions(manager, target);
         await revokeAlternativeUserAccess(manager, id);
 
@@ -167,34 +212,67 @@ export class AdminUserDeletionService implements OnModuleDestroy {
           throw new Error("Administrative user deletion failed");
         }
 
-        return { files, sessions };
+        return payload;
       },
     );
 
+    return this.finishCleanup(id, payload);
+  }
+
+  private async resumeCleanup(): Promise<void> {
+    try {
+      const retained = await this.database.getRepository(
+        UserDeletionEntity,
+      ).find({ order: { userId: "ASC" } });
+
+      for (const operation of retained) {
+        await this.finishCleanup(operation.userId, operation.payload);
+      }
+    } catch {
+      this.logger.error("Failed to resume retained user cleanup operations");
+    }
+  }
+
+  private async finishCleanup(
+    userId: number,
+    rawPayload: UserDeletionCleanupPayload,
+  ): Promise<AdminUserDeletionResult> {
     let cleanupPending = false;
+    let payload: UserDeletionCleanupPayload;
 
-    // Filesystem effects follow the committed account tombstone. A failed
-    // physical cleanup is reported explicitly and never rolled back as if the
-    // account still existed.
-    for (const file of owned.files) {
-      if (!file.storagePath) continue;
+    try {
+      payload = validateCleanupPayload(rawPayload);
+    } catch {
+      this.logger.error(`Invalid retained cleanup payload for removed user ${userId}`);
+      return { deleted: true, cleanupPending: true };
+    }
 
+    // Filesystem effects follow the committed account deletion and durable
+    // journal. A crash leaves the journal available to retry or startup resume.
+    for (const file of payload.files) {
       try {
-        await this.storage.deleteFile(
-          this.storage.resolveFilePath(file, true),
-        );
+        await this.storage.deleteFile(file.path);
       } catch {
         cleanupPending = true;
-        this.logger.error(`Failed to delete physical file for removed user ${id}`);
+        this.logger.error(`Failed to delete physical file for removed user ${userId}`);
       }
     }
 
-    for (const session of owned.sessions) {
+    for (const session of payload.uploads) {
       try {
         await this.cleanupLegacyUpload(session);
       } catch {
         cleanupPending = true;
-        this.logger.error(`Failed to clean upload workspace for removed user ${id}`);
+        this.logger.error(`Failed to clean upload workspace for removed user ${userId}`);
+      }
+    }
+
+    if (!cleanupPending) {
+      try {
+        await this.database.manager.delete(UserDeletionEntity, { userId });
+      } catch {
+        cleanupPending = true;
+        this.logger.error(`Failed to close cleanup journal for removed user ${userId}`);
       }
     }
 
@@ -202,7 +280,7 @@ export class AdminUserDeletionService implements OnModuleDestroy {
   }
 
   private async cleanupLegacyUpload(
-    session: UploadSessionEntity,
+    session: UserDeletionCleanupPayload["uploads"][number],
   ): Promise<void> {
     const workspace = await this.database.getRepository(
       UploadWorkspaceEntity,
@@ -216,4 +294,20 @@ export class AdminUserDeletionService implements OnModuleDestroy {
 
     this.workspaceResolver.filesystem().remove(tempPath, true);
   }
+}
+
+function validateCleanupPayload(
+  value: UserDeletionCleanupPayload,
+): UserDeletionCleanupPayload {
+  if (!value || typeof value !== "object" ||
+      !Array.isArray(value.files) || !Array.isArray(value.uploads) ||
+      value.files.some((file) => !file || typeof file.path !== "string") ||
+      value.uploads.some((session) => !session ||
+        typeof session.workspaceId !== "string" ||
+        typeof session.uploadId !== "string" ||
+        typeof session.tempPath !== "string")) {
+    throw new Error("Invalid user cleanup payload");
+  }
+
+  return value;
 }
