@@ -1411,7 +1411,7 @@ if [ "${HOMECLOUD_E2E_HISTORICAL_SCHEMA:-0}" = 1 ]; then
       -c "SELECT count(*) FROM files WHERE name='after-backup.txt' AND NOT \"isDeleted\"")" = 1
     BACKUP_DIR="$schema_dir" bash scripts/restore.sh --yes
     verify_restored_state
-    echo "PASS: HISTORICAL DATABASE $table_count TABLES -> CURRENT17 -> REAL API"
+    echo "PASS: HISTORICAL DATABASE $table_count TABLES -> CURRENT18 -> REAL API"
   done
   docker compose ps
   echo "PASS: HISTORICAL DATABASE SCHEMA MATRIX 7/8/9/10/11/13/15"
