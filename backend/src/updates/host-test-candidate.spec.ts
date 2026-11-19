@@ -23,6 +23,18 @@ describe("root-owned TEST candidate contract", () => {
       { gitSha: candidate.commit, schemaMigrations: installed.schemaMigrations }, now)).toBeNull();
   });
 
+  it("exposes additive migrations but refuses removal or replacement", () => {
+    const additive = { ...candidate, schemaMigrations: ["Third3", "Second2", "First1"] };
+    expect(parseHostTestCandidate(additive, installed, now)).toMatchObject({
+      gitSha: candidate.commit, compatibility: "additive-migrations",
+    });
+    expect(parseHostTestCandidate(candidate, installed, now)?.compatibility).toBe("exact-migrations");
+    for (const schemaMigrations of [["First1"], ["First1", "Replacement2"]]) {
+      expect(() => parseHostTestCandidate({ ...candidate, schemaMigrations }, installed, now))
+        .toThrow("Unverified host candidate");
+    }
+  });
+
   it("refuses stale, mismatched, malformed and expanded host data", () => {
     for (const bad of [
       { ...candidate, checkedAt: now / 1000 - 601 },

@@ -134,15 +134,17 @@ class RealBoundaryFunctions(unittest.TestCase):
     def test_installer_phase_is_bound_to_requested_identity(self):
         with tempfile.TemporaryDirectory() as temp:
             pending = Path(temp) / 'pending.json'
-            pending.write_text(json.dumps({'target': {'manifest_sha256': IDENTITY}, 'phase': 'BACKUP'}))
             real_fstat = os.fstat
             def trusted_stat(fd):
                 info = real_fstat(fd)
                 return SimpleNamespace(st_mode=0o100600, st_uid=0, st_size=info.st_size)
             with patch.object(bridge, 'PENDING', pending), patch.object(bridge.os, 'fstat', side_effect=trusted_stat):
-                self.assertEqual(bridge.installer_phase(IDENTITY), 'BACKUP')
-                with self.assertRaises(bridge.Stop):
-                    bridge.installer_phase('c' * 64)
+                for phase in ('BACKUP', 'MIGRATION_APPLY'):
+                    pending.write_text(json.dumps({
+                        'target': {'manifest_sha256': IDENTITY}, 'phase': phase}))
+                    self.assertEqual(bridge.installer_phase(IDENTITY), phase)
+                    with self.assertRaises(bridge.Stop):
+                        bridge.installer_phase('c' * 64)
 
     def test_installed_metadata_is_atomic_and_contains_only_verified_version(self):
         with tempfile.TemporaryDirectory() as temp:

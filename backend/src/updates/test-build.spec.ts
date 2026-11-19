@@ -17,7 +17,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function manifest() {
+function manifest(additional: { name: string; file: string; sha256: string }[] = []) {
   const image = (role: "backend" | "frontend") => ({
     repository: `ghcr.io/${repo}/${role}`, digest: role === "backend" ? backend : frontend,
     platform_digest: digestProof, statement_digest: digestProof,
@@ -26,7 +26,8 @@ function manifest() {
   const body = {
     format: "homecloud-test-channel-v1", repository: repo, commit: nextSha,
     platform: "linux/amd64", images: { backend: image("backend"), frontend: image("frontend") },
-    schema_migrations: [{ name: "MigrationOne", file: "123-MigrationOne.ts", sha256: "4".repeat(64) }],
+    schema_migrations: [{ name: "MigrationOne", file: "123-MigrationOne.ts", sha256: "4".repeat(64) },
+      ...additional],
     source_files: { "backend/Dockerfile": "5".repeat(64) },
     ci: { run_id: "123", attempt: "1", workflow: "ci-v2-fast.yml" },
   };
@@ -101,6 +102,13 @@ describe("TEST channel read-only discovery", () => {
       version: `test-${nextSha.slice(0, 7)}`, gitSha: nextSha, backendDigest: backend,
       frontendDigest: frontend, manifestSha256: current.manifest_sha256,
       changes: "", compatibility: "exact-migrations",
+    });
+  });
+  it("returns a verified additive-migration TEST candidate", async () => {
+    current = manifest([{ name: "MigrationTwo", file: "124-MigrationTwo.ts", sha256: "7".repeat(64) }]);
+    archive = zipManifest(current);
+    expect(await discoverTestBuild(installed, "read-only", "")).toMatchObject({
+      gitSha: nextSha, compatibility: "additive-migrations",
     });
   });
   it("refuses an unprotected test branch", async () => {

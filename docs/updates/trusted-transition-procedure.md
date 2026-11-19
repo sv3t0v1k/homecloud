@@ -18,6 +18,33 @@ Trust gate VM120 принимает кандидата только при не�
 приложения задаётся пинами образов в `.runtime/runtime.env`; смена версии
 произойдёт штатно — установкой кандидата через UI.
 
+### Миграционный контракт после изменения 2026-11-19
+
+TEST-кандидат с новыми миграциями теперь является штатным путём, а не только
+кандидат с совпадающим набором миграций. Разрешены точное совпадение или строгое
+добавление: все установленные записи `{name,file,sha256}` сохраняются без
+изменений, а applied-набор перед установкой точно равен установленному checkpoint.
+Удаление, замена, переименование, изменение источника и applied-drift отклоняются
+до backup. Backend-гейт помечает такой путь как `additive-migrations`.
+
+После проверенного `BACKUP` и `WRITE_REFS` фаза `MIGRATION_APPLY` запускает только
+`db` и новый `backend`. Entrypoint backend выполняет TypeORM
+`migration:run --transaction all` до запуска API. Установщик проверяет образ backend
+и точное равенство applied-миграций манифесту, затем переводит транзакцию в
+`START_SERVICES` и повторяет проверку после полного запуска. Backup остаётся снимком
+**старой** схемы и проверяется против прежнего active-checkpoint.
+
+Любая ошибка или SIGKILL в `MIGRATION_APPLY` требует `MANUAL_RECOVERY_REQUIRED`;
+`pending.json` сохраняется, повторный apply заблокирован до `recovery-inspect` и
+ручного reconciliation. Down-миграции и автоматический перезапуск старых контейнеров
+не являются откатом: схему восстанавливают только из проверенного backup.
+
+Этот батч меняет доверенные `deploy/linux/test-channel.py` и
+`deploy/linux/update-install-bridge.py`. QUALIFIED-хэши намеренно не обновлены в
+рабочем дереве: перед кампанией обязателен независимый review точных байтов и
+trusted transition с заменой соответствующих root-якорей и checkout-бейзлайна.
+Локальные mocked drills не заменяют реальные миграционные E2E на изолированном стенде.
+
 ## 1. Предусловия
 
 1. Батч влит в `test`; push-прогон зелёный; опубликован кандидат `test-<SHA>`.
@@ -130,12 +157,15 @@ sudo /usr/bin/python3 -I -S /usr/local/sbin/homecloud-update-verify; echo "exit=
 ## 6. Квалификационная кампания
 
 Полная первичная кампания — план стенда, п. 4–5. Для перехода достаточно
-трёх прогонов с записью evidence в `docs/evidence/vm120-e2e/`:
+пяти прогонов с записью evidence в `docs/evidence/vm120-e2e/`:
 
-1. **Успешная установка кандидата через UI** — главный прогон: фазы
-   CHECKOUT…COMPLETE на новых helper'ах, включая вылеченные дискриминаторы
-   (backup-fence в TEST-ветке при `homecloud-e2e-120`; restart-identity по
-   runtime-имени проекта). Записать backup_id из last-status.json.
+1. **Успешная additive-установка кандидата через UI** — главный прогон 31→34
+   (или эквивалент на свежем кандидате): фазы CHECKOUT…COMPLETE на новых
+   helper'ах, обязательный `MIGRATION_APPLY` после `BACKUP` и до
+   `START_SERVICES`, включая вылеченные дискриминаторы (backup-fence в
+   TEST-ветке при `homecloud-e2e-120`; restart-identity по runtime-имени
+   проекта). Записать backup_id из last-status.json и applied-набор, точно
+   равный манифесту.
 
    В момент перехода UI/API-инициирование недоступно: backend-гейт требует
    `sourceGitSha == installed.gitSha`, а после ff-merge (шаг 4) они
@@ -153,6 +183,15 @@ sudo /usr/bin/python3 -I -S /usr/local/sbin/homecloud-update-verify; echo "exit=
 3. **Потерянное подтверждение**: SIGKILL установщика после фазы BACKUP →
    статус MANUAL_RECOVERY_REQUIRED, журнал указывает на backup_id,
    восстановление по recovery-inspect завершается сравнением данных.
+4. **Неприменимая новая миграция**: отдельно проверенный disposable-кандидат
+   с заведомо failing up-миграцией → отказ в `MIGRATION_APPLY`, статус
+   MANUAL_RECOVERY_REQUIRED, `pending.json` и backup_id сохранены, полный
+   `START_SERVICES` не выполнен, повторный apply заблокирован. Восстановление
+   только из backup; down-миграция запрещена.
+5. **SIGKILL в миграционной фазе**: завершить установщик после записи
+   `MIGRATION_APPLY` → MANUAL_RECOVERY_REQUIRED по pending/recovery-inspect,
+   повторный apply заблокирован до operator reconciliation; затем выполнить
+   восстановление из backup и сравнить схему и данные.
 
 Каждый прогон: зафиксировать phase/pending/last-status, список контейнеров,
 миграции, контрольные суммы данных (по регламенту плана стенда).
@@ -160,7 +199,8 @@ sudo /usr/bin/python3 -I -S /usr/local/sbin/homecloud-update-verify; echo "exit=
 ## 7. Пост-проверки успешной установки
 
 - 4 контейнера healthy; публичный HTTPS отвечает 200.
-- `installed.json`: `gitSha == $BATCH` (или новее), миграции совпадают.
+- `installed.json`: `gitSha == $BATCH` (или новее); applied-миграции,
+  `state.json`, `installed.json` и манифест содержат один и тот же целевой набор.
 - `last-status.json`: status INSTALLED, backup_id записан.
 - Discovery: кандидат «current» (commit == HEAD == installed).
 

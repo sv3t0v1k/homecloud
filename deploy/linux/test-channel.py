@@ -235,8 +235,8 @@ def start_services():
 def record_phase(transaction, phase):
     require(transaction.get('format') == TX_FORMAT, 'invalid TEST transaction')
     require(phase in ('CHECKOUT', 'VERIFY_IMAGES', 'PREBACKUP', 'STOP_SERVICES', 'BACKUP',
-                      'WRITE_REFS', 'START_SERVICES', 'SMOKE', 'COMMIT_STATE',
-                      'COMPLETE'), 'invalid transaction phase')
+                      'WRITE_REFS', 'MIGRATION_APPLY', 'START_SERVICES', 'SMOKE',
+                      'COMMIT_STATE', 'COMPLETE'), 'invalid transaction phase')
     transaction['phase'] = phase  # This phase MAY have started, not necessarily completed.
     transaction['updated_at'] = datetime.now(timezone.utc).isoformat()
     atomic_json(CHANNEL / 'pending.json', transaction)
@@ -317,22 +317,33 @@ def plan(manifest, state, applied, actual, rollback=False):
     require(isinstance(applied, list) and len(set(applied)) == len(applied)
             and all(isinstance(x, str) and re.fullmatch(r'[A-Za-z0-9]+', x) for x in applied),
             'invalid applied migration inventory')
-    require(active['schema_migrations'] == manifest['schema_migrations']
-            and sorted(applied) == migration_names(manifest),
+    installed_names = migration_names(active)
+    require(sorted(applied) == installed_names,
             'migration source/applied mismatch; automatic install blocked')
-    if all(active['images'][role]['sha'] == manifest['commit'] and
+    target_by_name = {item['name']: item for item in manifest['schema_migrations']}
+    require(all(target_by_name.get(item['name']) == item
+                for item in active['schema_migrations']),
+            'migration source/applied mismatch; automatic install blocked')
+    new_migrations = sorted(set(migration_names(manifest)) - set(installed_names))
+    migration_apply = bool(new_migrations)
+    if not migration_apply and all(
+           active['images'][role]['sha'] == manifest['commit'] and
            active['images'][role]['ref'] == image_ref(manifest, role)
            for role in ('backend', 'frontend')):
-        return {'decision': 'ALREADY_INSTALLED', 'source_sha': manifest['commit']}
+        return {'decision': 'ALREADY_INSTALLED', 'source_sha': manifest['commit'],
+                'migration_apply': False, 'new_migrations': []}
     if rollback:
         require(active.get('manifest') is not None, 'unqualified initial checkpoint cannot be rollback source')
         require(any((entry.get('manifest') or {}).get('manifest_sha256') == manifest['manifest_sha256']
                     for entry in state['history']), 'rollback target absent from journal')
-        require(active['manifest']['schema_migrations'] == manifest['schema_migrations'],
+        require(not migration_apply and
+                active['schema_migrations'] == manifest['schema_migrations'] and
+                active['manifest']['schema_migrations'] == manifest['schema_migrations'],
                 'rollback schema source differs')
     return {'decision': 'ROLLBACK' if rollback else 'INSTALL', 'source_sha': manifest['commit'],
             'backend_digest': manifest['images']['backend']['digest'],
-            'frontend_digest': manifest['images']['frontend']['digest']}
+            'frontend_digest': manifest['images']['frontend']['digest'],
+            'migration_apply': migration_apply, 'new_migrations': new_migrations}
 
 
 def env_values():
@@ -348,10 +359,10 @@ def env_values():
     return values
 
 
-def running_images(expected_refs):
+def running_images(expected_refs, roles=('backend', 'frontend')):
     """Read actual container image refs/IDs, never borrow references from state.json."""
     actual = {}
-    for role in ('backend', 'frontend'):
+    for role in roles:
         cid = compose('ps', '--all', '-q', role)
         require(bool(re.fullmatch(r'[a-f0-9]{12,64}', cid)), 'missing installed container')
         container = json.loads(run('docker', '--host', 'unix:///var/run/docker.sock',
@@ -379,11 +390,11 @@ def active_images(state):
                            for role in ('backend', 'frontend')})
 
 
-def verify_started_images(manifest, ids):
-    """Compose must run the exact verified pair, not merely return success."""
-    expected = {role: image_ref(manifest, role) for role in ('backend', 'frontend')}
-    actual = running_images(expected)
-    for role in ('backend', 'frontend'):
+def verify_started_images(manifest, ids, roles=('backend', 'frontend')):
+    """Compose must run the exact verified image(s), not merely return success."""
+    expected = {role: image_ref(manifest, role) for role in roles}
+    actual = running_images(expected, roles=roles)
+    for role in roles:
         require(actual[role] == {'ref': expected[role], 'id': ids[role],
                                  'sha': manifest['commit']},
                 'started TEST image differs from verified digest')
@@ -1095,7 +1106,9 @@ def deploy(manifest, rollback=False, dry_run=False):
             'format': TX_FORMAT,
             'before': {'git_sha': before_sha, 'images': state['active']['images']},
             'target': {'commit': manifest['commit'], 'manifest_sha256': manifest['manifest_sha256'],
-                       'refs': {role: image_ref(manifest, role) for role in ('backend', 'frontend')}},
+                       'refs': {role: image_ref(manifest, role) for role in ('backend', 'frontend')},
+                       'migration_apply': decision['migration_apply'],
+                       'new_migrations': decision['new_migrations']},
         }
         record_phase(transaction, 'CHECKOUT')
         transaction_started = True
@@ -1132,9 +1145,21 @@ def deploy(manifest, rollback=False, dry_run=False):
         rewrite_refs(manifest)
         run(str(ROOT / 'deploy/linux/project-test.sh'), 'preflight')
         guard_no_maintenance()
+        if decision['migration_apply']:
+            # Backend entrypoint runs TypeORM migration:run --transaction all
+            # before the API. No frontend/ingress writer is started in this phase.
+            # Schema rollback after this point is restore-from-backup only.
+            record_phase(transaction, 'MIGRATION_APPLY')
+            compose('up', '-d', '--no-build', '--pull', 'never', '--wait',
+                    'db', 'backend', timeout=900)
+            verify_started_images(manifest, ids, roles=('backend',))
+            require(sorted(applied_migrations()) == migration_names(manifest),
+                    'applied migrations differ from target manifest')
+        guard_no_maintenance()
         record_phase(transaction, 'START_SERVICES')
         compose('up', '-d', '--no-build', '--pull', 'never', '--wait', 'db', 'backend', 'frontend', 'ingress', timeout=900)
-        require(sorted(applied_migrations()) == sorted(applied), 'unexpected migration after start')
+        require(sorted(applied_migrations()) == migration_names(manifest),
+                'post-start migrations differ from target manifest')
         verify_started_images(manifest, ids)
         record_phase(transaction, 'SMOKE')
         smoke()
