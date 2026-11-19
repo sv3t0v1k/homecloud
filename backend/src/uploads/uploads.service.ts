@@ -10,6 +10,10 @@ import {
 } from "./upload-workspace";
 import { parseDatabaseSize } from "../common/database-size";
 import {
+  canAddStorageBytes,
+  readStorageCommitments,
+} from "../storage/storage-accounting";
+import {
   Injectable,
   Optional,
   NotFoundException,
@@ -190,7 +194,7 @@ export class UploadsService {
   }
 
   private async runnerTransaction<T>(runner: QueryRunner, fn: (manager: EntityManager) => Promise<T>): Promise<T> {
-    await runner.startTransaction();
+    await runner.startTransaction("READ COMMITTED");
     try {
       const result = await fn(runner.manager);
       await runner.commitTransaction();
@@ -375,7 +379,7 @@ export class UploadsService {
         where: { id: userId },
         lock: { mode: "pessimistic_write" },
       });
-      if (!user) {
+      if (!user || user.isActive !== true) {
         throw new ForbiddenException("User not found");
       }
 
@@ -388,50 +392,27 @@ export class UploadsService {
         }
       }
 
-      // Sum totalSize of active (pending/uploading) sessions for this user.
-      const activeResult = await manager
-        .createQueryBuilder(UploadSessionEntity, "session")
-        .select("COALESCE(SUM(session.totalSize), 0)", "activeTotal")
-        .where("session.userId = :userId", { userId })
-        .andWhere("session.status IN (:...statuses)", {
-          statuses: ["pending", "uploading"],
-        })
-        .getRawOne();
-      const activeTotal = parseDatabaseSize(activeResult?.activeTotal);
+      // The owner row is locked above. Read all commitments
+      // in a new statement after acquiring that lock.
+      // Public replay returns above without reserving new bytes.
+      const accounting = await readStorageCommitments(
+        manager,
+        userId,
+      );
+
+      const requested = BigInt(totalSize);
+
       if (
         this.maxTotalSize > 0 &&
-        parseDatabaseSize(activeTotal + totalSize) > this.maxTotalSize
+        accounting.uploadBytes + requested >
+          BigInt(this.maxTotalSize)
       ) {
         throw new BadRequestException(
           "Total upload size exceeds allowed maximum",
         );
       }
 
-      // The user row is already locked, serializing this check
-      // with copy admission and other upload admissions.
-      const copyReservations: Array<{ bytes: string }> =
-        await manager.query(
-          `SELECT COALESCE(SUM("bytes"), 0)::text AS bytes
-           FROM "file_copy_operations"
-           WHERE "userId" = $1
-             AND state IN ('reserved', 'cleanup_required')`,
-          [userId],
-        );
-
-      if (copyReservations.length !== 1) {
-        throw new ServiceUnavailableException(
-          "Copy reservation accounting unavailable",
-        );
-      }
-
-      const reservedCopies = parseDatabaseSize(copyReservations[0].bytes);
-      const quota = parseDatabaseSize(user.storageQuota);
-      const used = parseDatabaseSize(user.storageUsed);
-      const reserved = parseDatabaseSize(
-        used + activeTotal + reservedCopies,
-      );
-      const nextUsed = parseDatabaseSize(reserved + totalSize);
-      if (nextUsed > quota) {
+      if (!canAddStorageBytes(accounting, requested)) {
         throw new ForbiddenException("Storage quota exceeded");
       }
 
@@ -858,12 +839,13 @@ export class UploadsService {
       })
       .getRawOne();
     const activeTotal = parseDatabaseSize(active?.activeTotal);
-    const quota = parseDatabaseSize(user.storageQuota);
-    const used = parseDatabaseSize(user.storageUsed);
-    const quotaRemainingBytes = Math.max(
-      0,
-      quota - parseDatabaseSize(used + activeTotal),
+    // Informational hint only. The shared accounting snapshot also covers
+    // copy reservations, so the remaining figure matches admission checks.
+    const accounting = await readStorageCommitments(
+      this.uploadSessionRepository.manager,
+      userId,
     );
+    const quotaRemainingBytes = Number(accounting.remainingBytes);
     const remainingActiveBytes =
       this.maxTotalSize > 0
         ? Math.max(0, this.maxTotalSize - activeTotal)
@@ -1146,12 +1128,11 @@ export class UploadsService {
             throw new BadRequestException("Upload session expired");
           await this.assertLegacyUnreserved(publication, current.id);
           await this.resolveSessionWorkspace(current, publication);
-          const active = await publication.createQueryBuilder(UploadSessionEntity, "session")
-            .select("COALESCE(SUM(session.totalSize),0)", "activeTotal")
-            .where("session.userId = :userId", { userId })
-            .andWhere("session.status IN (:...statuses)", { statuses: ["pending", "uploading"] })
-            .getRawOne();
-          if (parseDatabaseSize(parseDatabaseSize(user.storageUsed) + parseDatabaseSize(active?.activeTotal)) > parseDatabaseSize(user.storageQuota))
+          // The user's upload reservation (including this session) is already
+          // part of the shared accounting; publication only transfers it into
+          // storageUsed, so the guard checks the total commitment coverage.
+          const accounting = await readStorageCommitments(publication, userId);
+          if (!canAddStorageBytes(accounting, 0n))
             throw new ForbiddenException("Storage quota exceeded");
           const chosenName = await allocateNamespaceName(publication, userId, current.parentId, current.filename, "file");
           // Exclusive hard link keeps the attempt discoverable by existing TTL cleanup.

@@ -296,6 +296,42 @@ function operatorCliPhases(args) {
   return [[process.execPath, [cli, action, ...flags]]];
 }
 
+function adminBootstrapPhases(args) {
+  const [mode, command, cli, action, operation,
+    firstFlag, firstValue, secondFlag, secondValue] = args;
+
+  const create =
+    operation === "create" &&
+    firstFlag === "--email" &&
+    secondFlag === "--name";
+
+  const promote =
+    operation === "promote" &&
+    firstFlag === "--user-id" &&
+    /^[1-9][0-9]*$/.test(firstValue || "") &&
+    secondFlag === "--email";
+
+  if (
+    args.length !== 9 ||
+    mode !== "--admin-bootstrap" ||
+    command !== "node" ||
+    cli !== "dist/users/admin-bootstrap-cli.js" ||
+    action !== "bootstrap" ||
+    (!create && !promote) ||
+    typeof firstValue !== "string" ||
+    firstValue.length === 0 ||
+    typeof secondValue !== "string" ||
+    secondValue.length === 0
+  ) {
+    throw new Error("Unsupported administrator bootstrap invocation");
+  }
+
+  return [[process.execPath, [
+    cli, action, operation,
+    firstFlag, firstValue, secondFlag, secondValue,
+  ]]];
+}
+
 function restoreMigrationPhases(args) {
   if (args.length !== 2 ||
       args[0] !== "--restore-migration" ||
@@ -329,8 +365,10 @@ if (require.main === module) {
   const phases =
     args[0] === "--restore-migration"
       ? restoreMigrationPhases(args)
-      : process.argv.length > 2
-        ? operatorCliPhases(args)
+      : args[0] === "--admin-bootstrap"
+        ? adminBootstrapPhases(args)
+        : process.argv.length > 2
+          ? operatorCliPhases(args)
       : [
     [
       process.execPath,

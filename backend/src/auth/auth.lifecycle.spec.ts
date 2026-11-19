@@ -5,7 +5,8 @@ import { getRepositoryToken } from "@nestjs/typeorm";
 import { UserEntity } from "../entities/user.entity";
 import { RefreshTokenEntity } from "../entities/refresh-token.entity";
 import { AuthService } from "./auth.service";
-import * as bcrypt from "bcryptjs";
+import { randomUUID } from "node:crypto";
+import { refreshTokenDigest } from "./session-token";
 
 const PRODUCTION_CONFIG = {
   NODE_ENV: "production",
@@ -60,14 +61,28 @@ function createManager(records: TokenRecord[]) {
     }),
     findOne: jest.fn().mockImplementation(async (entity: any, options?: any) => {
       if (entity === UserEntity && options?.where?.id) {
-        return { id: options.where.id, isActive: true };
+        return {
+          id: options.where.id,
+          email: "user@test.com",
+          isActive: true,
+          sessionVersion: "1",
+        };
       }
-      if (entity === RefreshTokenEntity && options?.where?.id) {
-        return records.find((r) => r.id === options.where.id) ?? null;
+      if (entity === RefreshTokenEntity && options?.where) {
+        return records.find((record) =>
+          Object.entries(options.where).every(
+            ([key, value]) =>
+              (record as Record<string, unknown>)[key] === value,
+          ),
+        ) ?? null;
       }
       return null;
     }),
     update: jest.fn().mockImplementation(async (_entity: any, criteria: any, changes: any) => {
+      if (_entity === UserEntity) {
+        return { affected: 1 };
+      }
+
       const index = records.findIndex((record) =>
         Object.entries(criteria).every(
           ([key, value]) => (record as Record<string, unknown>)[key] === value,
@@ -201,7 +216,21 @@ describe("AuthService - token lifecycle (real services)", () => {
 
   describe("refresh expiry/reuse path (real AuthService)", () => {
     it("rejects expired refresh token via real AuthService logic", async () => {
-      const storedTokenHash = await bcrypt.hash("expired-token", 10);
+      const token = jwtService.sign(
+        {
+          sub: 1,
+          email: "user@test.com",
+          sv: "1",
+          tokenUse: "refresh",
+          jti: randomUUID(),
+        },
+        {
+          secret: PRODUCTION_CONFIG.JWT_REFRESH_SECRET,
+          expiresIn: "7d",
+        },
+      );
+
+      const storedTokenHash = refreshTokenDigest(token);
       const records: TokenRecord[] = [
         {
           id: 1,
@@ -219,13 +248,27 @@ describe("AuthService - token lifecycle (real services)", () => {
         },
       );
 
-      await expect(service.refresh(1, "expired-token")).rejects.toThrow(
+      await expect(service.refresh(1, token)).rejects.toThrow(
         "Refresh token expired",
       );
     });
 
     it("rejects reused refresh token via real AuthService logic", async () => {
-      const oldHash = await bcrypt.hash("token-a", 10);
+      const token = jwtService.sign(
+        {
+          sub: 1,
+          email: "user@test.com",
+          sv: "1",
+          tokenUse: "refresh",
+          jti: randomUUID(),
+        },
+        {
+          secret: PRODUCTION_CONFIG.JWT_REFRESH_SECRET,
+          expiresIn: "7d",
+        },
+      );
+
+      const oldHash = refreshTokenDigest(token);
       const records: TokenRecord[] = [
         {
           id: 1,
@@ -243,10 +286,10 @@ describe("AuthService - token lifecycle (real services)", () => {
         },
       );
 
-      const firstResult = await service.refresh(1, "token-a");
+      const firstResult = await service.refresh(1, token);
       expect(firstResult.refreshToken).toBeDefined();
 
-      await expect(service.refresh(1, "token-a")).rejects.toThrow(
+      await expect(service.refresh(1, token)).rejects.toThrow(
         "Refresh token was reused",
       );
     });

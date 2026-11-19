@@ -86,6 +86,7 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
   }
 
   const percent = storage ? storagePercent(storage.storageUsed, storage.storageQuota) : null
+  const showReserved = storage !== null && storage.storageReserved !== undefined && storage.storageReserved !== 0 && storage.storageReserved !== '0'
   return <div aria-label="Настройки HomeCloud" aria-modal="true" className="dialog-overlay liquid-settings-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
     <div className="dialog-surface account-dialog liquid-settings-dialog homecloud-settings"><header className="dialog-header"><h2>Настройки HomeCloud</h2><LiquidCloseButton
       aria-label="Закрыть"
@@ -142,7 +143,7 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
         </section>
         ) : null}
         {activeSection === 'storage' ? (
-        <section aria-label="Хранилище" className="account-section"><h3>Хранилище</h3>{storage ? <><p>Использовано {formatBytes(storage.storageUsed)} из {formatBytes(storage.storageQuota)}. Файлов: {storage.fileCount}. Папок: {storage.folderCount}.</p>{percent !== null ? <progress aria-label="Использование хранилища" className="upload-progress-bar" max={100} value={percent} /> : null}</> : !storageError ? <p role="status">Получаем информацию о хранилище…</p> : null}{storageError ? <><p role="alert">{storageError}</p><button className="button button--ghost" onClick={() => setRefresh((value) => value + 1)} type="button">Повторить загрузку квоты</button></> : null}</section>
+        <section aria-label="Хранилище" className="account-section"><h3>Хранилище</h3>{storage ? <><p>Использовано {formatBytes(storage.storageUsed)} из {formatBytes(storage.storageQuota)}. Файлов: {storage.fileCount}. Папок: {storage.folderCount}.</p>{showReserved ? <p>Ещё {formatBytes(storage.storageReserved)} зарезервировано активными загрузками и копированиями.</p> : null}{percent !== null ? <progress aria-label="Использование хранилища" className="upload-progress-bar" max={100} value={percent} /> : null}</> : !storageError ? <p role="status">Получаем информацию о хранилище…</p> : null}{storageError ? <><p role="alert">{storageError}</p><button className="button button--ghost" onClick={() => setRefresh((value) => value + 1)} type="button">Повторить загрузку квоты</button></> : null}</section>
         ) : null}
         <UpdatesSection
           visible={activeSection === 'updates'}

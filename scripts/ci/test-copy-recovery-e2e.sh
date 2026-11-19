@@ -899,7 +899,7 @@ docker exec "$DB_CID" \
   validate_restored_database current
 
   test "$(validator_sql -c \
-    "SELECT count(*) FROM migrations;")" = 31
+    "SELECT count(*) FROM migrations;")" = 34
 
   test "$(validator_sql -c \
     "SELECT count(*) FROM file_copy_operations WHERE state='released';")" = 2
@@ -970,7 +970,7 @@ test "$(sql \
   "SELECT count(*) FROM file_copy_operations WHERE state='reserved'")" = 2
 
 test "$(sql \
-  "SELECT count(*) FROM migrations")" = 31
+  "SELECT count(*) FROM migrations")" = 34
 
 echo "PASS: original E2E fixtures remain intact"
 echo "=== PASS: 7/7 REAL RESTORE VALIDATOR SCENARIOS ==="

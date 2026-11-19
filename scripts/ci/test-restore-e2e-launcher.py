@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Execute launcher against a recording fake Docker, never a daemon."""
+import hashlib
+import io
 import json
 import os
+import tarfile
 from pathlib import Path
 import subprocess
 import sys
@@ -173,8 +176,10 @@ class LauncherTests(unittest.TestCase):
         self.assertNotIn("homecloud-restore-e2e-backend:local", native)
 
         exported = next(call for call in calls if call[0] == "save")
-        self.assertIn(identity, exported)
-        self.assertNotIn("homecloud-restore-e2e-backend:local", exported)
+        # Export uses a verified transport tag, not an untagged ID.
+        # Native execution and nested verification remain digest-pinned.
+        self.assertIn("homecloud-restore-e2e-backend:local", exported)
+        self.assertNotIn(identity, exported)
 
         nested = next(call for call in calls if "--privileged" in call)
         self.assertIn("HOMECLOUD_E2E_BACKEND_IMAGE_ID=" + identity, nested)
@@ -300,6 +305,263 @@ class LauncherTests(unittest.TestCase):
         result, calls = self.invoke(("--unknown",))
         self.assertEqual(result.returncode, 2)
         self.assertEqual(calls, [])
+
+
+
+class PortableImageIdentityTests(unittest.TestCase):
+    BACKEND_TAG = "homecloud-restore-e2e-backend:local"
+    STUB_TAG = "homecloud-restore-e2e-stub:local"
+
+    @staticmethod
+    def encode(obj):
+        return json.dumps(obj, sort_keys=True).encode()
+
+    @staticmethod
+    def sha(data):
+        return "sha256:" + hashlib.sha256(data).hexdigest()
+
+    def fixture(self, modern=True):
+        files = {}
+
+        def add_blob(data):
+            identity = self.sha(data)
+            name = "blobs/sha256/" + identity.split(":", 1)[1]
+            files[name] = data
+            return {
+                "digest": identity,
+                "size": len(data),
+            }, name
+
+        docker_manifest = []
+        index = []
+        identities = []
+
+        for tag in [self.BACKEND_TAG, self.STUB_TAG]:
+            layer = ("fixture layer for " + tag).encode()
+            layer_desc, layer_name = add_blob(layer)
+
+            config = self.encode({
+                "os": "linux",
+                "architecture": "arm64",
+                "rootfs": {
+                    "type": "layers",
+                    "diff_ids": [self.sha(layer)],
+                },
+            })
+
+            config_desc, config_name = add_blob(config)
+
+            native_desc, _ = add_blob(self.encode({
+                "schemaVersion": 2,
+                "config": config_desc,
+                "layers": [layer_desc],
+            }))
+
+            native_desc["platform"] = {
+                "os": "linux",
+                "architecture": "arm64",
+            }
+
+            outer_desc, _ = add_blob(self.encode({
+                "schemaVersion": 2,
+                "manifests": [
+                    native_desc,
+                    {
+                        "digest": "sha256:" + "a" * 64,
+                        "size": 99,
+                        "platform": {
+                            "os": "unknown",
+                            "architecture": "unknown",
+                        },
+                    },
+                ],
+            }))
+
+            docker_manifest.append({
+                "Config": config_name,
+                "RepoTags": [tag],
+                "Layers": [layer_name],
+            })
+
+            index.append(outer_desc)
+
+            identities.append((
+                outer_desc["digest"] if modern else config_desc["digest"],
+                config_desc["digest"],
+            ))
+
+        files["manifest.json"] = self.encode(docker_manifest)
+
+        if modern:
+            files["index.json"] = self.encode({
+                "schemaVersion": 2,
+                "manifests": index,
+            })
+
+        return files, identities
+
+    def execute(self, files, identities, platform="linux/arm64"):
+        source = (
+            ROOT / "scripts/ci/test-restore-e2e-local.sh"
+        ).read_text()
+
+        code = source.split(
+            "<<'IMAGE_VERIFY_PY'\n", 1,
+        )[1].split("\nIMAGE_VERIFY_PY", 1)[0]
+
+        with tempfile.TemporaryDirectory(
+            prefix="hc-image-transfer-test-",
+        ) as directory:
+            archive = Path(directory) / "fixture.tar"
+
+            with tarfile.open(archive, "w") as writer:
+                for name, data in files.items():
+                    entry = tarfile.TarInfo(name)
+                    entry.size = len(data)
+                    writer.addfile(entry, io.BytesIO(data))
+
+            return subprocess.run(
+                [
+                    sys.executable, "-B", "-c", code,
+                    str(archive), platform,
+                    identities[0][0],
+                    identities[1][0],
+                    self.STUB_TAG,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+    def test_classic_config_identity_is_preserved(self):
+        files, identities = self.fixture(modern=False)
+        result = self.execute(files, identities)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            identities[0][1] + " " + identities[1][1],
+        )
+
+    def test_oci_index_resolves_native_config_and_ignores_attestation(self):
+        files, identities = self.fixture()
+        result = self.execute(files, identities)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(identities[0][0], identities[0][1])
+
+        self.assertEqual(
+            result.stdout.strip(),
+            identities[0][1] + " " + identities[1][1],
+        )
+
+    def test_wrong_outer_identity_is_rejected(self):
+        files, identities = self.fixture()
+
+        identities[0] = (
+            "sha256:" + "f" * 64,
+            identities[0][1],
+        )
+
+        result = self.execute(files, identities)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outer OCI descriptor not found", result.stderr)
+
+    def test_wrong_native_platform_is_rejected(self):
+        files, identities = self.fixture()
+        result = self.execute(files, identities, "linux/amd64")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("wrong config architecture", result.stderr)
+
+    def test_tampered_config_is_rejected(self):
+        files, identities = self.fixture()
+
+        manifest = json.loads(files["manifest.json"])
+        name = manifest[0]["Config"]
+
+        config = json.loads(files[name])
+        config["config"] = {"User": "0"}
+        files[name] = self.encode(config)
+
+        result = self.execute(files, identities)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("config differ", result.stderr)
+
+    def test_tampered_layer_is_rejected(self):
+        files, identities = self.fixture()
+
+        manifest = json.loads(files["manifest.json"])
+        name = manifest[0]["Layers"][0]
+
+        data = bytearray(files[name])
+        data[0] ^= 1
+
+        files[name] = bytes(data)
+
+        result = self.execute(files, identities)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("layer digest mismatch", result.stderr)
+
+    def test_tampered_index_blob_is_rejected(self):
+        files, identities = self.fixture()
+
+        name = (
+            "blobs/sha256/"
+            + identities[0][0].split(":", 1)[1]
+        )
+
+        obj = json.loads(files[name])
+        obj["extra"] = True
+
+        files[name] = self.encode(obj)
+
+        result = self.execute(files, identities)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("descriptor digest mismatch", result.stderr)
+
+    def test_missing_transport_tag_is_rejected(self):
+        files, identities = self.fixture()
+
+        manifest = json.loads(files["manifest.json"])
+        manifest[0]["RepoTags"] = []
+        files["manifest.json"] = self.encode(manifest)
+
+        result = self.execute(files, identities)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one Docker archive entry", result.stderr)
+
+    def test_duplicate_transport_tag_is_rejected(self):
+        files, identities = self.fixture()
+
+        manifest = json.loads(files["manifest.json"])
+        manifest.append(manifest[0])
+        files["manifest.json"] = self.encode(manifest)
+
+        result = self.execute(files, identities)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one Docker archive entry", result.stderr)
+
+    def test_stub_identity_is_independently_verified(self):
+        files, identities = self.fixture()
+
+        identities[1] = (
+            "sha256:" + "e" * 64,
+            identities[1][1],
+        )
+
+        result = self.execute(files, identities)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outer OCI descriptor not found", result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":

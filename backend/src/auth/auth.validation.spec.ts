@@ -42,7 +42,7 @@ describe("AuthController refresh/logout validation (Phase 11.2B)", () => {
           useValue: { verifyRefreshToken: verifyRefresh, refresh, logout },
         },
         { provide: JwtService, useValue: { verify: jwtVerify, sign: jest.fn() } },
-        { provide: JwtStrategy, useValue: { validate: async () => ({ userId: 1, email: "u@t.c" }) } },
+        { provide: JwtStrategy, useValue: { validate: async () => ({ userId: 1, email: "u@t.c", sessionVersion: "1" }) } },
       ],
     }).compile();
 
@@ -123,7 +123,7 @@ describe("AuthController refresh/logout validation (Phase 11.2B)", () => {
       const res = await post("logout", { refreshToken: "valid-rt" }, true);
       expect(res.status).toBe(200);
       expect(logout).toHaveBeenCalledTimes(1);
-      expect(logout).toHaveBeenCalledWith(1, "valid-rt");
+      expect(logout).toHaveBeenCalledWith(1, "valid-rt", "1");
     });
 
     it("missing refreshToken -> 400", async () => {

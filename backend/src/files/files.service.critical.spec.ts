@@ -22,7 +22,22 @@ describe("FilesService - Critical Findings (F-01, F-02, MISS-01, MISS-02, MISS-0
         findOne: jest.fn(),
         find: jest.fn(),
         delete: jest.fn(),
-        query: jest.fn().mockResolvedValue([]),
+        query: jest.fn(async (sql: string, params: unknown[]) => {
+          if (sql.includes('FROM "users" u')) {
+            return [{
+              id: params[0],
+              isActive: true,
+              quota: "9007199254740991",
+              used: "0",
+              uploadBytes: "0",
+              copyBytes: "0",
+              activeCopyCount: "0",
+              invalidUploads: "0",
+              invalidCopies: "0",
+            }];
+          }
+          return [];
+        }),
         save: jest.fn(),
         create: jest.fn(),
       },
@@ -472,6 +487,37 @@ describe("FilesService - Critical Findings (F-01, F-02, MISS-01, MISS-02, MISS-0
 
       await expect(service.createFile(1, "test.txt", 100, "text/plain")).rejects.toThrow("Quota exceeded");
 
+      expect(qr.rollbackTransaction).toHaveBeenCalled();
+      expect(qr.commitTransaction).not.toHaveBeenCalled();
+    });
+
+    it("should reject createFile when reservations leave no room and roll back", async () => {
+      mockUsersService.findById.mockResolvedValue({ id: 1, storageQuota: 1000, storageUsed: 400 });
+      mockFolderRepository.findOne.mockResolvedValue({ id: 1, userId: 1 });
+      const qr = mockFileRepository.manager.connection.createQueryRunner();
+      qr.manager.create.mockReturnValue({ id: 1, name: "test.txt" });
+      qr.manager.save.mockResolvedValue({ id: 1, name: "test.txt" });
+      qr.manager.query.mockImplementation(async (sql: string, params: unknown[]) => {
+        if (sql.includes('FROM "users" u')) {
+          return [{
+            id: params[0],
+            isActive: true,
+            quota: "1000",
+            used: "400",
+            uploadBytes: "300",
+            copyBytes: "200",
+            activeCopyCount: "1",
+            invalidUploads: "0",
+            invalidCopies: "0",
+          }];
+        }
+        return [];
+      });
+
+      await expect(service.createFile(1, "test.txt", 101, "text/plain")).rejects.toThrow("Storage quota exceeded");
+
+      expect(qr.manager.save).not.toHaveBeenCalled();
+      expect(mockUsersService.updateStorageUsed).not.toHaveBeenCalled();
       expect(qr.rollbackTransaction).toHaveBeenCalled();
       expect(qr.commitTransaction).not.toHaveBeenCalled();
     });

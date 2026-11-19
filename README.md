@@ -117,8 +117,15 @@ TLS или отдельная вторая инфраструктура для �
 ### 3. Пользователь и доступ
 
 UI: http://localhost:8080/login, API: http://localhost:8080/api/v1.
-Регистрация — `POST /api/v1/auth/register`; новый пользователь получает quota0,
-оператор назначает квоту отдельно по точным id+email. [Команды](docs/runbooks/docker-compose.md#первый-пользователь-и-квота).
+Публичная регистрация отключена: `POST /api/v1/auth/register`
+возвращает HTTP 403 с кодом `REGISTRATION_DISABLED`.
+
+Первый администратор создаётся локальной операторской CLI после применения
+миграций. Для существующей БД предусмотрено повышение точно выбранного
+пользователя до ADMIN; автоматически администратор не назначается.
+Инструкции: [bootstrap администратора](docs/runbooks/admin-bootstrap.md) и
+[первый запуск Compose](docs/runbooks/docker-compose.md#первый-пользователь-и-квота).
+Начальная квота нового администратора — 0.
 Health/metrics закрыты на nginx; проверка внутри backend:
 `docker compose exec -T backend node docker/healthcheck.cjs`.
 
@@ -147,7 +154,6 @@ HomeCloud/
 │       │   ├── guards/
 │       │   │   └── jwt.guard.ts
 │       │   └── dtos/
-│       │       ├── register.dto.ts
 │       │       ├── login.dto.ts
 │       │       └── change-password.dto.ts
 │       ├── users/              # Модуль пользователей
@@ -221,7 +227,7 @@ HomeCloud/
 
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
-| POST | `/api/v1/auth/register` | Регистрация пользователя |
+| POST | `/api/v1/auth/register` | Публичная регистрация отключена; 403 REGISTRATION_DISABLED |
 | POST | `/api/v1/auth/login` | Вход, получение токенов |
 | POST | `/api/v1/auth/refresh` | Обновление access токена |
 | POST | `/api/v1/auth/change-password` | Смена пароля |

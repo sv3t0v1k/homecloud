@@ -13,6 +13,12 @@ import { JwtGuard } from "./guards/jwt.guard";
 import { JwtStrategy, UserInfo } from "./jwt.strategy";
 
 const secret = "failure-security-test-access-secret-at-least-32";
+
+const accessClaims = {
+  email: "owner@example.test",
+  sv: "1",
+  tokenUse: "access",
+};
 const mutation = jest.fn(() => ({ ok: true }));
 
 @Controller("security-probe")
@@ -50,7 +56,7 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
   const jwt = new JwtService({ secret });
   const checkUpdates = jest.fn(async () => ({ available: false }));
   const isAdmin = jest.fn((userId: number) => userId === 2);
-  const users = new Map<number, { id: number; email: string; isActive: boolean }>();
+  const users = new Map<number, { id: number; email: string; isActive: boolean; sessionVersion: string }>();
   const findOne = jest.fn(async ({ where }: { where: { id: number; isActive: boolean } }) => {
     const user = users.get(where.id);
     return user?.isActive === where.isActive ? user : null;
@@ -76,8 +82,8 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
   beforeEach(() => {
     jest.clearAllMocks();
     users.clear();
-    users.set(1, { id: 1, email: "owner@example.test", isActive: true });
-    users.set(2, { id: 2, email: "admin@example.test", isActive: true });
+    users.set(1, { id: 1, email: "owner@example.test", isActive: true, sessionVersion: "1" });
+    users.set(2, { id: 2, email: "admin@example.test", isActive: true, sessionVersion: "1" });
   });
 
   describe.each(["/security-probe", "/passport-probe"])("%s", (endpoint) => {
@@ -102,7 +108,7 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
     it.each(["extra-component", "double-space", "tab", "lowercase-scheme"])(
       "rejects noncanonical %s with a valid signature",
       async (kind) => {
-        const token = jwt.sign({ sub: 1 }, { expiresIn: 60 });
+        const token = jwt.sign({ ...accessClaims, sub: 1 }, { expiresIn: 60 });
         const headers: Record<string, string> = {
           "extra-component": `Bearer ${token} extra`,
           "double-space": `Bearer  ${token}`,
@@ -120,7 +126,7 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
       "rejects %s signed token before mutation",
       async (kind) => {
         const token = jwt.sign(
-          { sub: 1, email: "owner@example.test" },
+          { ...accessClaims, sub: 1 },
           { secret: kind === "expired" ? secret : `${secret}-${kind}`, expiresIn: kind === "expired" ? -1 : 60 },
         );
         const response = await request(app.getHttpServer()).post(endpoint)
@@ -134,7 +140,7 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
     it.each([undefined, null, "1", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
       "rejects signed invalid subject %s before repository access",
       async (sub) => {
-        const token = jwt.sign({ sub }, { expiresIn: 60 });
+        const token = jwt.sign({ ...accessClaims, sub }, { expiresIn: 60 });
         await request(app.getHttpServer()).post(endpoint)
           .set("Authorization", `Bearer ${token}`).expect(401);
         expect(findOne).not.toHaveBeenCalled();
@@ -145,7 +151,7 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
     it.each(["deactivated", "deleted"])(
       "rejects a still-valid JWT after the user is %s",
       async (state) => {
-        const token = jwt.sign({ sub: 1 }, { expiresIn: 60 });
+        const token = jwt.sign({ ...accessClaims, sub: 1 }, { expiresIn: 60 });
         await request(app.getHttpServer()).post(endpoint)
           .set("Authorization", `Bearer ${token}`).expect(201);
         mutation.mockClear();
@@ -158,21 +164,81 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
       },
     );
 
+    it.each([
+      { sub: 1, email: "owner@example.test" },
+      { ...accessClaims, sub: 1, sv: "01" },
+      { ...accessClaims, sub: 1, sv: 1 },
+      { ...accessClaims, sub: 1, tokenUse: "refresh" },
+      { ...accessClaims, sub: 1, tokenUse: undefined },
+    ])("rejects invalid session claims %j", async (claims) => {
+      const token = jwt.sign(claims, { expiresIn: 60 });
+
+      await request(app.getHttpServer()).post(endpoint)
+        .set("Authorization", `Bearer ${token}`).expect(401);
+
+      expect(mutation).not.toHaveBeenCalled();
+      expect(findOne).not.toHaveBeenCalled();
+    });
+
+    it("rejects a signed access token without expiration", async () => {
+      const token = jwt.sign({ ...accessClaims, sub: 1 });
+
+      await request(app.getHttpServer()).post(endpoint)
+        .set("Authorization", `Bearer ${token}`).expect(401);
+
+      expect(mutation).not.toHaveBeenCalled();
+      expect(findOne).not.toHaveBeenCalled();
+    });
+
+    it("rejects old versions even after account reactivation", async () => {
+      const token = jwt.sign(
+        { ...accessClaims, sub: 1 },
+        { expiresIn: 60 },
+      );
+
+      await request(app.getHttpServer()).post(endpoint)
+        .set("Authorization", `Bearer ${token}`).expect(201);
+
+      users.get(1)!.isActive = false;
+      users.get(1)!.sessionVersion = "2";
+      mutation.mockClear();
+
+      await request(app.getHttpServer()).post(endpoint)
+        .set("Authorization", `Bearer ${token}`).expect(401);
+
+      users.get(1)!.isActive = true;
+
+      await request(app.getHttpServer()).post(endpoint)
+        .set("Authorization", `Bearer ${token}`).expect(401);
+
+      expect(mutation).not.toHaveBeenCalled();
+
+      const fresh = jwt.sign(
+        { ...accessClaims, sub: 1, sv: "2" },
+        { expiresIn: 60 },
+      );
+
+      await request(app.getHttpServer()).post(endpoint)
+        .set("Authorization", `Bearer ${fresh}`).expect(201);
+
+      expect(mutation).toHaveBeenCalledTimes(1);
+    });
+
     it("admits a live access token as the positive control", async () => {
-      const token = jwt.sign({ sub: 1, email: "outdated@example.test" }, { expiresIn: 60 });
+      const token = jwt.sign({ ...accessClaims, sub: 1, email: "outdated@example.test" }, { expiresIn: 60 });
       await request(app.getHttpServer()).post(endpoint)
         .set("Authorization", `Bearer ${token}`).expect(201, { ok: true });
       expect(mutation).toHaveBeenCalledTimes(1);
       expect(findOne).toHaveBeenCalledWith({ where: { id: 1, isActive: true } });
       await request(app.getHttpServer()).post(`${endpoint}/identity`)
         .set("Authorization", `Bearer ${token}`)
-        .expect(201, { userId: 1, email: "owner@example.test" });
+        .expect(201, { userId: 1, email: "owner@example.test", sessionVersion: "1" });
     });
   });
 
   it("preserves actual administrative route authorization without running updates", async () => {
-    const owner = jwt.sign({ sub: 1 }, { expiresIn: 60 });
-    const admin = jwt.sign({ sub: 2 }, { expiresIn: 60 });
+    const owner = jwt.sign({ ...accessClaims, sub: 1 }, { expiresIn: 60 });
+    const admin = jwt.sign({ ...accessClaims, sub: 2 }, { expiresIn: 60 });
     await request(app.getHttpServer()).get("/updates/access")
       .set("Authorization", `Bearer ${owner}`).expect(200, { admin: false });
     await request(app.getHttpServer()).get("/updates")

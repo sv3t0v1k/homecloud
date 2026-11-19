@@ -1,11 +1,12 @@
 import base64, hmac, hashlib
 import os, tempfile, pathlib, socket, subprocess, time, urllib.request, urllib.error, json, uuid, shutil
+from runtime_fixture_user import seed_fixture_user
 urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
 repo=str(pathlib.Path(__file__).resolve().parents[2]/'backend')
 def port():
  s=socket.socket();s.bind(('127.0.0.1',0));p=s.getsockname()[1];s.close();return p
 root=pathlib.Path(tempfile.mkdtemp(prefix='hc-failure-security-',dir=tempfile.gettempdir())).resolve(); storage=root/'storage';storage.mkdir()
-name='hc-failure-security-'+uuid.uuid4().hex[:12]; dbport=port(); appport=port(); proc=None; result={}; logs=root/'runtime.log'; at=bt=refresh=expired='';rotated=(0,{'data':{'refreshToken':''}})
+name='hc-failure-security-'+uuid.uuid4().hex[:12]; dbport=port(); appport=port(); proc=None; result={}; logs=root/'runtime.log'; at=bt=refresh=expired=new_at=new_refresh='';rotated=(0,{'data':{'refreshToken':''}})
 def docker(*args):
  return subprocess.check_output(['docker',*args],stderr=subprocess.STDOUT,text=True).strip()
 def req(path, headers=None, data=None):
@@ -43,8 +44,12 @@ try:
   live=eventually('health',200);ready=eventually('health/ready',200)
   (root/'active.json').write_text(json.dumps({'name':name,'dbport':dbport,'appport':appport}))
   print('ACTIVE '+str(root),flush=True)
-  a=api('auth/register',body={'email':'a@failure.test','password':'FailurePassword938475!','name':'A'});assert a[0]==201,a
-  b=api('auth/register',body={'email':'b@failure.test','password':'FailurePassword938475!','name':'B'});assert b[0]==201,b
+  credentials_a={'email':'a@failure.test','password':'FailurePassword938475!','name':'A'}
+  credentials_b={'email':'b@failure.test','password':'FailurePassword938475!','name':'B'}
+  seed_fixture_user(name,'hc_smoke',credentials_a,quota=1048576)
+  seed_fixture_user(name,'hc_smoke',credentials_b,quota=1048576)
+  a=api('auth/login',body={k:credentials_a[k] for k in ('email','password')});assert a[0]==200
+  b=api('auth/login',body={k:credentials_b[k] for k in ('email','password')});assert b[0]==200
   at=a[1]['data']['accessToken'];bt=b[1]['data']['accessToken'];refresh=a[1]['data']['refreshToken']
   f=api('files/folders',at,{'name':'private-folder'});assert f[0]==201,f
   fid=f[1]['data']['id']
@@ -54,12 +59,19 @@ try:
   rotated=api('auth/refresh',body={'refreshToken':refresh});assert rotated[0]==200,rotated
   result['refresh_reuse']=api('auth/refresh',body={'refreshToken':refresh},rid='fs-refresh-reuse')[0];assert result['refresh_reuse']==401
   result['revoked_descendant']=api('auth/refresh',body={'refreshToken':rotated[1]['data']['refreshToken']})[0];assert result['revoked_descendant']==401
-  result['malformed_authorization']=req('files',{'Authorization':'Bearer malformed-fs-sensitive-marker'})[0];assert result['malformed_authorization']==403
-  user_id=json.loads(base64.urlsafe_b64decode(at.split('.')[1]+'=='))['sub']
+  assert api('users/me',at)[0]==401
+  assert api('users/me',rotated[1]['data']['accessToken'])[0]==401
+  result['revoked_access']=True
+  fresh=api('auth/login',body={k:credentials_a[k] for k in ('email','password')});assert fresh[0]==200
+  new_at=fresh[1]['data']['accessToken'];new_refresh=fresh[1]['data']['refreshToken']
+  assert api('users/me',new_at)[0]==200
+  result['malformed_authorization']=req('files',{'Authorization':'Bearer malformed-fs-sensitive-marker'})[0];assert result['malformed_authorization']==401
+  expired_claims=json.loads(base64.urlsafe_b64decode(new_at.split('.')[1]+'=='))
+  expired_claims['exp']=int(time.time())-60
   def enc(value):return base64.urlsafe_b64encode(json.dumps(value,separators=(',',':')).encode()).decode().rstrip('=')
-  unsigned=enc({'alg':'HS256','typ':'JWT'})+'.'+enc({'sub':user_id,'email':'a@failure.test','exp':int(time.time())-60})
+  unsigned=enc({'alg':'HS256','typ':'JWT'})+'.'+enc(expired_claims)
   expired=unsigned+'.'+base64.urlsafe_b64encode(hmac.new(env['JWT_SECRET'].encode(),unsigned.encode(),hashlib.sha256).digest()).decode().rstrip('=')
-  result['expired_access_mutation']=api('files/folders',expired,{'name':'expired-must-not-commit'},rid='fs-expired-mutation')[0];assert result['expired_access_mutation']==403
+  result['expired_access_mutation']=api('files/folders',expired,{'name':'expired-must-not-commit'},rid='fs-expired-mutation')[0];assert result['expired_access_mutation']==401
   before=snap()
   result['healthy']={'live':live[0],'ready':ready[0],'body':json.loads(ready[2])}
   known=req('health',{'X-Request-ID':'smoke-request-001'});unsafe=req('health',{'X-Request-ID':'unsafe value !'})
@@ -73,7 +85,7 @@ try:
   result['database_failed_mutation']=api('files/folders',bt,{'name':'must-not-commit'},rid='fs-db-mutation')[0];assert result['database_failed_mutation']==500
   docker('start',name);recovered=eventually('health/ready',200);result['database_recovered']=recovered[0]
   result['database_state_unchanged']=snap()==before;assert result['database_state_unchanged']
-  assert api('files/folders/'+str(fid),at)[0]==200
+  assert api('files/folders/'+str(fid),new_at)[0]==200
   moved=root/'storage-offline';storage.rename(moved);storage.write_text('offline fixture')
   try:
    bad=eventually('health/ready',503);result['storage_down']={'live':req('health')[0],'ready':bad[0],'body':json.loads(bad[2])}
@@ -105,7 +117,7 @@ finally:
  try:docker('rm','-f',name)
  except subprocess.CalledProcessError:pass
  raw=logs.read_text() if logs.exists() else ''
- sensitive=[at,bt,refresh,rotated[1]['data']['refreshToken'],expired,str(storage),'smoke-sensitive-auth-938475','smoke-sensitive-password-938475','smoke-sensitive-share-938475','smoke-sensitive-query-938475','smoke-metrics-secret-938475','smoke-db-secret-938475','smoke-access-secret-938475abcdefghijk','FailurePassword938475!','malformed-fs-sensitive-marker','fs-rate-password-marker']
+ sensitive=[at,bt,refresh,new_at,new_refresh,rotated[1]['data']['refreshToken'],expired,str(storage),'smoke-sensitive-auth-938475','smoke-sensitive-password-938475','smoke-sensitive-share-938475','smoke-sensitive-query-938475','smoke-metrics-secret-938475','smoke-db-secret-938475','smoke-access-secret-938475abcdefghijk','FailurePassword938475!','malformed-fs-sensitive-marker','fs-rate-password-marker']
  result['privacy']={'leaked_markers':[f'marker_{i}' for i,x in enumerate(sensitive) if x and x in raw]}
  parsed=[];nonjson=0
  for line in raw.splitlines():
@@ -113,7 +125,7 @@ finally:
   except ValueError:nonjson+=1
  result['logs']={'json_lines':len(parsed),'non_json_lines':nonjson,'completion_samples':[x for x in parsed if 'durationMs' in x][:4]}
  result['cleanup_container_removed']=name not in docker('ps','-a','--format','{{.Names}}').splitlines()
- result['assertions_pass']=(result.get('idor')=={'folder_detail':404,'folder_rename':404,'upload_foreign_parent':403} and result.get('invalid_share')==404 and result.get('refresh_reuse')==401 and result.get('revoked_descendant')==401 and result.get('malformed_authorization')==403 and result.get('database_failed_mutation')==500 and result.get('database_state_unchanged') is True and result.get('storage_state_unchanged') is True and result.get('storage_failed_upload')==400 and result.get('failure_metrics_present') is True and result.get('expired_access_mutation')==403 and result.get('healthy',{}).get('ready')==200 and result.get('request_ids',{}).get('accepted')=='smoke-request-001' and result.get('request_ids',{}).get('generated') is not None and result.get('request_ids',{}).get('unsafe')!='unsafe value !' and result.get('metrics',{}).get('unauthorized')==401 and result.get('metrics',{}).get('authorized')==200 and result.get('database_down',{}).get('ready')==503 and result.get('database_down',{}).get('live')==200 and result.get('share_rate_reset')==404 and result.get('auth_rate_reset')==401 and result.get('auth_rate_blocked') is True and result.get('share_attempt_rate',{}).get('blocked')==429 and result.get('storage_down',{}).get('live')==200 and result.get('storage_down',{}).get('ready')==503 and result.get('storage_recovered')==200 and result.get('database_recovered')==200 and not result['privacy']['leaked_markers'] and nonjson==0 and result['cleanup_container_removed'])
+ result['assertions_pass']=(result.get('idor')=={'folder_detail':404,'folder_rename':404,'upload_foreign_parent':403} and result.get('invalid_share')==404 and result.get('refresh_reuse')==401 and result.get('revoked_descendant')==401 and result.get('malformed_authorization')==401 and result.get('revoked_access') is True and result.get('database_failed_mutation')==500 and result.get('database_state_unchanged') is True and result.get('storage_state_unchanged') is True and result.get('storage_failed_upload')==400 and result.get('failure_metrics_present') is True and result.get('expired_access_mutation')==401 and result.get('healthy',{}).get('ready')==200 and result.get('request_ids',{}).get('accepted')=='smoke-request-001' and result.get('request_ids',{}).get('generated') is not None and result.get('request_ids',{}).get('unsafe')!='unsafe value !' and result.get('metrics',{}).get('unauthorized')==401 and result.get('metrics',{}).get('authorized')==200 and result.get('database_down',{}).get('ready')==503 and result.get('database_down',{}).get('live')==200 and result.get('share_rate_reset')==404 and result.get('auth_rate_reset')==401 and result.get('auth_rate_blocked') is True and result.get('share_attempt_rate',{}).get('blocked')==429 and result.get('storage_down',{}).get('live')==200 and result.get('storage_down',{}).get('ready')==503 and result.get('storage_recovered')==200 and result.get('database_recovered')==200 and not result['privacy']['leaked_markers'] and nonjson==0 and result['cleanup_container_removed'])
  result['artifacts']=str(root)
  (root/'result.json').write_text(json.dumps(result,indent=2))
  print(json.dumps(result,indent=2))

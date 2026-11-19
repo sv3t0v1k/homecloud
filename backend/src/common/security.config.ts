@@ -8,6 +8,8 @@ import { clientIp } from "./trusted-proxy";
 import * as crypto from "crypto";
 import { isIP } from "node:net";
 import { JwtService } from "@nestjs/jwt";
+import { JwtStrategy } from "../auth/jwt.strategy";
+import { parseAccessSessionClaims } from "../auth/session-token";
 import { bearerTokenFromHeader } from "../auth/guards/bearer-token";
 import { browserDownloadErrorLocation } from "../sharing/browser-download-redirect";
 import {
@@ -284,7 +286,7 @@ const publicDownloadRateLimitHandler: RateLimitExceededEventHandler = (
 export function applySecurityMiddleware(
   app: INestApplication,
   configService: ConfigService,
-  transfer?: { jwtService: JwtService; uploads: UploadRateLimitService; publicUploads?: { admit(token: string, proof: string | undefined, uploadId: string): Promise<{ userId: number }> } },
+  transfer?: { jwtService: JwtService; jwtStrategy?: Pick<JwtStrategy, "validate">; uploads: UploadRateLimitService; publicUploads?: { admit(token: string, proof: string | undefined, uploadId: string): Promise<{ userId: number }> } },
 ): void {
   app.use(
     helmet({
@@ -342,9 +344,16 @@ export function applySecurityMiddleware(
       const token = bearerTokenFromHeader(req.headers.authorization);
       if (token) {
         try {
-          const payload = transfer.jwtService.verify(token);
-          if (Number.isSafeInteger(payload.sub) && payload.sub > 0)
-            markVerifiedTransfer(req, payload.sub);
+          const payload: unknown = transfer.jwtService.verify(token, {
+            algorithms: ["HS256"],
+          });
+
+          const claims = parseAccessSessionClaims(payload);
+
+          if (claims && transfer.jwtStrategy) {
+            const user = await transfer.jwtStrategy.validate(claims);
+            markVerifiedTransfer(req, user.userId);
+          }
         } catch {
           /* Invalid JWT keeps the ordinary IP limiter and JwtGuard. */
         }

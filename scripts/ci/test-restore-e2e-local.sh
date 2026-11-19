@@ -101,7 +101,257 @@ for i in $(seq 1 60); do
 done
 
 test "$READY" = 1
-docker load
+# Receive the exact archive inside the disposable DinD container.
+# The file lives only on the runner's private temporary volume.
+cat > "$WORK/images.tar"
+
+python3 -B - "$WORK/images.tar" "$HOMECLOUD_E2E_PLATFORM" "${HOMECLOUD_E2E_BACKEND_IMAGE_ID:?Expected outer backend identity}" "${HOMECLOUD_E2E_STUB_IMAGE_ID:?Expected outer stub identity}" "$HOMECLOUD_E2E_STUB_IMAGE" > "$WORK/portable-ids" <<'IMAGE_VERIFY_PY'
+import hashlib
+import json
+import re
+import sys
+import tarfile
+
+archive_path, platform, backend_id, stub_id, stub_tag = sys.argv[1:]
+
+if platform not in ("linux/arm64", "linux/amd64"):
+    raise SystemExit("STOP: unsupported archive platform")
+
+os_name, arch = platform.split("/")
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+def valid_digest(value):
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
+    )
+
+def sha256(data):
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+with tarfile.open(archive_path, "r:") as archive:
+    members = {}
+
+    for member in archive.getmembers():
+        name = member.name
+
+        if name.startswith("./"):
+            name = name[2:]
+
+        if member.isdir():
+            continue
+
+        require(name not in members, "duplicate archive member: " + name)
+        members[name] = member
+
+    def get_file(name):
+        member = members.get(name)
+
+        require(
+            member is not None and member.isfile(),
+            "missing or nonregular archive member: " + name,
+        )
+
+        return member
+
+    def metadata(name):
+        member = get_file(name)
+
+        require(
+            member.size <= 16 * 1024 * 1024,
+            "oversized image metadata: " + name,
+        )
+
+        with archive.extractfile(member) as stream:
+            data = stream.read()
+
+        return json.loads(data), sha256(data), len(data)
+
+    def file_digest(name):
+        member = get_file(name)
+        digest = hashlib.sha256()
+
+        with archive.extractfile(member) as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+
+        return "sha256:" + digest.hexdigest()
+
+    def descriptor_json(descriptor):
+        identity = descriptor["digest"]
+
+        require(valid_digest(identity), "invalid OCI descriptor digest")
+
+        obj, actual, size = metadata(
+            "blobs/sha256/" + identity.split(":", 1)[1]
+        )
+
+        require(actual == identity, "OCI descriptor digest mismatch")
+        require(size == descriptor["size"], "OCI descriptor size mismatch")
+
+        return obj
+
+    docker_manifest, _, _ = metadata("manifest.json")
+
+    require(
+        isinstance(docker_manifest, list),
+        "invalid Docker archive manifest",
+    )
+
+    def resolve(tag, expected_outer):
+        require(valid_digest(expected_outer), "invalid expected outer ID")
+
+        matches = [
+            entry for entry in docker_manifest
+            if tag in (entry.get("RepoTags") or [])
+        ]
+
+        require(
+            len(matches) == 1,
+            "expected exactly one Docker archive entry for " + tag,
+        )
+
+        entry = matches[0]
+        config, config_id, config_size = metadata(entry["Config"])
+
+        require(config.get("os") == os_name, "wrong config OS")
+        require(config.get("architecture") == arch, "wrong config architecture")
+
+        layers = entry["Layers"]
+        diff_ids = config.get("rootfs", {}).get("diff_ids", [])
+
+        require(
+            isinstance(layers, list)
+            and len(layers) > 0
+            and len(layers) == len(diff_ids)
+            and all(valid_digest(value) for value in diff_ids),
+            "invalid image layer inventory",
+        )
+
+        for layer in layers:
+            get_file(layer)
+
+        if config_id == expected_outer:
+            # Classical Docker already uses the config digest as Id.
+            # Docker load additionally verifies uncompressed layer DiffIDs.
+            print(
+                "PASS: classic image identity " + tag + " " + config_id,
+                file=sys.stderr,
+            )
+
+            return config_id
+
+        # Containerd image store may expose an OCI index or manifest
+        # digest instead of the image's configuration digest.
+        # Never accept a config digest merely because the tag matches.
+        index, _, _ = metadata("index.json")
+
+        roots = [
+            descriptor for descriptor in index.get("manifests", [])
+            if descriptor.get("digest") == expected_outer
+        ]
+
+        require(
+            len(roots) == 1,
+            "expected outer OCI descriptor not found: " + tag,
+        )
+
+        selected = descriptor_json(roots[0])
+        selected_id = expected_outer
+
+        if "manifests" in selected:
+            native = [
+                descriptor
+                for descriptor in selected["manifests"]
+                if descriptor.get("platform", {}).get("os") == os_name
+                and descriptor.get("platform", {}).get("architecture") == arch
+            ]
+
+            require(
+                len(native) == 1,
+                "expected exactly one native OCI platform manifest",
+            )
+
+            selected_id = native[0]["digest"]
+            selected = descriptor_json(native[0])
+
+        require(
+            selected.get("schemaVersion") == 2,
+            "unsupported OCI manifest version",
+        )
+
+        expected_config = selected["config"]
+
+        require(
+            expected_config.get("digest") == config_id,
+            "OCI manifest and Docker archive config differ",
+        )
+
+        require(
+            expected_config.get("size") == config_size,
+            "OCI config size mismatch",
+        )
+
+        manifest_layers = selected["layers"]
+
+        require(
+            len(manifest_layers) == len(layers),
+            "OCI and Docker archive layer counts differ",
+        )
+
+        # Bind every archive layer to the selected native OCI manifest.
+        # Metadata hashes alone would not prove this association.
+        for filename, descriptor in zip(layers, manifest_layers):
+            require(
+                get_file(filename).size == descriptor["size"],
+                "OCI layer size mismatch",
+            )
+
+            require(
+                valid_digest(descriptor["digest"])
+                and file_digest(filename) == descriptor["digest"],
+                "OCI layer digest mismatch",
+            )
+
+        print(
+            "PASS: verified OCI image chain "
+            + tag + " "
+            + expected_outer + " -> "
+            + selected_id + " -> "
+            + config_id,
+            file=sys.stderr,
+        )
+
+        return config_id
+
+    portable_backend = resolve(
+        "homecloud-restore-e2e-backend:local",
+        backend_id,
+    )
+
+    portable_stub = resolve(stub_tag, stub_id)
+
+    # Only these two verified digests are returned to the shell.
+    print(portable_backend + " " + portable_stub)
+IMAGE_VERIFY_PY
+
+read -r PORTABLE_BACKEND_ID PORTABLE_STUB_ID < "$WORK/portable-ids"
+rm -f "$WORK/portable-ids"
+
+docker load -i "$WORK/images.tar"
+rm -f "$WORK/images.tar"
+
+echo "PASS: verified portable backend config $PORTABLE_BACKEND_ID"
+echo "PASS: verified portable stub config $PORTABLE_STUB_ID"
+
+# The classic nested engine addresses loaded images by config SHA.
+# Preserve the outer pin above; use its proven config identity below.
+HOMECLOUD_E2E_BACKEND_IMAGE_ID="$PORTABLE_BACKEND_ID"
+HOMECLOUD_E2E_STUB_IMAGE_ID="$PORTABLE_STUB_ID"
+
 # Verify the retained backend before any storage or product workload.
 EXPECTED_BACKEND_ID="${HOMECLOUD_E2E_BACKEND_IMAGE_ID:?Expected loaded backend image ID}"
 test "${#EXPECTED_BACKEND_ID}" -eq 71 || exit 1
@@ -109,6 +359,7 @@ case "$EXPECTED_BACKEND_ID" in sha256:*) ;; *) exit 1 ;; esac
 case "${EXPECTED_BACKEND_ID#sha256:}" in
   *[!0123456789abcdef]*) exit 1 ;;
 esac
+test "$(docker image inspect homecloud-restore-e2e-backend:local --format '{{.Id}}')" = "$EXPECTED_BACKEND_ID" || exit 1
 test "$(docker image inspect "$EXPECTED_BACKEND_ID" --format '{{.Id}}')" = "$EXPECTED_BACKEND_ID" || exit 1
 test "$(docker image inspect "$EXPECTED_BACKEND_ID" --format '{{.Os}}/{{.Architecture}}')" = "$HOMECLOUD_E2E_PLATFORM" || exit 1
 echo "PASS: nested backend image matches exact exported ID $EXPECTED_BACKEND_ID"
@@ -347,6 +598,439 @@ echo "PASS: actual PostgreSQL16.15"
 docker compose logs backend db \
   | grep -F "PASS: HomeCloud startup disk gate"
 
+
+echo "=== FIRST ADMINISTRATOR INSTALLATION QUALIFICATION ==="
+
+HC_ADMIN_BOOTSTRAP_EXPECTED=0
+
+# Preserve all existing specialized recovery matrices.
+if [ "${HOMECLOUD_E2E_HISTORICAL_SCHEMA:-0}" = 0 ] &&
+   [ "${HOMECLOUD_E2E_ENCRYPTED:-0}" = 0 ] &&
+   [ "${HOMECLOUD_E2E_FAULT_CASE:-none}" = none ]; then
+
+python3 -B - <<'ADMIN_E2E_PY'
+import errno
+import json
+import os
+import pty
+import secrets
+import select
+import subprocess
+import termios
+import time
+
+from pathlib import Path
+
+
+def require(ok, message):
+    if not ok:
+        raise RuntimeError(message)
+
+
+def passed(message):
+    print("PASS: " + message, flush=True)
+
+
+def command(*args, stdin=None):
+    result = subprocess.run(
+        ["docker", "compose", *args],
+        input=stdin,
+        text=True,
+        capture_output=True,
+        timeout=240,
+    )
+
+    require(
+        result.returncode == 0,
+        "Compose fixture command failed: " + args[0],
+    )
+
+    return result.stdout.strip()
+
+
+def sql(statement):
+    return command(
+        "exec", "-T", "db",
+        "psql", "-X", "-v", "ON_ERROR_STOP=1",
+        "-U", "fixture", "-d", "fixture", "-At",
+        "-c", statement,
+    )
+
+
+require(
+    os.environ["COMPOSE_PROJECT_NAME"] == "homecloud-restore-e2e",
+    "unexpected Compose project",
+)
+
+require(
+    os.environ["DB_NAME"] == "fixture"
+    and os.environ["DB_USER"] == "fixture",
+    "unexpected fixture database",
+)
+
+require(
+    Path(os.environ["COMPOSE_FILE"]).is_file(),
+    "missing isolated fixture configuration",
+)
+
+require(
+    not Path("/etc/homecloud/maintenance/maintenance.inhibit").exists(),
+    "unexpected maintenance marker",
+)
+
+require(
+    sql("SELECT count(*) FROM public.migrations;") == "34",
+    "fresh installation migration inventory mismatch",
+)
+
+require(
+    sql("SELECT count(*) FROM public.users;") == "0",
+    "fresh installation unexpectedly contains users",
+)
+
+passed("fresh database, 34 migrations, no automatic administrator")
+
+email = "bootstrap-admin@example.invalid"
+password = secrets.token_hex(24)
+mismatch = secrets.token_hex(24)
+retry_password = secrets.token_hex(24)
+
+command("stop", "backend")
+
+passed("live backend stopped before operator bootstrap")
+
+
+def bootstrap(first, second, expected_status=None):
+    # A real terminal is required by the production CLI.
+    # Passwords never enter Docker arguments or environment.
+    master, slave = pty.openpty()
+
+    attributes = termios.tcgetattr(slave)
+    attributes[3] &= ~termios.ECHO
+    termios.tcsetattr(slave, termios.TCSANOW, attributes)
+
+    proc = subprocess.Popen(
+        [
+            "docker", "compose", "run",
+            "--rm", "--no-deps",
+            "--name", "hc-bootstrap-" + secrets.token_hex(8),
+            "backend", "node",
+            "dist/users/admin-bootstrap-cli.js",
+            "bootstrap", "create",
+            "--email", email,
+            "--name", "Installation administrator",
+        ],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+    )
+
+    os.close(slave)
+
+    transcript = bytearray()
+    stage = 0
+    deadline = time.monotonic() + 120
+
+    try:
+        while time.monotonic() < deadline:
+            readable, _, _ = select.select([master], [], [], 0.2)
+
+            if readable:
+                try:
+                    data = os.read(master, 65536)
+                except OSError as error:
+                    if error.errno == errno.EIO:
+                        break
+                    raise
+
+                if not data:
+                    break
+
+                transcript.extend(data)
+
+                require(
+                    len(transcript) <= 1024 * 1024,
+                    "unexpectedly large bootstrap output",
+                )
+
+                if (
+                    stage == 0
+                    and b"New administrator password: " in transcript
+                ):
+                    os.write(master, first.encode() + b"\n")
+                    stage = 1
+
+                if (
+                    stage == 1
+                    and b"Repeat administrator password: " in transcript
+                ):
+                    os.write(master, second.encode() + b"\n")
+                    stage = 2
+
+            elif proc.poll() is not None:
+                break
+
+        require(
+            time.monotonic() < deadline,
+            "interactive bootstrap timeout",
+        )
+
+        code = proc.wait(timeout=15)
+
+    finally:
+        os.close(master)
+
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+    output = transcript.decode("utf-8", errors="replace")
+
+    require(
+        first not in output and second not in output,
+        "interactive password was echoed",
+    )
+
+    require(
+        stage == 2,
+        "both password prompts were not reached",
+    )
+
+    require(
+        "PASS: HomeCloud startup disk gate" in output,
+        "operator container did not prove startup gate",
+    )
+
+    if expected_status is None:
+        require(code != 0, "mismatched passwords accepted")
+        require(
+            "BOOTSTRAP_PASSWORD_MISMATCH" in output,
+            "unexpected bootstrap rejection",
+        )
+        return None
+
+    require(code == 0, "bootstrap command failed")
+
+    results = []
+
+    for line in output.splitlines():
+        try:
+            record = json.loads(line.strip())
+        except ValueError:
+            continue
+
+        if isinstance(record, dict) and "status" in record:
+            results.append(record)
+
+    require(len(results) == 1, "missing exact bootstrap result")
+
+    result = results[0]
+
+    require(
+        set(result) == {"status", "userId", "email", "role"},
+        "unexpected bootstrap result fields",
+    )
+
+    require(
+        result["status"] == expected_status
+        and result["email"] == email
+        and result["role"] == "ADMIN"
+        and type(result["userId"]) is int
+        and result["userId"] > 0,
+        "unexpected bootstrap result",
+    )
+
+    return result["userId"]
+
+
+bootstrap(password, mismatch)
+
+require(
+    sql("SELECT count(*) FROM public.users;") == "0",
+    "mismatched password created an account",
+)
+
+passed("real installed gate + TTY mismatch rejected without password echo")
+
+user_id = bootstrap(password, password, "created")
+
+row = sql(
+    'SELECT id,email,role,"isActive","sessionVersion",'
+    '"storageQuota","storageUsed" FROM public.users;'
+)
+
+require(
+    row == str(user_id) + "|" + email + "|ADMIN|t|1|0|0",
+    "unexpected persisted administrator state",
+)
+
+require(
+    sql("SELECT count(*) FROM public.users;") == "1",
+    "bootstrap did not create exactly one account",
+)
+
+passed("first ADMIN created through installed startup gate and root fence")
+
+
+def account_digest():
+    return sql(
+        "SELECT md5(row_to_json(u)::text) "
+        "FROM public.users u WHERE id=" + str(user_id) + ";"
+    )
+
+
+before = account_digest()
+
+# Use a different password on retry: an idempotent bootstrap must
+# not replace the existing administrator password or any other field.
+retry_id = bootstrap(
+    retry_password,
+    retry_password,
+    "already-configured",
+)
+
+require(retry_id == user_id, "bootstrap retry changed identity")
+require(account_digest() == before, "bootstrap retry mutated account")
+require(
+    sql("SELECT count(*) FROM public.users;") == "1",
+    "bootstrap retry created another account",
+)
+
+require(
+    sql("SELECT count(*) FROM public.migrations;") == "34",
+    "bootstrap changed migration inventory",
+)
+
+passed("interactive bootstrap retry preserves entire existing account")
+
+command("up", "-d", "--wait", "--wait-timeout", "180")
+
+passed("production backend and dependent services healthy")
+
+
+api_test = r"""
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+
+const credentials = JSON.parse(fs.readFileSync(0,"utf8"));
+const base = "http://127.0.0.1:3000/api/v1";
+
+async function request(path, method, body, token) {
+  const headers = {"content-type":"application/json"};
+
+  if(token) headers.authorization = "Bearer " + token;
+
+  const response = await fetch(base + path, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(15000),
+  });
+
+  return {
+    status:response.status,
+    body:await response.json(),
+  };
+}
+
+async function main() {
+  const login = await request("/auth/login","POST",{
+    email:credentials.email,
+    password:credentials.password,
+  });
+
+  assert.equal(login.status,200);
+  assert.equal(login.body.success,true);
+
+  const token = login.body.data.accessToken;
+
+  assert.equal(typeof token,"string");
+  assert.equal(typeof login.body.data.refreshToken,"string");
+
+  const me = await request("/users/me","GET",undefined,token);
+
+  assert.equal(me.status,200);
+  assert.equal(me.body.data.email,credentials.email);
+  assert.equal(me.body.data.id,credentials.id);
+  assert.equal(me.body.data.role,"ADMIN");
+
+  assert.equal("password" in me.body.data,false);
+  assert.equal("sessionVersion" in me.body.data,false);
+
+  const originalRegistration = {
+    email:"registration-denied@example.invalid",
+    password:credentials.password,
+    name:"Must not exist",
+  };
+
+  const requests = [
+    [originalRegistration,undefined],
+    [{...originalRegistration,role:"ADMIN"},token],
+    [{},undefined],
+    [undefined,undefined],
+  ];
+
+  for(const [body,auth] of requests) {
+    const response = await request("/auth/register","POST",body,auth);
+
+    assert.equal(response.status,403);
+    assert.equal(response.body.code,"REGISTRATION_DISABLED");
+  }
+
+  console.log("PASS: first administrator real login and users/me");
+  console.log("PASS: public and authenticated registration denied");
+}
+
+main().catch(() => {
+  console.error("Administrator installation API qualification failed");
+  process.exit(1);
+});
+"""
+
+output = command(
+    "exec", "-T", "backend", "node", "-e", api_test,
+    stdin=json.dumps({
+        "email": email,
+        "password": password,
+        "id": user_id,
+    }),
+)
+
+for marker in [
+    "PASS: first administrator real login and users/me",
+    "PASS: public and authenticated registration denied",
+]:
+    require(marker in output, "missing API evidence")
+    print(marker, flush=True)
+
+require(
+    sql("SELECT count(*) FROM public.users;") == "1",
+    "denied public registration changed user count",
+)
+
+require(
+    sql(
+        "SELECT count(*) FROM public.users "
+        "WHERE role='ADMIN' AND \"isActive\";"
+    ) == "1",
+    "administrator count changed",
+)
+
+passed("registration rejection leaves database unchanged")
+
+print("BE_ADMIN_FIRST_INSTALLATION_E2E_PASS", flush=True)
+ADMIN_E2E_PY
+
+HC_ADMIN_BOOTSTRAP_EXPECTED=1
+
+fi
+
+
 cat > "$WORK/api.cjs" <<'JS'
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
@@ -381,22 +1065,117 @@ async function request(path, method, body, token) {
   return result.data;
 }
 
+// Executed only inside the existing disposable restore fixture.
+// No product registration method or test-only API endpoint is used.
+async function prepareFixtureAccount() {
+  const { Client } = require("pg");
+  const bcrypt = require("bcryptjs");
+
+  assert.equal(process.env.HOMECLOUD_RESTORE_FIXTURE_SEED, "1");
+
+  const url = new URL(process.env.DATABASE_URL);
+
+  assert.ok(["postgres:", "postgresql:"].includes(url.protocol));
+  assert.equal(url.hostname, "db");
+  assert.equal(url.port, "5432");
+  assert.equal(url.pathname, "/fixture");
+  assert.equal(url.username, "fixture");
+
+  const passwordHash = await bcrypt.hash(credentials.password, 12);
+
+  const client = new Client({
+    connectionString: url.toString(),
+    connectionTimeoutMillis: 10000,
+  });
+
+  try {
+    await client.connect();
+
+    await client.query("BEGIN");
+
+    const identity = await client.query(`
+      SELECT current_database() AS database,
+             current_user AS username,
+             current_schema() AS schema
+    `);
+
+    assert.deepEqual(identity.rows, [{
+      database: "fixture",
+      username: "fixture",
+      schema: "public",
+    }]);
+
+    await client.query(
+      'LOCK TABLE public.users IN SHARE ROW EXCLUSIVE MODE'
+    );
+
+    const before = await client.query(
+      "SELECT count(*)::int AS count FROM public.users"
+    );
+
+    const administratorExpected =
+      process.env.HC_ADMIN_BOOTSTRAP_EXPECTED === "1";
+
+    assert.equal(
+      before.rows[0].count,
+      administratorExpected ? 1 : 0,
+    );
+
+    if (administratorExpected) {
+      const administrator = await client.query(`
+        SELECT email, role, "isActive" FROM public.users
+      `);
+
+      assert.deepEqual(administrator.rows, [{
+        email: "bootstrap-admin@example.invalid",
+        role: "ADMIN",
+        isActive: true,
+      }]);
+    }
+
+    const inserted = await client.query(
+      `INSERT INTO public.users
+         (email, password, name, role, "sessionVersion",
+          "isActive", "storageQuota", "storageUsed")
+       VALUES ($1, $2, $3, 'USER', 1, true, 0, 0)
+       RETURNING id, email, role`,
+      [credentials.email, passwordHash, "Restore fixture"]
+    );
+
+    assert.equal(inserted.rowCount, 1);
+    assert.equal(inserted.rows[0].email, credentials.email);
+    assert.equal(inserted.rows[0].role, "USER");
+
+    await client.query("COMMIT");
+
+    console.log("PASS: ordinary user prepared in disposable restore database");
+  } catch {
+    await client.query("ROLLBACK").catch(() => {});
+    throw new Error("Restore fixture account preparation failed");
+  } finally {
+    await client.end();
+  }
+}
+
 async function main() {
   const mode = process.env.HC_ACTION;
 
+  if (mode === "prepare-account") {
+    await prepareFixtureAccount();
+  }
+
   const auth = await request(
-    mode === "register" ? "/auth/register" : "/auth/login",
+    "/auth/login",
     "POST",
-    mode === "register"
-      ? {...credentials, name: "Restore fixture"}
-      : credentials
+    credentials
   );
 
   const token = auth.accessToken;
   assert.ok(token);
 
-  if (mode === "register") {
-    console.log("PASS: fixture user registered");
+  if (mode === "prepare-account") {
+    assert.ok(auth.refreshToken);
+    console.log("PASS: prepared fixture user authenticated through real login");
     return;
   }
 
@@ -461,9 +1240,17 @@ main().catch(error => {
 });
 JS
 
-echo "=== REGISTER FIXTURE USER ==="
+echo "=== PREPARE FIXTURE USER AND VERIFY LOGIN ==="
 
-docker compose exec -T -e HC_ACTION=register backend node \
+# Check the existing disposable Compose and DB identities BEFORE seeding.
+test "$COMPOSE_PROJECT_NAME" = homecloud-restore-e2e
+test "$DB_NAME" = fixture
+test "$DB_USER" = fixture
+
+docker compose exec -T \
+  -e HOMECLOUD_RESTORE_FIXTURE_SEED=1 \
+  -e HC_ADMIN_BOOTSTRAP_EXPECTED="$HC_ADMIN_BOOTSTRAP_EXPECTED" \
+  -e HC_ACTION=prepare-account backend node \
   < "$WORK/api.cjs"
 
 echo "=== ASSIGN FIXTURE QUOTA ==="

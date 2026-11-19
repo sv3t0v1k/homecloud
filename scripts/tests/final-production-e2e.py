@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Disposable final acceptance through local TLS ingress; no external qualification."""
 import argparse, base64, hashlib, json, os, pathlib, re, secrets, socket, ssl, subprocess, tempfile, time, urllib.request, urllib.error, uuid
+from runtime_fixture_user import seed_fixture_user
 P=argparse.ArgumentParser();P.add_argument('--repo',default=str(pathlib.Path(__file__).resolve().parents[2]));P.add_argument('--current',default='0d766777a41493e237b77df18f5597901d5f080e');P.add_argument('--browser-script',default=str(pathlib.Path(__file__).with_name('final-browser-acceptance.cjs')));P.add_argument('--node',default='node');P.add_argument('--previous',default='647aa7b949698f9b84feee3ce5134cb2a7b542de');a=P.parse_args();repo=pathlib.Path(a.repo)
 root=pathlib.Path(tempfile.mkdtemp(prefix='hc-pair-drill-'));os.chmod(root,0o700);name='hc-pair-'+uuid.uuid4().hex[:10];result={'evidence':str(root),'source_current':a.current,'source_previous':a.previous};owned=[];nets=[];log=open(root/'operations.log','w');pairs={}
 def run(*args):
@@ -99,7 +100,10 @@ try:
  negative=subprocess.run(['node',helper,'override','--manifest',str(manifests['previous']),'--compatibility-manifest',str(manifests['current']),'--applied-migrations',str(applied),'--output',str(root/'blocked.json')],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True);assert negative.returncode!=0 and 'incompatible applied migrations' in negative.stderr;result['live_incompatible_migration_blocked']=True
  sql("DELETE FROM migrations WHERE name='FixtureIncompatible9999999999999'")
  deploy('current')
- _,b=api('auth/register',data={'email':'pair@example.invalid','password':'PairPassword938475!','name':'Pair'});token=unpack(b)['accessToken'];sql('UPDATE users SET "storageQuota"=1048576')
+ credentials={'email':'pair@example.invalid','password':'PairPassword938475!','name':'Pair'}
+ seed_fixture_user(db,'qualification',credentials,historical=True)
+ code,b=api('auth/login',data={k:credentials[k] for k in ('email','password')});assert code in (200,201)
+ token=unpack(b)['accessToken'];sql('UPDATE users SET "storageQuota"=1048576')
  payload=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=')
  def upload(filename):
   _,b=api('uploads/session',token=token,data={'filename':filename,'totalSize':len(payload),'chunkSize':len(payload)});uid=unpack(b)['uploadId'];boundary='hc'+uuid.uuid4().hex

@@ -11,6 +11,7 @@ import { MetricsService } from "./common/observability/metrics.service";
 import { ConfigService } from "@nestjs/config";
 import { applySecurityMiddleware } from "./common/security.config";
 import { JwtService } from "@nestjs/jwt";
+import { JwtStrategy } from "./auth/jwt.strategy";
 import { UploadRateLimitService } from "./uploads/upload-rate-limit";
 import { configureTrustedProxy } from "./common/trusted-proxy";
 import { validateStartupConfiguration } from "./common/startup-validation.service";
@@ -36,6 +37,7 @@ export async function bootstrap() {
   app.use(requestObservability(app.get(MetricsService)));
   applySecurityMiddleware(app, configService, {
     jwtService: app.get(JwtService),
+    jwtStrategy: app.get(JwtStrategy),
     uploads: app.get(UploadRateLimitService),
     publicUploads: app.get(PublicUploadsService),
   });

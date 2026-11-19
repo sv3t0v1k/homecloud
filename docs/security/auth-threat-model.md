@@ -1,5 +1,61 @@
 # Auth Threat Model — HomeCloud Phase 9
 
+> **Current contract — BE-ADMIN-01.3 (2026-11-16).**
+> Sections 1–9 below are preserved as a historical Phase 9 baseline.
+> Their registration, token hashing, JWT payload and revocation
+> descriptions are superseded by the following current contract.
+> This is not a full production security acceptance report.
+
+## Current authentication and account lifecycle
+
+- Public `POST /api/v1/auth/register` is disabled. Valid requests reaching
+  the controller return 403 `REGISTRATION_DISABLED`; malformed transport
+  requests or rate-limited requests may be rejected earlier. There is no
+  production `AuthService.register` account-creation method.
+- The first administrator is created by the protected operator CLI.
+  An existing account can be promoted by exact ID and canonical email.
+  Bootstrap requires the prepared migration schema and exclusive storage
+  root-fence; the API writer must be stopped. See [operator bootstrap](../runbooks/admin-bootstrap.md).
+- Users have roles `USER` or `ADMIN` and a positive bigint
+  `sessionVersion` represented as a decimal string. Existing accounts
+  are migrated as USER; no automatic administrator is selected.
+- PostgreSQL is authoritative for canonical email normalization and
+  uniqueness. The migration rejects canonical collisions rather than
+  merging or overwriting accounts.
+- Access JWTs contain `sub`, `email`, `sv`, `tokenUse: "access"` and
+  expiration. Refresh JWTs additionally have a UUID `jti` and
+  `tokenUse: "refresh"`. Both use explicit HS256 verification with
+  separate signing secrets. Legacy tokens without the new claims fail.
+- Every authenticated request checks active user status and the
+  current sessionVersion. The verified upload admission boundary
+  performs the same identity checks.
+- Login verifies the password hash and rechecks the user snapshot
+  under the user-row lock before issuing tokens.
+- Refresh tokens are stored as `sha256:` plus a 64-character SHA-256
+  digest, not bcrypt hashes. Lookup is indexed; the raw token is not
+  stored. Refresh rotation locks the user before the token row.
+- Refresh reuse detection advances the user sessionVersion and
+  revokes all refresh rows atomically. Existing access tokens become
+  invalid too. Password change performs the same session revocation
+  in the transaction that changes the password.
+- Logout follows the user's own refresh replacement chain and
+  revokes that chain. It does not advance the global sessionVersion.
+- The migration revokes legacy noncanonical refresh-token hashes.
+  Token storage in the frontend remains access-in-memory and
+  refresh-in-sessionStorage. XSS exposure and operational secret
+  custody remain relevant risks.
+
+### Remaining scope
+
+Administrative user-management endpoints, atomic quota management,
+last-active-admin protection for administrative mutations, revocation
+of alternative sharing/download credentials, persistent admin audit
+and restore-time session invalidation are follow-up BE-ADMIN stages.
+These controls must not be inferred from role/sessionVersion support
+alone.
+
+The following original baseline is retained for historical reference.
+
 ## 1. Scope and source of truth
 
 This document describes the **actually implemented** threat model of the

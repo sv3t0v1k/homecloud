@@ -1,4 +1,5 @@
 import { DataSource } from "typeorm";
+import * as bcrypt from "bcryptjs";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
@@ -36,6 +37,96 @@ const safe = {
 };
 
 describe("HTTP preflight harness", () => {
+  test("rejects a foreign DataSource before creating any fixture account", async () => {
+    const getRepository = jest.fn();
+
+    const source = {
+      options: {
+        type: "postgres",
+        url: "postgres://foreign:secret@127.0.0.1:5432/homecloud",
+      },
+      getRepository,
+    } as unknown as DataSource;
+
+    const fetchImpl = jest.fn();
+
+    await expect(
+      runHttpPreflight({ ...safe, fetchImpl }, source),
+    ).rejects.toThrow(/DataSource не соответствует/);
+
+    expect(getRepository).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  test("creates a normal fixture user, uses login and cleans up after authentication failure", async () => {
+    const userRepo = {
+      insert: jest.fn().mockResolvedValue({
+        identifiers: [{ id: 91 }],
+      }),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
+      countBy: jest.fn().mockResolvedValue(0),
+    };
+
+    const emptyRepo = {
+      findBy: jest.fn().mockResolvedValue([]),
+      countBy: jest.fn().mockResolvedValue(0),
+    };
+
+    const source = {
+      options: { type: "postgres", url: safe.databaseUrl },
+      getRepository: jest.fn((entity: unknown) =>
+        entity === UserEntity ? userRepo : emptyRepo,
+      ),
+    } as unknown as DataSource;
+
+    const fetchImpl = jest.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ statusCode: 401 }),
+        { status: 401 },
+      ),
+    );
+
+    const result = await runHttpPreflight(
+      { ...safe, fetchImpl },
+      source,
+    );
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    const [url, init] = fetchImpl.mock.calls[0];
+    const body = JSON.parse(String(init.body));
+
+    expect(url).toBe(safe.baseUrl + "/api/v1/auth/login");
+    expect(Object.keys(body).sort()).toEqual(["email", "password"]);
+
+    const fixture = userRepo.insert.mock.calls[0][0];
+
+    expect(fixture).toMatchObject({
+      email: body.email,
+      role: "USER",
+      isActive: true,
+      sessionVersion: "1",
+      storageQuota: 0,
+      storageUsed: 0,
+    });
+
+    expect(fixture.password).not.toBe(body.password);
+    expect(await bcrypt.compare(body.password, fixture.password)).toBe(true);
+
+    expect(userRepo.delete).toHaveBeenCalledWith(91);
+
+    expect(result.evidence).toEqual([
+      expect.objectContaining({
+        stage: "AUTH",
+        ok: false,
+        status: 401,
+      }),
+      expect.objectContaining({
+        stage: "CLEANUP",
+        ok: true,
+      }),
+    ]);
+  });
   afterAll(() => fs.rmSync(safeStorage, { recursive: true, force: true }));
 
   test("не допускает штатные или неявные цели", () => {
@@ -72,7 +163,7 @@ describe("HTTP preflight harness", () => {
       label: "x",
       sha256: "x",
       evidence: [
-        { stage: "AUTH" as const, ok: true, status: 201 },
+        { stage: "AUTH" as const, ok: true, status: 200 },
         { stage: "MULTIPART_CHUNK" as const, ok: false, status: 400 },
       ],
     };
@@ -174,6 +265,9 @@ describe("HTTP preflight harness", () => {
 
   test("останавливается, если quota после записи не подтверждена перезагрузкой", async () => {
     const userRepo = {
+      insert: jest.fn().mockResolvedValue({
+        identifiers: [{ id: 81 }],
+      }),
       findOneByOrFail: jest
         .fn()
         .mockResolvedValueOnce({ id: 81, storageUsed: 0, storageQuota: 0 })
@@ -187,6 +281,7 @@ describe("HTTP preflight harness", () => {
       countBy: jest.fn().mockResolvedValue(0),
     };
     const source = {
+      options: { type: "postgres", url: safe.databaseUrl },
       getRepository: jest.fn((entity: unknown) =>
         entity === UserEntity ? userRepo : emptyRepo,
       ),
@@ -201,7 +296,7 @@ describe("HTTP preflight harness", () => {
             .mockResolvedValue(
               new Response(
                 JSON.stringify({ data: { accessToken: "secret" } }),
-                { status: 201 },
+                { status: 200 },
               ),
             ),
         },
@@ -217,7 +312,7 @@ describe("HTTP preflight harness", () => {
   test("ожидаемый HTTP 413 фиксируется как свидетельство, а cleanup выполняется", async () => {
     const replies = [
       new Response(JSON.stringify({ data: { accessToken: "not-logged" } }), {
-        status: 201,
+        status: 200,
       }),
       new Response(JSON.stringify({ data: { uploadId: "upload-1" } }), {
         status: 201,
@@ -225,6 +320,9 @@ describe("HTTP preflight harness", () => {
       new Response("request entity too large", { status: 413 }),
     ];
     const userRepo = {
+      insert: jest.fn().mockResolvedValue({
+        identifiers: [{ id: 77 }],
+      }),
       findOneByOrFail: jest
         .fn()
         .mockResolvedValueOnce({ id: 77, storageUsed: 0, storageQuota: 0 })
@@ -243,6 +341,7 @@ describe("HTTP preflight harness", () => {
     };
     const sessionRepo = { countBy: jest.fn().mockResolvedValue(0) };
     const source = {
+      options: { type: "postgres", url: safe.databaseUrl },
       getRepository: jest.fn((entity: unknown) => {
         if (entity === UserEntity) return userRepo;
         if (entity === FileEntity) return fileRepo;
@@ -283,7 +382,7 @@ describe("HTTP preflight harness", () => {
     async (status) => {
       const replies = [
         new Response(JSON.stringify({ data: { accessToken: "secret" } }), {
-          status: 201,
+          status: 200,
         }),
         new Response(JSON.stringify({ data: { uploadId: "upload-2" } }), {
           status: 201,
@@ -291,6 +390,9 @@ describe("HTTP preflight harness", () => {
         new Response("expected failure", { status }),
       ];
       const userRepo = {
+        insert: jest.fn().mockResolvedValue({
+          identifiers: [{ id: 78 }],
+        }),
         findOneByOrFail: jest
           .fn()
           .mockResolvedValueOnce({ id: 78, storageUsed: 0, storageQuota: 0 })
@@ -308,6 +410,7 @@ describe("HTTP preflight harness", () => {
         countBy: jest.fn().mockResolvedValue(0),
       };
       const source = {
+        options: { type: "postgres", url: safe.databaseUrl },
         getRepository: jest.fn((entity: unknown) =>
           entity === UserEntity ? userRepo : emptyRepo,
         ),
@@ -340,7 +443,7 @@ describe("HTTP preflight harness", () => {
     fs.writeFileSync(finalPath, safe.payload);
     const replies = [
       new Response(JSON.stringify({ data: { accessToken: "secret" } }), {
-        status: 201,
+        status: 200,
       }),
       new Response(JSON.stringify({ data: { uploadId: "upload-ok" } }), {
         status: 201,
@@ -351,6 +454,9 @@ describe("HTTP preflight harness", () => {
       new Response(JSON.stringify({ data: { id: 1 } }), { status: 200 }),
     ];
     const userRepo = {
+      insert: jest.fn().mockResolvedValue({
+        identifiers: [{ id: 79 }],
+      }),
       findOneByOrFail: jest
         .fn()
         .mockResolvedValueOnce({ id: 79, storageUsed: 10, storageQuota: 0 })
@@ -383,6 +489,7 @@ describe("HTTP preflight harness", () => {
       countBy: jest.fn().mockResolvedValue(0),
     };
     const source = {
+      options: { type: "postgres", url: safe.databaseUrl },
       getRepository: jest.fn((entity: unknown) => {
         if (entity === UserEntity) return userRepo;
         if (entity === FileEntity) return fileRepo;
@@ -424,11 +531,14 @@ describe("HTTP preflight harness", () => {
   test("ошибка cleanup классифицируется отдельно", async () => {
     const replies = [
       new Response(JSON.stringify({ data: { accessToken: "secret" } }), {
-        status: 201,
+        status: 200,
       }),
       new Response("bad create", { status: 400 }),
     ];
     const userRepo = {
+      insert: jest.fn().mockResolvedValue({
+        identifiers: [{ id: 80 }],
+      }),
       findOneByOrFail: jest
         .fn()
         .mockResolvedValueOnce({ id: 80, storageUsed: 0, storageQuota: 0 })
@@ -442,6 +552,7 @@ describe("HTTP preflight harness", () => {
       countBy: jest.fn().mockResolvedValue(0),
     };
     const source = {
+      options: { type: "postgres", url: safe.databaseUrl },
       getRepository: jest.fn((entity: unknown) =>
         entity === UserEntity
           ? userRepo
@@ -469,11 +580,14 @@ describe("HTTP preflight harness", () => {
     fs.writeFileSync(externalFile, "must survive");
     const replies = [
       new Response(JSON.stringify({ data: { accessToken: "secret" } }), {
-        status: 201,
+        status: 200,
       }),
       new Response("bad create", { status: 400 }),
     ];
     const userRepo = {
+      insert: jest.fn().mockResolvedValue({
+        identifiers: [{ id: 82 }],
+      }),
       findOneByOrFail: jest
         .fn()
         .mockResolvedValueOnce({ id: 82, storageUsed: 0, storageQuota: 0 })
@@ -491,6 +605,7 @@ describe("HTTP preflight harness", () => {
       countBy: jest.fn().mockResolvedValue(1),
     };
     const source = {
+      options: { type: "postgres", url: safe.databaseUrl },
       getRepository: jest.fn((entity: unknown) =>
         entity === UserEntity ? userRepo : fileRepo,
       ),
@@ -526,11 +641,14 @@ describe("HTTP preflight harness", () => {
     const linkedFile = path.join(runStorage, "83", "must-survive.bin");
     const replies = [
       new Response(JSON.stringify({ data: { accessToken: "secret" } }), {
-        status: 201,
+        status: 200,
       }),
       new Response("bad create", { status: 400 }),
     ];
     const userRepo = {
+      insert: jest.fn().mockResolvedValue({
+        identifiers: [{ id: 83 }],
+      }),
       findOneByOrFail: jest
         .fn()
         .mockResolvedValueOnce({ id: 83, storageUsed: 0, storageQuota: 0 })
@@ -548,6 +666,7 @@ describe("HTTP preflight harness", () => {
       countBy: jest.fn().mockResolvedValue(1),
     };
     const source = {
+      options: { type: "postgres", url: safe.databaseUrl },
       getRepository: jest.fn((entity: unknown) =>
         entity === UserEntity ? userRepo : fileRepo,
       ),

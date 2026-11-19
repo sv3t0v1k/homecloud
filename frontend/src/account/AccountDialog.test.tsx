@@ -42,6 +42,21 @@ describe('AccountDialog', () => {
     expect(screen.getByRole('progressbar', { name: 'Использование хранилища' })).toHaveAttribute('value', '100')
   })
 
+  it('shows bytes reserved by active uploads and copies alongside usage', async () => {
+    vi.mocked(getStorageInfo).mockResolvedValue({ storageUsed: '400', storageQuota: '1000', storageReserved: '150', storageAvailable: '450', fileCount: 2, folderCount: 1 })
+    render(<AccountDialog onClose={vi.fn()} />)
+    await selectSettingsSection('Хранилище')
+    expect(await screen.findByText(/Использовано 400 Б из 1 000 Б/)).toBeInTheDocument()
+    expect(screen.getByText(/Ещё 150 Б зарезервировано активными загрузками и копированиями/)).toBeInTheDocument()
+  })
+
+  it('omits the reserved line when nothing is reserved', async () => {
+    render(<AccountDialog onClose={vi.fn()} />)
+    await selectSettingsSection('Хранилище')
+    await screen.findByText(/Использовано 25 Б/)
+    expect(screen.queryByText(/зарезервировано/)).not.toBeInTheDocument()
+  })
+
   it('shows persisted quota and saves profile then updates session without unmounting', async () => {
     const user = userEvent.setup()
     render(<AccountDialog onClose={vi.fn()} />)
