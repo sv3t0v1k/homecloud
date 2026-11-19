@@ -43,8 +43,9 @@ def proof(role):
                 verified='DIGEST_SUBJECT_VCS_DOCKERFILE_ARGS_BASE_MATERIALS', signature='UNSIGNED')
 
 
-def suspended_install_process(channel, ready_pipe, state, applied, manifest):
-    """Signal-safe fixture: stop phase is reached, then await termination."""
+def suspended_install_process(channel, ready_pipe, state, applied, manifest,
+                              suspend_phase='STOP_SERVICES'):
+    """Signal-safe fixture: reach the requested phase, then await termination."""
     previous = 'd' * 40
     # The root-only deploy precondition is mocked below. The lock itself must
     # still be created and validated against the child's real effective UID.
@@ -56,8 +57,11 @@ def suspended_install_process(channel, ready_pipe, state, applied, manifest):
             return real_acquire_lock(path)
 
     def fake_compose(*args, **kwargs):
-        if args and args[0] == 'stop':
-            ready_pipe.send('STOP_SERVICES')
+        stopped = args and args[0] == 'stop' and suspend_phase == 'STOP_SERVICES'
+        migrating = (args and args[0] == 'up' and args[-2:] == ('db', 'backend')
+                     and suspend_phase == 'MIGRATION_APPLY')
+        if stopped or migrating:
+            ready_pipe.send(suspend_phase)
             signal.pause()
         return ''
 
@@ -84,6 +88,8 @@ def suspended_install_process(channel, ready_pipe, state, applied, manifest):
         patches.enter_context(patch.object(installer, 'compose', side_effect=fake_compose))
         patches.enter_context(patch.object(installer, 'backup', return_value='20261031_120000_aabbccdd'))
         patches.enter_context(patch.object(installer, 'ensure_recovery_pins'))
+        patches.enter_context(patch.object(installer, 'complete_backup_maintenance'))
+        patches.enter_context(patch.object(installer, 'rewrite_refs'))
         patches.enter_context(patch.object(installer, 'sync_recovery_pins'))
         installer.deploy(manifest)
 
@@ -199,6 +205,42 @@ class TestChannelTests(unittest.TestCase):
         self.state['active']['schema_migrations'][0]['sha256'] = '0' * 64
         with self.assertRaisesRegex(installer.Stop, 'migration'):
             installer.plan(self.manifest, self.state, self.applied, self.state['active']['images'])
+
+    def test_plan_allows_only_unmodified_additive_migrations(self):
+        state = copy.deepcopy(self.state)
+        state['active']['schema_migrations'] = state['active']['schema_migrations'][:31]
+        applied = sorted(item['name'] for item in state['active']['schema_migrations'])
+        result = installer.plan(self.manifest, state, applied, state['active']['images'])
+        self.assertEqual(result['decision'], 'INSTALL')
+        self.assertTrue(result['migration_apply'])
+        self.assertEqual(result['new_migrations'], sorted(
+            set(installer.migration_names(self.manifest)) - set(applied)))
+        self.assertEqual(len(result['new_migrations']), 3)
+
+        exact = copy.deepcopy(self.manifest)
+        exact['schema_migrations'] = copy.deepcopy(state['active']['schema_migrations'])
+        exact['manifest_sha256'] = contract.identity(exact)
+        result = installer.plan(exact, state, applied, state['active']['images'])
+        self.assertFalse(result['migration_apply'])
+        self.assertEqual(result['new_migrations'], [])
+
+    def test_plan_rejects_migration_removal_replacement_and_applied_drift(self):
+        actual = self.state['active']['images']
+        for kind in ('removed', 'changed-source', 'renamed-file'):
+            candidate = copy.deepcopy(self.manifest)
+            if kind == 'removed':
+                candidate['schema_migrations'].pop()
+            elif kind == 'changed-source':
+                candidate['schema_migrations'][0]['sha256'] = '0' * 64
+            else:
+                candidate['schema_migrations'][0]['file'] = '9999999999999-Replaced.ts'
+            candidate['manifest_sha256'] = contract.identity(candidate)
+            with self.subTest(kind=kind), self.assertRaisesRegex(installer.Stop, 'migration'):
+                installer.plan(candidate, self.state, self.applied, actual)
+
+        for drift in (self.applied[:-1], self.applied + ['UnrecordedMigration']):
+            with self.subTest(drift=drift), self.assertRaisesRegex(installer.Stop, 'migration'):
+                installer.plan(self.manifest, self.state, drift, actual)
 
     def test_same_sha_skips_and_rollback_is_explicit(self):
         for role in ('backend', 'frontend'):
@@ -558,6 +600,113 @@ class TestChannelTests(unittest.TestCase):
                         if stage in ('start', 'verify-started', 'smoke', 'state-write'):
                             self.assertNotEqual(snapshot.get('recovery_status'), 'ROLLED_BACK')
 
+    def exercise_migration_deploy(self, channel, failure=None):
+        """Mocked host integration drill for a real 31-to-34 manifest shape."""
+        state = copy.deepcopy(self.state)
+        state['active']['schema_migrations'] = state['active']['schema_migrations'][:31]
+        installed = sorted(item['name'] for item in state['active']['schema_migrations'])
+        target = installer.migration_names(self.manifest)
+        current = [installed]
+        operations = []
+        previous = 'd' * 40
+
+        def fake_run(*args, **_kwargs):
+            if args[:3] == ('git', 'rev-parse', 'HEAD'):
+                return previous
+            return ''
+
+        def fake_compose(*args, **_kwargs):
+            if args and args[0] == 'stop':
+                operations.append('stop')
+            if args and args[0] == 'up':
+                if args[-2:] == ('db', 'backend'):
+                    operations.append('migration-start')
+                    pending = json.loads((channel / 'pending.json').read_text())
+                    self.assertEqual(pending['phase'], 'MIGRATION_APPLY')
+                    self.assertEqual(pending['backup_id'], '20261031_120000_aabbccdd')
+                    self.assertEqual(pending['target']['new_migrations'],
+                                     sorted(set(target) - set(installed)))
+                    if failure == 'compose':
+                        raise RuntimeError('injected migration startup failure')
+                    if failure != 'unapplied':
+                        current[0] = target
+                else:
+                    operations.append('full-start')
+                    self.assertEqual(current[0], target)
+            return ''
+
+        def fake_backup(active, _fd, _marker):
+            self.assertEqual(len(active['schema_migrations']), 31)
+            self.assertIn('stop', operations)
+            operations.append('backup')
+            return '20261031_120000_aabbccdd'
+
+        def fake_verify_started(_manifest, _ids, roles=('backend', 'frontend')):
+            operations.append('verify-' + ','.join(roles))
+
+        with ExitStack() as patches:
+            patches.enter_context(patch.object(installer, 'ROOT', Path('/home/hs/homecloud-test')))
+            patches.enter_context(patch.object(installer, 'CHANNEL', channel))
+            patches.enter_context(patch.object(installer, 'private_dir'))
+            patches.enter_context(patch.object(installer.os, 'geteuid', return_value=0))
+            patches.enter_context(patch.object(
+                installer, 'acquire_lock',
+                side_effect=lambda p: os.open(p, os.O_CREAT | os.O_RDWR, 0o600)))
+            patches.enter_context(patch.object(installer, 'load_state', return_value=state))
+            patches.enter_context(patch.object(installer, 'run', side_effect=fake_run))
+            patches.enter_context(patch.object(installer, 'active_images', return_value=state['active']['images']))
+            patches.enter_context(patch.object(installer, 'applied_migrations',
+                                               side_effect=lambda: list(current[0])))
+            patches.enter_context(patch.object(installer, 'precheck_source', return_value=previous))
+            patches.enter_context(patch.object(installer, 'safe_checkout', return_value=previous))
+            patches.enter_context(patch.object(installer, 'verify_pulled', return_value={
+                'backend': 'sha256:' + 'e' * 64, 'frontend': 'sha256:' + 'f' * 64}))
+            patches.enter_context(patch.object(installer, 'compose', side_effect=fake_compose))
+            patches.enter_context(patch.object(installer, 'backup', side_effect=fake_backup))
+            patches.enter_context(patch.object(installer, 'verify_started_images',
+                                               side_effect=fake_verify_started))
+            patches.enter_context(patch.object(installer, 'begin_backup_maintenance',
+                                               return_value=[1, 2]))
+            for name in ('require_checkpoint_refs', 'ensure_recovery_pins',
+                         'complete_backup_maintenance', 'rewrite_refs',
+                         'sync_recovery_pins', 'smoke'):
+                patches.enter_context(patch.object(installer, name))
+            installer.deploy(self.manifest)
+        return state, operations, current[0]
+
+    def test_migration_transaction_success_31_to_34(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            channel = Path(tmp)
+            state, operations, applied = self.exercise_migration_deploy(channel)
+            self.assertEqual(applied, installer.migration_names(self.manifest))
+            self.assertLess(operations.index('backup'), operations.index('migration-start'))
+            self.assertLess(operations.index('migration-start'), operations.index('full-start'))
+            self.assertLess(operations.index('verify-backend'), operations.index('full-start'))
+            self.assertEqual(len(state['active']['schema_migrations']), 34)
+            self.assertEqual(len(state['history'][-1]['schema_migrations']), 31)
+            saved = json.loads((channel / 'state.json').read_text())
+            self.assertEqual(saved['active']['schema_migrations'], self.manifest['schema_migrations'])
+            self.assertEqual(json.loads((channel / 'last-status.json').read_text())['status'], 'INSTALLED')
+            self.assertFalse((channel / 'pending.json').exists())
+
+    def test_migration_failure_is_manual_recovery_and_blocks_retry(self):
+        for failure in ('compose', 'unapplied'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                channel = Path(tmp)
+                expected = RuntimeError if failure == 'compose' else installer.Stop
+                with self.assertRaises(expected):
+                    self.exercise_migration_deploy(channel, failure=failure)
+                pending = json.loads((channel / 'pending.json').read_text())
+                self.assertEqual(pending['phase'], 'MIGRATION_APPLY')
+                self.assertEqual(pending['recovery_status'], 'MANUAL_RECOVERY_REQUIRED')
+                self.assertTrue(pending['target']['migration_apply'])
+                self.assertEqual(json.loads((channel / 'last-status.json').read_text())['status'],
+                                 'MANUAL_RECOVERY_REQUIRED')
+                self.assertFalse((channel / 'state.json').exists())
+                with patch.object(installer, 'CHANNEL', channel):
+                    with self.assertRaisesRegex(installer.Stop, 'incomplete TEST transaction'):
+                        installer.guard_no_pending()
+
     def test_pretransaction_failure_does_not_create_false_stop_status(self):
         # A failed read-only preflight does not require a manual rollback.
         import os
@@ -912,6 +1061,45 @@ class TestChannelTests(unittest.TestCase):
                     {role: image['ref'] for role, image in self.state['active']['images'].items()})
                 self.assertEqual(report['status'], 'MANUAL_RECOVERY_REQUIRED')
                 self.assertFalse(report['automatic_rollback'])
+
+    @unittest.skipUnless(os.name == 'posix' and hasattr(signal, 'SIGKILL'),
+                         'POSIX signals required')
+    def test_sigkill_during_migration_requires_manual_recovery(self):
+        previous = 'd' * 40
+        state = copy.deepcopy(self.state)
+        state['active']['schema_migrations'] = state['active']['schema_migrations'][:31]
+        applied = sorted(item['name'] for item in state['active']['schema_migrations'])
+        ctx = multiprocessing.get_context('spawn')
+        with tempfile.TemporaryDirectory() as tmp:
+            channel = Path(tmp)
+            receiver, sender = ctx.Pipe(duplex=False)
+            proc = ctx.Process(target=suspended_install_process,
+                args=(tmp, sender, state, applied, self.manifest, 'MIGRATION_APPLY'))
+            proc.start()
+            sender.close()
+            try:
+                self.assertTrue(receiver.poll(10), 'child never reached MIGRATION_APPLY')
+                self.assertEqual(receiver.recv(), 'MIGRATION_APPLY')
+                proc.kill()
+                proc.join(10)
+                self.assertEqual(proc.exitcode, -signal.SIGKILL)
+            finally:
+                receiver.close()
+                if proc.is_alive():
+                    proc.kill()
+                proc.join(10)
+            pending = json.loads((channel / 'pending.json').read_text())
+            self.assertEqual(pending['phase'], 'MIGRATION_APPLY')
+            self.assertEqual(pending['backup_id'], '20261031_120000_aabbccdd')
+            self.assertEqual(len(pending['target']['new_migrations']), 3)
+            self.assertFalse((channel / 'state.json').exists())
+            report = installer.recovery_report(pending, state, previous,
+                {role: image['ref'] for role, image in state['active']['images'].items()})
+            self.assertEqual(report['status'], 'MANUAL_RECOVERY_REQUIRED')
+            self.assertFalse(report['automatic_rollback'])
+            with patch.object(installer, 'CHANNEL', channel):
+                with self.assertRaisesRegex(installer.Stop, 'incomplete TEST transaction'):
+                    installer.guard_no_pending()
 
 
 class RecoveryPinTests(unittest.TestCase):

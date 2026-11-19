@@ -1,7 +1,7 @@
 import { constants } from "fs";
 import { open } from "fs/promises";
 import { isAbsolute } from "path";
-import { TestCandidate } from "./test-build";
+import { TestCandidate, testMigrationCompatibility } from "./test-build";
 
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -32,15 +32,16 @@ export function parseHostTestCandidate(raw: unknown, installed: Installed, now =
       !Number.isSafeInteger(value.artifactId) || value.artifactId < 1 ||
       !Array.isArray(value.schemaMigrations) || value.schemaMigrations.length === 0 ||
       value.schemaMigrations.some((name) => typeof name !== "string" || !/^[A-Za-z0-9]+$/.test(name)) ||
-      new Set(value.schemaMigrations).size !== value.schemaMigrations.length ||
-      JSON.stringify([...value.schemaMigrations].sort()) !== JSON.stringify([...installed.schemaMigrations].sort())) {
+      new Set(value.schemaMigrations).size !== value.schemaMigrations.length) {
     throw new Error("Unverified host candidate");
   }
+  const compatibility = testMigrationCompatibility(value.schemaMigrations, installed.schemaMigrations);
+  if (compatibility === null) throw new Error("Unverified host candidate");
   if (value.commit === installed.gitSha) return null;
   if (value.sourceGitSha !== installed.gitSha) throw new Error("Candidate source differs from installed TEST version");
   return { version: `test-${value.commit.slice(0, 7)}`, gitSha: value.commit,
     backendDigest: value.backendDigest, frontendDigest: value.frontendDigest,
-    manifestSha256: value.manifestSha256, compatibility: "exact-migrations", changes: "" };
+    manifestSha256: value.manifestSha256, compatibility, changes: "" };
 }
 
 export async function readHostTestCandidate(path: string, installed: Installed): Promise<TestCandidate | null> {

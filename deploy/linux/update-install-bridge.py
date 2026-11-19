@@ -258,7 +258,8 @@ def installer_phase(identity):
     finally:
         os.close(fd)
     phases = {'CHECKOUT', 'VERIFY_IMAGES', 'PREBACKUP', 'STOP_SERVICES', 'BACKUP',
-              'WRITE_REFS', 'START_SERVICES', 'SMOKE', 'COMMIT_STATE', 'COMPLETE'}
+              'WRITE_REFS', 'MIGRATION_APPLY', 'START_SERVICES', 'SMOKE',
+              'COMMIT_STATE', 'COMPLETE'}
     require(type(value) is dict and type(value.get('target')) is dict and
             value['target'].get('manifest_sha256') == identity and
             value.get('phase') in phases, 'invalid installer journal phase')

@@ -20,7 +20,8 @@ export type TestManifest = {
 };
 
 export type TestCandidate = { version: string; gitSha: string; backendDigest: string;
-  frontendDigest: string; manifestSha256: string; compatibility: "exact-migrations"; changes: string };
+  frontendDigest: string; manifestSha256: string;
+  compatibility: "exact-migrations" | "additive-migrations"; changes: string };
 
 export type VerifiedTestBuild = { candidate: TestCandidate; manifest: TestManifest };
 
@@ -29,6 +30,17 @@ function canonical(value: unknown): string {
   if (value && typeof value === "object")
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`;
   return JSON.stringify(value);
+}
+
+export function testMigrationCompatibility(target: string[], installed: string[]):
+  TestCandidate["compatibility"] | null {
+  const valid = (names: string[]) => names.length > 0 &&
+    new Set(names).size === names.length &&
+    names.every((name) => /^[A-Za-z0-9]+$/.test(name));
+  if (!valid(target) || !valid(installed)) return null;
+  const targetNames = new Set(target);
+  if (installed.some((name) => !targetNames.has(name))) return null;
+  return target.length === installed.length ? "exact-migrations" : "additive-migrations";
 }
 
 function requireValid(ok: unknown): asserts ok {
@@ -205,9 +217,9 @@ export async function discoverTestBuildEvidence(installed: Installed, token: str
     a.expired === false && a.workflow_run?.id === run.id && a.workflow_run?.head_sha === head);
   requireValid(matching.length === 1);
   const manifest = verifiedManifest(await downloadArtifact(matching[0].id, token), head, run.id, run.run_attempt);
-  const actual = [...manifest.schema_migrations.map((item) => item.name)].sort();
-  requireValid(installed.schemaMigrations.length > 0);
-  if (JSON.stringify(actual) !== JSON.stringify([...installed.schemaMigrations].sort())) return null;
+  const compatibility = testMigrationCompatibility(
+    manifest.schema_migrations.map((item) => item.name), installed.schemaMigrations);
+  if (compatibility === null) return null;
   const comparison = await json(`/compare/${installed.gitSha}...${head}`, token) as { status?: string };
   if (comparison.status !== "ahead") return null;
   if (!(await digestExists("backend", manifest.images.backend.digest, token, user)) ||
@@ -215,7 +227,7 @@ export async function discoverTestBuildEvidence(installed: Installed, token: str
     throw new Error("TEST image unavailable");
   return { candidate: { version: `test-${head.slice(0, 7)}`, gitSha: head,
     backendDigest: manifest.images.backend.digest, frontendDigest: manifest.images.frontend.digest,
-    manifestSha256: manifest.manifest_sha256, compatibility: "exact-migrations", changes: "" }, manifest };
+    manifestSha256: manifest.manifest_sha256, compatibility, changes: "" }, manifest };
 }
 
 export async function discoverTestBuild(installed: Installed, token: string, user: string): Promise<TestCandidate | null> {
