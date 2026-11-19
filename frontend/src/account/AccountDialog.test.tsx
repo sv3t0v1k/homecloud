@@ -1,19 +1,53 @@
+import { useEffect } from 'react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AccountDialog } from './AccountDialog'
-import { changePassword, getStorageInfo, updateProfile } from './api'
-const session = vi.hoisted(() => ({ user: { name: 'Алексей', email: 'alex@example.invalid', avatar: null as string | null }, endSession: vi.fn(), updateUser: vi.fn() }))
+import { changePassword, getAdminUsers, getStorageInfo, updateProfile } from './api'
+const session = vi.hoisted(() => ({ user: { name: 'Алексей', email: 'alex@example.invalid', role: 'USER' as 'ADMIN' | 'USER', avatar: null as string | null }, endSession: vi.fn(), updateUser: vi.fn() }))
+const updatesAccess = vi.hoisted(() => ({ admin: false }))
 vi.mock('../auth/SessionContext', () => ({ useSession: () => session }))
-vi.mock('./api', () => ({ changePassword: vi.fn(), getStorageInfo: vi.fn(), updateProfile: vi.fn() }))
-vi.mock('./UpdatesSection', () => ({ UpdatesSection: () => null }))
+vi.mock('./api', () => ({ changePassword: vi.fn(), getAdminUsers: vi.fn(), getStorageInfo: vi.fn(), updateProfile: vi.fn() }))
+vi.mock('./UpdatesSection', () => {
+  function UpdatesSection({ visible = false, onAccessChange }: { visible?: boolean; onAccessChange?: (admin: boolean) => void }) {
+    useEffect(() => { onAccessChange?.(updatesAccess.admin) }, [onAccessChange])
+    return visible && updatesAccess.admin ? <section aria-label="Обновления"><h3>Обновления</h3></section> : null
+  }
+  return { UpdatesSection }
+})
 async function selectSettingsSection(name: string) {
   await userEvent.click(screen.getByRole('button', { name }))
 }
 
 describe('AccountDialog', () => {
-  beforeEach(() => { vi.clearAllMocks(); vi.mocked(getStorageInfo).mockResolvedValue({ storageQuota: '1000', storageUsed: '25', fileCount: 2, folderCount: 1 }) })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    session.user.role = 'USER'
+    updatesAccess.admin = false
+    vi.mocked(getAdminUsers).mockResolvedValue({ items: [], page: 1, pageSize: 25, total: 0 })
+    vi.mocked(getStorageInfo).mockResolvedValue({ storageQuota: '1000', storageUsed: '25', fileCount: 2, folderCount: 1 })
+  })
   afterEach(cleanup)
+  it('shows users to an admin independently of updates access', async () => {
+    session.user.role = 'ADMIN'
+    render(<AccountDialog onClose={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Пользователи' }))
+
+    expect(await screen.findByRole('heading', { name: 'Пользователи' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Обновления' })).not.toBeInTheDocument()
+    expect(getAdminUsers).toHaveBeenCalledOnce()
+  })
+  it('hides users and preserves updates navigation for updates-only access', async () => {
+    updatesAccess.admin = true
+    render(<AccountDialog onClose={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Обновления' }))
+
+    expect(screen.getByRole('heading', { name: 'Обновления' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Пользователи' })).not.toBeInTheDocument()
+    expect(getAdminUsers).not.toHaveBeenCalled()
+  })
   it('shows persisted name and email with a generic icon and no unsupported photo editor', async () => {
     render(<AccountDialog onClose={vi.fn()} />)
     expect(screen.getByText('Алексей')).toBeInTheDocument()
