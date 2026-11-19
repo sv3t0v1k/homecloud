@@ -184,6 +184,105 @@
   margin-top: 16px;
 }
 
+.liquid-settings-dialog.homecloud-settings.homecloud-settings--users {
+  width: min(100%, 1180px);
+  max-width: 1180px;
+}
+
+.admin-users-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.admin-users-search > .field {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.admin-users-search > .button {
+  flex: 0 0 auto;
+  min-height: 42px;
+}
+
+.admin-users-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+}
+
+.admin-users-table {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.admin-users-table th,
+.admin-users-table td {
+  padding: 12px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.admin-users-table th {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--surface-secondary);
+}
+
+.admin-users-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-users-table td:nth-child(n + 4) {
+  white-space: nowrap;
+}
+
+.admin-users-message {
+  color: var(--text-secondary);
+}
+
+.admin-users-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.admin-users-pagination > p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.admin-users-pagination > nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 700px) {
+  .admin-users-search {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-users-pagination > nav,
+  .admin-users-pagination .button {
+    width: 100%;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .homecloud-settings .settings-pane > .account-section {
     animation: homecloud-settings-section-enter

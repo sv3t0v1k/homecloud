@@ -14,6 +14,7 @@ export interface User {
   name: string
   isActive: boolean
   isEmailVerified: boolean
+  role: 'ADMIN' | 'USER'
   avatar: string | null
   storageQuota: string | number
   storageUsed: string | number

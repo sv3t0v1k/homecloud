@@ -8,8 +8,9 @@ import { ApiError } from '../api/errors'
 import { safeOperationError } from '../files/operationErrors'
 import { changePassword, getStorageInfo, updateProfile, type StorageInfo } from './api'
 import { UpdatesSection } from './UpdatesSection'
+import { UsersSection } from './UsersSection'
 
-type SettingsSection = 'profile' | 'storage' | 'security' | 'updates'
+type SettingsSection = 'profile' | 'storage' | 'security' | 'updates' | 'users'
 
 const personalSections = [
   { id: 'profile', label: 'Профиль', icon: 'user' },
@@ -21,8 +22,9 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
   const session = useSession()
   const [section, setSection] = useState<SettingsSection>('profile')
   const [canUpdate, setCanUpdate] = useState(false)
+  const isAdmin = session.user?.role === 'ADMIN'
   const activeSection =
-    section === 'updates' && !canUpdate ? 'profile' : section
+    (section === 'updates' && !canUpdate) || (section === 'users' && !isAdmin) ? 'profile' : section
   const lock = useRef(false)
   const close = () => { if (!lock.current) onClose() }
   const dialogRef = useDialogFocus(close)
@@ -71,7 +73,7 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
   }
   function selectSection(next: SettingsSection) {
     if (lock.current || next === activeSection) return
-    if (next === 'updates' && !canUpdate) return
+    if ((next === 'updates' && !canUpdate) || (next === 'users' && !isAdmin)) return
 
     setError(null)
     setNotice(null)
@@ -88,7 +90,7 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
   const percent = storage ? storagePercent(storage.storageUsed, storage.storageQuota) : null
   const showReserved = storage !== null && storage.storageReserved !== undefined && storage.storageReserved !== 0 && storage.storageReserved !== '0'
   return <div aria-label="Настройки HomeCloud" aria-modal="true" className="dialog-overlay liquid-settings-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
-    <div className="dialog-surface account-dialog liquid-settings-dialog homecloud-settings"><header className="dialog-header"><h2>Настройки HomeCloud</h2><LiquidCloseButton
+    <div className={`dialog-surface account-dialog liquid-settings-dialog homecloud-settings${activeSection === 'users' ? ' homecloud-settings--users' : ''}`}><header className="dialog-header"><h2>Настройки HomeCloud</h2><LiquidCloseButton
       aria-label="Закрыть"
       disabled={busy}
       onClick={close}
@@ -114,10 +116,10 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
             </button>
           ))}
 
-          {canUpdate ? (
+          {canUpdate || isAdmin ? (
             <div className="settings-admin-navigation">
               <p className="settings-nav-caption">Администратор</p>
-              <button
+              {canUpdate ? <button
                 aria-pressed={activeSection === 'updates'}
                 className="settings-nav-button"
                 disabled={busy}
@@ -129,7 +131,20 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
               >
                 <Icon name="download" />
                 <span>Обновления</span>
-              </button>
+              </button> : null}
+              {isAdmin ? <button
+                aria-pressed={activeSection === 'users'}
+                className="settings-nav-button"
+                disabled={busy}
+                onClick={(event) => {
+                  event.currentTarget.focus()
+                  selectSection('users')
+                }}
+                type="button"
+              >
+                <Icon name="user" />
+                <span>Пользователи</span>
+              </button> : null}
             </div>
           ) : null}
         </nav>
@@ -149,6 +164,7 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
           visible={activeSection === 'updates'}
           onAccessChange={setCanUpdate}
         />
+        {activeSection === 'users' && isAdmin ? <UsersSection /> : null}
 
         {activeSection === 'security' ? (
         <form className="account-section" aria-labelledby="account-security-title" onSubmit={(event) => void save(event, true)}><h3 id="account-security-title">Безопасность</h3><p className="account-hint">После смены пароля вы выйдете из этого аккаунта. На других устройствах повторный вход потребуется после истечения текущего сеанса.</p><label className="field">Текущий пароль<input autoComplete="current-password" className="input" disabled={busy} onChange={(event) => setOldPassword(event.target.value)} required type="password" value={oldPassword} /></label><label className="field">Новый пароль<input autoComplete="new-password" className="input" disabled={busy} minLength={8} onChange={(event) => setNewPassword(event.target.value)} required type="password" value={newPassword} /></label><label className="field">Повторите новый пароль<input autoComplete="new-password" className="input" disabled={busy} minLength={8} onChange={(event) => setConfirmation(event.target.value)} required type="password" value={confirmation} /></label><button className="button button--primary" disabled={busy} type="submit">Изменить пароль</button></form>
