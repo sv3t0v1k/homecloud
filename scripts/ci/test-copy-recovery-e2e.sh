@@ -869,7 +869,7 @@ validator_sql -c "
 test "$(validator_sql -c \
   "SELECT count(*) FROM file_copy_operations WHERE state='released';")" = 2
 
-echo "=== VALIDATOR CASE 2: CURRENT 17-TABLE SCHEMA ==="
+echo "=== VALIDATOR CASE 2: CURRENT 18-TABLE SCHEMA ==="
 
 validate_restored_database current
 
@@ -899,7 +899,7 @@ docker exec "$DB_CID" \
   validate_restored_database current
 
   test "$(validator_sql -c \
-    "SELECT count(*) FROM migrations;")" = 34
+    "SELECT count(*) FROM migrations;")" = 35
 
   test "$(validator_sql -c \
     "SELECT count(*) FROM file_copy_operations WHERE state='released';")" = 2
@@ -947,8 +947,8 @@ validator_sql -c '
 echo "=== VALIDATOR CASE 6: HISTORICAL 15-TABLE SCHEMA ==="
 
 validator_sql -c "
-  DROP TABLE file_copy_operations, file_copy_admission;
-  DELETE FROM migrations WHERE timestamp=1792831300000;
+  DROP TABLE user_deletion_operations, file_copy_operations, file_copy_admission;
+  DELETE FROM migrations WHERE timestamp IN (1792831300000, 1792831700000);
 " >/dev/null
 
 validate_restored_database historical
@@ -959,7 +959,7 @@ echo "=== VALIDATOR CASE 7: HISTORICAL IS NOT CURRENT ==="
 
 validator_refuses \
   current \
-  "Migration compatibility failed: expected current 17-table schema"
+  "Migration compatibility failed: expected current 18-table schema"
 
 echo "=== VERIFY ORIGINAL E2E DATABASE UNCHANGED ==="
 
@@ -970,7 +970,7 @@ test "$(sql \
   "SELECT count(*) FROM file_copy_operations WHERE state='reserved'")" = 2
 
 test "$(sql \
-  "SELECT count(*) FROM migrations")" = 34
+  "SELECT count(*) FROM migrations")" = 35
 
 echo "PASS: original E2E fixtures remain intact"
 echo "=== PASS: 7/7 REAL RESTORE VALIDATOR SCENARIOS ==="

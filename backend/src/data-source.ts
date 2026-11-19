@@ -10,6 +10,7 @@ import { UploadChunkEntity } from "./entities/upload-chunk.entity";
 import { DownloadCapabilityEntity } from "./entities/download-capability.entity";
 import { RefreshTokenEntity } from "./entities/refresh-token.entity";
 import { PublicShareOperationEntity } from "./entities/public-share-operation.entity";
+import { UserDeletionEntity } from "./entities/user-deletion.entity";
 import { assertInheritedRootFence } from "./uploads/inherited-root-fence";
 
 class FencedDataSource extends DataSource {
@@ -41,6 +42,7 @@ export default new FencedDataSource({
     DownloadCapabilityEntity,
     RefreshTokenEntity,
     PublicShareOperationEntity,
+    UserDeletionEntity,
   ],
   migrations: [__dirname + "/migrations/*{.ts,.js}"],
 });

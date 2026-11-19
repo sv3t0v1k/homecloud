@@ -57,6 +57,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
       [HttpStatus.CONFLICT]: [
         "EMAIL_ALREADY_EXISTS",
         "QUOTA_BELOW_COMMITMENTS",
+        "LAST_ACTIVE_ADMIN",
+        "CANNOT_DELETE_SELF",
+        "USER_RECOVERY_REQUIRED",
+        "USER_STORAGE_OPERATIONS_ACTIVE",
       ],
       [HttpStatus.SERVICE_UNAVAILABLE]: ["STORAGE_ACCOUNTING_UNAVAILABLE"],
     };

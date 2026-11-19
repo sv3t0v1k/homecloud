@@ -215,7 +215,7 @@ class TestChannelTests(unittest.TestCase):
         self.assertTrue(result['migration_apply'])
         self.assertEqual(result['new_migrations'], sorted(
             set(installer.migration_names(self.manifest)) - set(applied)))
-        self.assertEqual(len(result['new_migrations']), 3)
+        self.assertEqual(len(result['new_migrations']), 4)
 
         exact = copy.deepcopy(self.manifest)
         exact['schema_migrations'] = copy.deepcopy(state['active']['schema_migrations'])
@@ -601,7 +601,7 @@ class TestChannelTests(unittest.TestCase):
                             self.assertNotEqual(snapshot.get('recovery_status'), 'ROLLED_BACK')
 
     def exercise_migration_deploy(self, channel, failure=None):
-        """Mocked host integration drill for a real 31-to-34 manifest shape."""
+        """Mocked host integration drill for a real 31-to-35 manifest shape."""
         state = copy.deepcopy(self.state)
         state['active']['schema_migrations'] = state['active']['schema_migrations'][:31]
         installed = sorted(item['name'] for item in state['active']['schema_migrations'])
@@ -674,7 +674,7 @@ class TestChannelTests(unittest.TestCase):
             installer.deploy(self.manifest)
         return state, operations, current[0]
 
-    def test_migration_transaction_success_31_to_34(self):
+    def test_migration_transaction_success_31_to_35(self):
         with tempfile.TemporaryDirectory() as tmp:
             channel = Path(tmp)
             state, operations, applied = self.exercise_migration_deploy(channel)
@@ -682,7 +682,7 @@ class TestChannelTests(unittest.TestCase):
             self.assertLess(operations.index('backup'), operations.index('migration-start'))
             self.assertLess(operations.index('migration-start'), operations.index('full-start'))
             self.assertLess(operations.index('verify-backend'), operations.index('full-start'))
-            self.assertEqual(len(state['active']['schema_migrations']), 34)
+            self.assertEqual(len(state['active']['schema_migrations']), 35)
             self.assertEqual(len(state['history'][-1]['schema_migrations']), 31)
             saved = json.loads((channel / 'state.json').read_text())
             self.assertEqual(saved['active']['schema_migrations'], self.manifest['schema_migrations'])
@@ -1091,7 +1091,7 @@ class TestChannelTests(unittest.TestCase):
             pending = json.loads((channel / 'pending.json').read_text())
             self.assertEqual(pending['phase'], 'MIGRATION_APPLY')
             self.assertEqual(pending['backup_id'], '20261031_120000_aabbccdd')
-            self.assertEqual(len(pending['target']['new_migrations']), 3)
+            self.assertEqual(len(pending['target']['new_migrations']), 4)
             self.assertFalse((channel / 'state.json').exists())
             report = installer.recovery_report(pending, state, previous,
                 {role: image['ref'] for role, image in state['active']['images'].items()})

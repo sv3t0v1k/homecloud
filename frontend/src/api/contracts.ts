@@ -5,6 +5,7 @@ export interface ApiEnvelope<T> {
 
 export interface BackendErrorBody {
   statusCode?: number
+  code?: string
   message?: string
   timestamp?: string
   path?: string

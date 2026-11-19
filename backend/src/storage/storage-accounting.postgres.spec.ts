@@ -113,9 +113,9 @@ postgres("Shared storage accounting on migrated PostgreSQL", () => {
 
     // Fail setup if the complete migration inventory is not
     // installed. Do not use Jest assertions outside test blocks.
-    if (applied.length !== 34) {
+    if (applied.length !== 35) {
       throw new Error(
-        `Expected 34 migrations, applied ${applied.length}`,
+        `Expected 35 migrations, applied ${applied.length}`,
       );
     }
 

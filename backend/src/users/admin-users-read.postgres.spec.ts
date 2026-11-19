@@ -21,8 +21,11 @@ import { StorageLocationEntity } from "../entities/storage-location.entity";
 import { UploadWorkspaceEntity } from "../entities/upload-workspace.entity";
 import { UploadSessionEntity } from "../entities/upload-session.entity";
 import { UploadChunkEntity } from "../entities/upload-chunk.entity";
+import { UserDeletionEntity } from "../entities/user-deletion.entity";
+import { AdminUserDeletionService } from "./admin-user-deletion.service";
 import { HttpExceptionFilter } from "../common/errors/http-exception.filter";
 import { TransformInterceptor } from "../common/interceptors/transform.interceptor";
+import { StorageService } from "../storage/storage.service";
 
 const databaseUrl = process.env.HOMECLOUD_TEST_DATABASE_URL;
 const postgres = databaseUrl ? describe : describe.skip;
@@ -41,6 +44,7 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
   let adminConnection: DataSource;
   let db: DataSource;
   let schemaCreated = false;
+  const deletePhysicalFile = jest.fn(async (_path: string) => undefined);
 
   let administrator: UserEntity;
   let ordinary: UserEntity;
@@ -92,6 +96,15 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     await adminConnection.query(
       `CREATE TABLE IF NOT EXISTS "${schema}"."file_copy_operations" (id serial PRIMARY KEY, "userId" integer NOT NULL, state varchar(32) NOT NULL, bytes bigint NOT NULL DEFAULT 0)`,
     );
+    await adminConnection.query(
+      `CREATE TABLE IF NOT EXISTS "${schema}"."ssd_finalization_operations" (id serial PRIMARY KEY, "userId" integer NOT NULL)`,
+    );
+    await adminConnection.query(
+      `CREATE TABLE IF NOT EXISTS "${schema}"."download_capabilities" ("tokenHash" varchar(64) PRIMARY KEY, "userId" integer NOT NULL, "fileId" integer NOT NULL, "expiresAt" timestamptz NOT NULL)`,
+    );
+    await adminConnection.query(
+      `CREATE TABLE IF NOT EXISTS "${schema}"."archive_download_capabilities" (id varchar(32) PRIMARY KEY, "tokenHash" varchar(64) NOT NULL, "userId" integer NOT NULL, manifest jsonb NOT NULL, "expiresAt" timestamptz NOT NULL)`,
+    );
     schemaCreated = true;
 
     const config = new ConfigService({
@@ -134,6 +147,7 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
             UploadWorkspaceEntity,
             UploadSessionEntity,
             UploadChunkEntity,
+            UserDeletionEntity,
           ],
         }),
         UsersModule,
@@ -141,6 +155,11 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     })
       .overrideProvider(ConfigService)
       .useValue(config)
+      .overrideProvider(StorageService)
+      .useValue({
+        deleteFile: deletePhysicalFile,
+        resolveFilePath: (file: FileEntity) => file.storagePath,
+      })
       .compile();
 
     app = testingModule.createNestApplication();
@@ -487,22 +506,315 @@ postgres("Admin users real PostgreSQL HTTP contract", () => {
     expect(missing.body.code).toBe("USER_NOT_FOUND");
   });
 
-  it("keeps the administrative status endpoint closed", async () => {
+  it("validates the administrative status endpoint without mutation", async () => {
     const headers = { Authorization: `Bearer ${adminToken}` };
 
-    // The profile/quota PATCH is open since the storage accounting
-    // stages, but an empty body is still rejected before any write.
     const empty = await request(app.getHttpServer())
       .patch(`${ENDPOINT}/${ordinary.id}`)
       .set(headers).send({});
     expect(empty.status).toBe(400);
     expect(empty.body.code).toBe("VALIDATION_ERROR");
 
-    await request(app.getHttpServer())
+    const invalid = await request(app.getHttpServer())
       .patch(`${ENDPOINT}/${ordinary.id}/status`)
-      .set(headers).send({}).expect(404);
+      .set(headers).send({});
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.code).toBe("VALIDATION_ERROR");
 
     expect(await db.getRepository(UserEntity).count()).toBe(3);
+  });
+
+  async function alternativeAccessFixture(email: string) {
+    const { user, credentials } = await passwordTarget(email);
+    const [location] = await db.getRepository(StorageLocationEntity).find();
+    const files = db.getRepository(FileEntity);
+    const file = await files.save(files.create({
+      name: "owned.txt",
+      userId: user.id,
+      size: 1,
+      isFolder: false,
+      isDeleted: false,
+      storagePath: `/fixture/${user.id}`,
+      storageLocationId: location.id,
+      relativeObjectKey: `${user.id}/owned`,
+    }));
+    const shares = db.getRepository(ShareLinkEntity);
+    const share = await shares.save(shares.create({
+      token: randomUUID(),
+      userId: user.id,
+      fileId: file.id,
+      isActive: true,
+      isFolder: false,
+      allowUpload: false,
+    }));
+    const expiresAt = new Date(Date.now() + 3600000);
+    const capabilityHash = randomUUID().replace(/-/g, "")
+      .padEnd(64, "a");
+    const archiveId = randomUUID().replace(/-/g, "");
+    const archiveHash = randomUUID().replace(/-/g, "")
+      .padEnd(64, "c");
+
+    await db.query(
+      `INSERT INTO "download_capabilities"
+       ("tokenHash", "userId", "fileId", "expiresAt")
+       VALUES ($1, $2, $3, $4)`,
+      [capabilityHash, user.id, file.id, expiresAt],
+    );
+    await db.query(
+      `INSERT INTO "archive_download_capabilities"
+       (id, "tokenHash", "userId", manifest, "expiresAt")
+       VALUES ($1, $2, $3, '{}', $4)`,
+      [archiveId, archiveHash, user.id, expiresAt],
+    );
+
+    return { user, credentials, file, share };
+  }
+
+  it("revokes alternative access over HTTP and never revives it", async () => {
+    const { user, credentials, share } = await alternativeAccessFixture(
+      "status-http@example.test",
+    );
+
+    const blocked = await request(app.getHttpServer())
+      .patch(`${ENDPOINT}/${user.id}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ isActive: false })
+      .expect(200);
+
+    expect(blocked.body.data.isActive).toBe(false);
+    expect((await db.getRepository(ShareLinkEntity).findOneByOrFail({
+      id: share.id,
+    })).isActive).toBe(false);
+    expect((await db.query(
+      `SELECT count(*)::int AS count FROM "download_capabilities"
+       WHERE "userId" = $1`, [user.id],
+    ))[0].count).toBe(0);
+    expect((await db.query(
+      `SELECT count(*)::int AS count FROM "archive_download_capabilities"
+       WHERE "userId" = $1`, [user.id],
+    ))[0].count).toBe(0);
+
+    await expectOldSessionRejected(
+      credentials.accessToken, credentials.refreshToken,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`${ENDPOINT}/${user.id}/status`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .send({ isActive: true })
+      .expect(200);
+
+    expect((await db.getRepository(ShareLinkEntity).findOneByOrFail({
+      id: share.id,
+    })).isActive).toBe(false);
+  });
+
+  it("authorizes deletion and forbids deleting the current administrator", async () => {
+    const { user, credentials } = await passwordTarget(
+      "delete-authorization@example.test",
+    );
+
+    const missing = await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`);
+    expect(missing.status).toBe(401);
+
+    const denied = await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`)
+      .set("Authorization", `Bearer ${credentials.accessToken}`);
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe("ADMIN_REQUIRED");
+
+    const self = await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${administrator.id}`)
+      .set("Authorization", `Bearer ${adminToken}`);
+    expect(self.status).toBe(409);
+    expect(self.body.code).toBe("CANNOT_DELETE_SELF");
+
+    expect(await db.getRepository(UserEntity).findOneBy({
+      id: administrator.id,
+    })).not.toBeNull();
+  });
+
+  it("deletes owned records, revokes credentials and cleans physical files", async () => {
+    const { user, credentials, file } = await alternativeAccessFixture(
+      "delete-success@example.test",
+    );
+    deletePhysicalFile.mockClear();
+
+    const response = await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(response.body.data).toEqual({
+      deleted: true,
+      cleanupPending: false,
+    });
+    expect(await db.getRepository(UserEntity).findOneBy({ id: user.id }))
+      .toBeNull();
+    expect(await db.getRepository(FileEntity).countBy({ userId: user.id }))
+      .toBe(0);
+    expect(await db.getRepository(ShareLinkEntity).countBy({ userId: user.id }))
+      .toBe(0);
+    expect(await db.getRepository(RefreshTokenEntity).countBy({ userId: user.id }))
+      .toBe(0);
+    expect(deletePhysicalFile).toHaveBeenCalledWith(file.storagePath);
+    await expectOldSessionRejected(
+      credentials.accessToken, credentials.refreshToken,
+    );
+  });
+
+  it.each([
+    ["ssd", "USER_RECOVERY_REQUIRED"],
+    ["copy", "USER_STORAGE_OPERATIONS_ACTIVE"],
+  ] as const)("keeps account and data behind the %s recovery barrier", async (
+    kind,
+    code,
+  ) => {
+    const { user, file } = await alternativeAccessFixture(
+      `delete-${kind}-barrier@example.test`,
+    );
+
+    if (kind === "ssd") {
+      await db.query(
+        `INSERT INTO "ssd_finalization_operations" ("userId") VALUES ($1)`,
+        [user.id],
+      );
+    } else {
+      await db.query(
+        `INSERT INTO "file_copy_operations" ("userId", state)
+         VALUES ($1, 'reserved')`,
+        [user.id],
+      );
+    }
+
+    const response = await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`)
+      .set("Authorization", `Bearer ${adminToken}`);
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe(code);
+    expect(await db.getRepository(UserEntity).findOneBy({ id: user.id }))
+      .not.toBeNull();
+    expect(await db.getRepository(FileEntity).findOneBy({ id: file.id }))
+      .not.toBeNull();
+  });
+
+  it.each(["pending", "uploading"]) (
+    "keeps account and data while a %s legacy upload can own an unpublished final link",
+    async (status) => {
+      const { user, credentials, file } = await alternativeAccessFixture(
+        `delete-${status}-upload@example.test`,
+      );
+
+      await db.query(
+        `INSERT INTO upload_workspaces (id, "machineKey", "mountKey", type)
+         VALUES ($1, $2, $3, 'local_filesystem')
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          LEGACY_UPLOAD_WORKSPACE_ID,
+          `delete-test-${randomUUID()}`,
+          `delete-mount-${randomUUID()}`,
+        ],
+      );
+      await db.query(
+        `INSERT INTO upload_sessions (
+          "uploadId", filename, "totalSize", "uploadedSize", "chunkSize",
+          "totalChunks", "uploadedCount", "accountingInitialized", "tempPath",
+          "workspaceId", status, "expiresAt", "userId"
+        ) VALUES ($1, 'pending.bin', 1, 0, 1, 1, 0, true, $2, $3, $4,
+          '2030-01-01', $5)`,
+        [
+          randomUUID(),
+          `/tmp/admin-delete-${randomUUID()}`,
+          LEGACY_UPLOAD_WORKSPACE_ID,
+          status,
+          user.id,
+        ],
+      );
+
+      const response = await request(app.getHttpServer())
+        .delete(`${ENDPOINT}/${user.id}`)
+        .set("Authorization", `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe("USER_STORAGE_OPERATIONS_ACTIVE");
+      expect(await db.getRepository(UserEntity).findOneBy({ id: user.id }))
+        .not.toBeNull();
+      expect(await db.getRepository(FileEntity).findOneBy({ id: file.id }))
+        .not.toBeNull();
+      expect(await db.getRepository(RefreshTokenEntity).countBy({
+        userId: user.id,
+        revoked: false,
+      })).toBe(1);
+      expect(await db.getRepository(UserDeletionEntity).countBy({
+        userId: user.id,
+      })).toBe(0);
+      expect((await get(ME, credentials.accessToken)).status).toBe(200);
+      expect(deletePhysicalFile).not.toHaveBeenCalledWith(file.storagePath);
+    },
+  );
+
+  it("retains physical cleanup and retries it after a repeated DELETE", async () => {
+    const { user, file } = await alternativeAccessFixture(
+      "delete-cleanup-retry@example.test",
+    );
+    const journal = db.getRepository(UserDeletionEntity);
+    deletePhysicalFile.mockClear();
+    deletePhysicalFile.mockRejectedValueOnce(new Error("fixture unlink failure"));
+
+    const response = await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(response.body.data).toEqual({
+      deleted: true,
+      cleanupPending: true,
+    });
+    expect(await db.getRepository(UserEntity).findOneBy({ id: user.id }))
+      .toBeNull();
+    expect(await journal.findOneBy({ userId: user.id })).toMatchObject({
+      payload: { files: [{ path: file.storagePath }], uploads: [] },
+    });
+
+    const retry = await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200);
+
+    expect(retry.body.data).toEqual({
+      deleted: true,
+      cleanupPending: false,
+    });
+    expect(await journal.countBy({ userId: user.id })).toBe(0);
+    expect(deletePhysicalFile).toHaveBeenCalledTimes(2);
+    expect(deletePhysicalFile).toHaveBeenNthCalledWith(2, file.storagePath);
+  });
+
+  it("resumes retained physical cleanup during module initialization", async () => {
+    const { user, file } = await alternativeAccessFixture(
+      "delete-cleanup-startup@example.test",
+    );
+    const journal = db.getRepository(UserDeletionEntity);
+    deletePhysicalFile.mockClear();
+    deletePhysicalFile.mockRejectedValueOnce(new Error("fixture restart failure"));
+
+    await request(app.getHttpServer())
+      .delete(`${ENDPOINT}/${user.id}`)
+      .set("Authorization", `Bearer ${adminToken}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data.cleanupPending).toBe(true);
+      });
+
+    expect(await journal.countBy({ userId: user.id })).toBe(1);
+    deletePhysicalFile.mockClear();
+
+    await app.get(AdminUserDeletionService).onModuleInit();
+
+    expect(deletePhysicalFile).toHaveBeenCalledWith(file.storagePath);
+    expect(await journal.countBy({ userId: user.id })).toBe(0);
   });
 
   async function waitForReadLock() {

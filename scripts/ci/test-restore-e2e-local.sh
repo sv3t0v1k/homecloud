@@ -679,7 +679,7 @@ require(
 )
 
 require(
-    sql("SELECT count(*) FROM public.migrations;") == "34",
+    sql("SELECT count(*) FROM public.migrations;") == "35",
     "fresh installation migration inventory mismatch",
 )
 
@@ -688,7 +688,7 @@ require(
     "fresh installation unexpectedly contains users",
 )
 
-passed("fresh database, 34 migrations, no automatic administrator")
+passed("fresh database, 35 migrations, no automatic administrator")
 
 email = "bootstrap-admin@example.invalid"
 password = secrets.token_hex(24)
@@ -902,7 +902,7 @@ require(
 )
 
 require(
-    sql("SELECT count(*) FROM public.migrations;") == "34",
+    sql("SELECT count(*) FROM public.migrations;") == "35",
     "bootstrap changed migration inventory",
 )
 
@@ -1411,7 +1411,7 @@ if [ "${HOMECLOUD_E2E_HISTORICAL_SCHEMA:-0}" = 1 ]; then
       -c "SELECT count(*) FROM files WHERE name='after-backup.txt' AND NOT \"isDeleted\"")" = 1
     BACKUP_DIR="$schema_dir" bash scripts/restore.sh --yes
     verify_restored_state
-    echo "PASS: HISTORICAL DATABASE $table_count TABLES -> CURRENT17 -> REAL API"
+    echo "PASS: HISTORICAL DATABASE $table_count TABLES -> CURRENT18 -> REAL API"
   done
   docker compose ps
   echo "PASS: HISTORICAL DATABASE SCHEMA MATRIX 7/8/9/10/11/13/15"

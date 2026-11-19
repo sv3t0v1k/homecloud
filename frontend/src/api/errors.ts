@@ -19,6 +19,7 @@ export class ApiError extends Error {
     readonly kind: ApiErrorKind,
     readonly status?: number,
     readonly retryAfter?: string,
+    readonly code?: string,
   ) {
     super(message)
     this.name = 'ApiError'
@@ -38,6 +39,7 @@ export function normalizeApiError(error: unknown): ApiError {
 
   const status = error.response.status
   const backendMessage = error.response.data?.message
+  const code = error.response.data?.code
   const message = backendMessage || defaultMessage(status)
   const headers = error.response.headers
   const retryAfterHeader = headers instanceof AxiosHeaders
@@ -47,14 +49,14 @@ export function normalizeApiError(error: unknown): ApiError {
     ? String(retryAfterHeader)
     : undefined
 
-  if (status === 400 || status === 422) return new ApiError(message, 'validation', status)
-  if (status === 401) return new ApiError(message, 'authentication', status)
-  if (status === 403) return new ApiError(message, 'authorization', status)
-  if (status === 429) return new ApiError(message, 'rate-limit', status, retryAfter)
-  if (status === 503 && /insufficient.*(?:ssd|hdd).*capacity/i.test(message)) return new ApiError(message, 'storage-capacity', status, retryAfter)
-  if (status === 503 && /busy/i.test(message)) return new ApiError(message, 'busy', status, retryAfter)
-  if (status >= 500) return new ApiError(message, 'server', status, retryAfter)
-  return new ApiError(message, 'unknown', status)
+  if (status === 400 || status === 422) return new ApiError(message, 'validation', status, undefined, code)
+  if (status === 401) return new ApiError(message, 'authentication', status, undefined, code)
+  if (status === 403) return new ApiError(message, 'authorization', status, undefined, code)
+  if (status === 429) return new ApiError(message, 'rate-limit', status, retryAfter, code)
+  if (status === 503 && /insufficient.*(?:ssd|hdd).*capacity/i.test(message)) return new ApiError(message, 'storage-capacity', status, retryAfter, code)
+  if (status === 503 && /busy/i.test(message)) return new ApiError(message, 'busy', status, retryAfter, code)
+  if (status >= 500) return new ApiError(message, 'server', status, retryAfter, code)
+  return new ApiError(message, 'unknown', status, retryAfter, code)
 }
 
 function defaultMessage(status: number): string {

@@ -1,6 +1,6 @@
 # Auth Threat Model — HomeCloud Phase 9
 
-> **Current contract — BE-ADMIN-01.3 (2026-11-16).**
+> **Current contract — administrative user lifecycle (2026-11-20).**
 > Sections 1–9 below are preserved as a historical Phase 9 baseline.
 > Their registration, token hashing, JWT payload and revocation
 > descriptions are superseded by the following current contract.
@@ -45,14 +45,31 @@
   refresh-in-sessionStorage. XSS exposure and operational secret
   custody remain relevant risks.
 
-### Remaining scope
+### Administrative account lifecycle
 
-Administrative user-management endpoints, atomic quota management,
-last-active-admin protection for administrative mutations, revocation
-of alternative sharing/download credentials, persistent admin audit
-and restore-time session invalidation are follow-up BE-ADMIN stages.
-These controls must not be inferred from role/sessionVersion support
-alone.
+Authenticated administrators can list, create, edit, block, reactivate and
+hard-delete users through `/api/v1/admin/users`; the same operations are
+available in the Users section of account settings. Creation requires a
+12-character password and an exact decimal-string byte quota. Profile and
+quota updates use explicit field allowlists, transactional authorization,
+user-row locks and storage commitments. Email, role and password changes
+revoke sessions; status transitions also revoke active share links and
+download capabilities so reactivation cannot revive them.
+
+Deletion forbids self-deletion and removal of the last active administrator.
+Database-owned rows are removed by existing cascades, followed by physical
+file and legacy upload-workspace cleanup. Immutable SSD recovery journals,
+pending/uploading legacy sessions, nonstandard upload workspaces and
+unresolved copy operations fail closed with explicit conflict codes. The
+physical destinations are committed in `user_deletion_operations` atomically
+with account deletion. A post-commit filesystem failure retains that journal
+and returns `cleanupPending: true`; a repeated DELETE or backend startup
+resumes cleanup, and the journal is removed only after successful completion.
+A pending response must not be presented as complete physical cleanup.
+
+Persistent administrative audit and restore-time session invalidation remain
+outside this contract. No persistent audit trail or backup-restore identity
+semantics should be inferred from these endpoints.
 
 The following original baseline is retained for historical reference.
 

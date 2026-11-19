@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Patch,
   Post,
@@ -13,6 +14,7 @@ import { JwtGuard } from "../auth/guards/jwt.guard";
 import { UserInfo } from "../auth/jwt.strategy";
 import { AdminUsersReadService } from "./admin-users-read.service";
 import { AdminUsersWriteService } from "./admin-users-write.service";
+import { AdminUserDeletionService } from "./admin-user-deletion.service";
 
 type AuthenticatedRequest = Request & {
   user: UserInfo;
@@ -47,6 +49,7 @@ export class AdminUsersController {
   constructor(
     private readonly users: AdminUsersReadService,
     private readonly writes: AdminUsersWriteService,
+    private readonly deletion: AdminUserDeletionService,
   ) {}
 
   @Post()
@@ -81,6 +84,29 @@ export class AdminUsersController {
       },
       request.params.id,
       request.body,
+    );
+  }
+
+  @Patch(":id/status")
+  async changeStatus(@Req() request: AuthenticatedRequest) {
+    return this.writes.updateStatus(
+      {
+        userId: request.user.userId,
+        sessionVersion: request.user.sessionVersion,
+      },
+      request.params.id,
+      request.body,
+    );
+  }
+
+  @Delete(":id")
+  async delete(@Req() request: AuthenticatedRequest) {
+    return this.deletion.delete(
+      {
+        userId: request.user.userId,
+        sessionVersion: request.user.sessionVersion,
+      },
+      request.params.id,
     );
   }
 
