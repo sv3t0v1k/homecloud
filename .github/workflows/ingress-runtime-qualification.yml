@@ -106,7 +106,7 @@ jobs:
               cat /etc/alpine-release
               nginx -v
               apk --no-network info -v' 2>&1 | tee evidence/runtime-versions.txt
-          grep -Fx 'nginx-1.30.7-r0' evidence/runtime-versions.txt
+          grep -Fx 'nginx-1.30.7-r1' evidence/runtime-versions.txt
           grep -Fx 'pcre2-10.49-r0' evidence/runtime-versions.txt
           if grep -E '^(brotli-libs|curl|libcurl|libexpat|libx11)-' evidence/runtime-versions.txt; then exit 1; fi
 
