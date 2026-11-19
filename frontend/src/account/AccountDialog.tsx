@@ -164,7 +164,14 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
           visible={activeSection === 'updates'}
           onAccessChange={setCanUpdate}
         />
-        {activeSection === 'users' && isAdmin ? <UsersSection /> : null}
+        {activeSection === 'users' && isAdmin ? <UsersSection
+          currentUserId={session.user?.id}
+          onCurrentUserSessionRevoked={session.endSession}
+          onCurrentUserUpdated={(updated) => {
+            if (!session.user || session.user.id !== updated.id) return
+            session.updateUser({ ...session.user, ...updated, avatar: session.user.avatar })
+          }}
+        /> : null}
 
         {activeSection === 'security' ? (
         <form className="account-section" aria-labelledby="account-security-title" onSubmit={(event) => void save(event, true)}><h3 id="account-security-title">Безопасность</h3><p className="account-hint">После смены пароля вы выйдете из этого аккаунта. На других устройствах повторный вход потребуется после истечения текущего сеанса.</p><label className="field">Текущий пароль<input autoComplete="current-password" className="input" disabled={busy} onChange={(event) => setOldPassword(event.target.value)} required type="password" value={oldPassword} /></label><label className="field">Новый пароль<input autoComplete="new-password" className="input" disabled={busy} minLength={8} onChange={(event) => setNewPassword(event.target.value)} required type="password" value={newPassword} /></label><label className="field">Повторите новый пароль<input autoComplete="new-password" className="input" disabled={busy} minLength={8} onChange={(event) => setConfirmation(event.target.value)} required type="password" value={confirmation} /></label><button className="button button--primary" disabled={busy} type="submit">Изменить пароль</button></form>

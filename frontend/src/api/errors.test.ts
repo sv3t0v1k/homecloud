@@ -16,6 +16,14 @@ describe('normalizeApiError', () => {
     )
   })
 
+  it('retains stable backend operation codes', () => {
+    const error = axiosError(409, { statusCode: 409, code: 'LAST_ACTIVE_ADMIN', message: 'private detail' })
+
+    expect(normalizeApiError(error)).toMatchObject({
+      kind: 'unknown', status: 409, code: 'LAST_ACTIVE_ADMIN',
+    })
+  })
+
   it('classifies the short rate-limit response and keeps Retry-After', () => {
     const error = axiosError(429, { statusCode: 429, message: 'Too many requests' }, '30')
 

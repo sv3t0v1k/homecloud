@@ -4,10 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AccountDialog } from './AccountDialog'
 import { changePassword, getAdminUsers, getStorageInfo, updateProfile } from './api'
-const session = vi.hoisted(() => ({ user: { name: 'Алексей', email: 'alex@example.invalid', role: 'USER' as 'ADMIN' | 'USER', avatar: null as string | null }, endSession: vi.fn(), updateUser: vi.fn() }))
+const session = vi.hoisted(() => ({ user: { id: 7, name: 'Алексей', email: 'alex@example.invalid', role: 'USER' as 'ADMIN' | 'USER', avatar: null as string | null }, endSession: vi.fn(), updateUser: vi.fn() }))
 const updatesAccess = vi.hoisted(() => ({ admin: false }))
 vi.mock('../auth/SessionContext', () => ({ useSession: () => session }))
-vi.mock('./api', () => ({ changePassword: vi.fn(), getAdminUsers: vi.fn(), getStorageInfo: vi.fn(), updateProfile: vi.fn() }))
+vi.mock('./api', () => ({ changeAdminUserPassword: vi.fn(), changeAdminUserStatus: vi.fn(), changePassword: vi.fn(), createAdminUser: vi.fn(), deleteAdminUser: vi.fn(), getAdminUsers: vi.fn(), getStorageInfo: vi.fn(), updateAdminUser: vi.fn(), updateProfile: vi.fn() }))
 vi.mock('./UpdatesSection', () => {
   function UpdatesSection({ visible = false, onAccessChange }: { visible?: boolean; onAccessChange?: (admin: boolean) => void }) {
     useEffect(() => { onAccessChange?.(updatesAccess.admin) }, [onAccessChange])

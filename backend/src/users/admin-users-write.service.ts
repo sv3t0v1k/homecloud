@@ -40,6 +40,7 @@ import {
   isUserEmailConflict,
   normalizeUserEmail,
 } from "./user-email";
+import { revokeAlternativeUserAccess } from "./account-access-revocation";
 
 const AUTHORIZATION_FIELDS = {
   id: true,
@@ -444,8 +445,8 @@ export class AdminUsersWriteService {
     }
   }
 
-  // Internal operation only. The HTTP status endpoint must
-  // remain unavailable until alternative credentials are fenced.
+  // Both status transitions revoke ordinary and alternative credentials.
+  // Existing uploads still serialize through their session/share fences.
   async updateStatus(
     actor: AdminActor,
     rawId: unknown,
@@ -497,12 +498,12 @@ export class AdminUsersWriteService {
           throw new Error("Administrative status update failed");
         }
 
-        // Both actual status transitions invalidate existing
-        // sessions. Reactivation never revives old credentials.
+        // Both actual status transitions invalidate existing sessions.
+        // Alternative credentials are revoked too: reactivation must never
+        // revive a share or capability that existed before blocking.
         await revokeLockedUserSessions(manager, target);
+        await revokeAlternativeUserAccess(manager, id);
 
-        // Alternative credentials, public capabilities and
-        // in-flight storage operations are handled in 01.6.
         return readAdminUser(manager, id);
       },
     );
