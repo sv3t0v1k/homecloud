@@ -36,7 +36,7 @@ server {
   access_log /dev/stdout homecloud_private;
   error_log /dev/null;
   listen 443 ssl;
-  server_name ${PUBLIC_HOST} ${TRUSTED_HOSTS:-};
+  server_name ${PUBLIC_HOST} test-hc.f50a44.ru;
   ssl_certificate /etc/nginx/tls/current/fullchain.pem;
   ssl_certificate_key /etc/nginx/tls/current/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
