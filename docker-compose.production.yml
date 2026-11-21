@@ -114,7 +114,10 @@ services:
     platform: linux/amd64
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?Укажите публичное DNS имя}
-      NGINX_ENVSUBST_FILTER: ^PUBLIC_HOST$
+      # Дополнительные доверенные хосты через пробел (например test-hc.f50a44.ru).
+      # Пустое значение — только PUBLIC_HOST.
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-}
+      NGINX_ENVSUBST_FILTER: ^(PUBLIC_HOST|TRUSTED_HOSTS)$
     ports:
       - "${PUBLIC_BIND_IP:-127.0.0.1}:${PUBLIC_HTTP_PORT:?Укажите свободный HTTP port HomeCloud}:80"
       - "${PUBLIC_BIND_IP:-127.0.0.1}:${PUBLIC_HTTPS_PORT:?Укажите свободный HTTPS port HomeCloud}:443"

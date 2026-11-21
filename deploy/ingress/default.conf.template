@@ -3,6 +3,9 @@ log_format homecloud_private 'status=$status bytes=$body_bytes_sent duration=$re
 # nginx error records могут содержать raw request/upstream URI.
 # Диагностика: nginx -t, status/access counters и безопасные backend logs.
 # PUBLIC_HOST is a bare lowercase DNS hostname. Terminate public TLS at this boundary.
+# TRUSTED_HOSTS (опционально) — дополнительные разрешенные хосты через пробел,
+# например "test-hc.f50a44.ru". Проверка хоста выполняется через server_name +
+# отдельный catch-all на 443, который отдаёт 421 для недоверенных хостов.
 server {
   access_log /dev/stdout homecloud_private;
   error_log /dev/null;
@@ -17,15 +20,26 @@ server {
   }
   location / { return 308 https://${PUBLIC_HOST}$request_uri; }
 }
+# Catch-all для недоверенных хостов на 443 — отказывает с 421 Misdirected Request.
 server {
   access_log /dev/stdout homecloud_private;
   error_log /dev/null;
   listen 443 ssl default_server;
-  server_name ${PUBLIC_HOST};
+  server_name _;
   ssl_certificate /etc/nginx/tls/current/fullchain.pem;
   ssl_certificate_key /etc/nginx/tls/current/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
-  if ($host != "${PUBLIC_HOST}") { return 421; }
+  return 421;
+}
+# Доверенные хосты: PUBLIC_HOST плюс опциональные TRUSTED_HOSTS.
+server {
+  access_log /dev/stdout homecloud_private;
+  error_log /dev/null;
+  listen 443 ssl;
+  server_name ${PUBLIC_HOST} ${TRUSTED_HOSTS:-};
+  ssl_certificate /etc/nginx/tls/current/fullchain.pem;
+  ssl_certificate_key /etc/nginx/tls/current/privkey.pem;
+  ssl_protocols TLSv1.2 TLSv1.3;
 
   # The TLS boundary owns browser policy; do not duplicate backend Helmet headers.
   proxy_hide_header Strict-Transport-Security;
