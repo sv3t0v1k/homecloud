@@ -78,26 +78,38 @@ jobs:
               os.environ['TEST_MANIFEST_SHA256'], modules['test_contract'].shape, client)
           source = verifier['GitSource'](verifier['ROOT'], boundary.clean_environment())
           current = source.head().decode('ascii')
-          changed = any(source.git('rev-parse', current + ':' + directory) !=
-                        source.git('rev-parse', manifest['commit'] + ':' + directory)
-                        for directory in ('deploy', 'scripts'))
+          deploy_diff = source.git('diff-tree', '-r', '-z', '--no-renames',
+                                   '--name-only', current, manifest['commit'],
+                                   '--', 'deploy')
+          deploy_changed = {path.decode('utf-8')
+                            for path in deploy_diff.split(bytes([0])) if path
+                            if path.decode('utf-8').startswith('deploy/')}
+          scripts_diff = source.git('diff-tree', '-r', '-z', '--no-renames',
+                                    '--name-only', current, manifest['commit'],
+                                    '--', 'scripts')
+          scripts_changed = {path.decode('utf-8')
+                             for path in scripts_diff.split(bytes([0])) if path}
+          changed = bool(deploy_changed or scripts_changed)
+          deploy_qualified = verifier.get('DEPLOY_ONLY_CHANGES', frozenset())
+          deploy_within_qualified = deploy_changed <= deploy_qualified
           try:
               verifier['target_sources'](manifest, modules['test_contract'], source)
           except ValueError as error:
-              assert changed and str(error) == 'root helper tree changed; separate qualification required'
-              print('PASS: actual helper tree change refused by target gate')
+              assert changed and str(error) in (
+                  'root helper tree changed; separate qualification required',
+                  'deploy changes outside qualified set; separate qualification required',
+              ), str(error)
+              if deploy_within_qualified:
+                  raise AssertionError('qualified deploy change was rejected')
+              print('PASS: helper tree change refused by target gate')
           else:
               if changed:
-                  # Accepted helper-tree changes must stay inside the CI-only
-                  # script whitelist enforced by the target gate.
-                  diff = source.git('diff-tree', '-r', '-z', '--no-renames',
-                                    '--name-only', current, manifest['commit'],
-                                    '--', 'scripts')
-                  changed_paths = {path.decode('utf-8')
-                                   for path in diff.split(bytes([0])) if path}
+                  if not deploy_within_qualified:
+                      raise AssertionError('unqualified deploy change was accepted')
+                  changed_paths = scripts_changed
                   assert changed_paths <= verifier['CI_ONLY_SCRIPT_CHANGES'], \
                       'accepted helper tree change outside the CI-only whitelist'
-                  print('PASS: CI-only script change accepted by target gate')
+                  print('PASS: qualified deploy or CI-only script change accepted by target gate')
               else:
                   print('PASS: unchanged helper tree and target sources accepted')
           print('PASS: root trust, six SHA256 pins, current protected TEST evidence')

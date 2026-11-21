@@ -39,7 +39,6 @@ CI_ONLY_SCRIPT_CHANGES = frozenset({
 })
 
 DEPLOY_ONLY_CHANGES = frozenset({
-    'deploy/linux/update-host-verify.py',
     'deploy/ingress/19-validate-public-host.sh',
     'deploy/ingress/default.conf.template',
 })
