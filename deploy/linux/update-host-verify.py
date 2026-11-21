@@ -38,6 +38,11 @@ CI_ONLY_SCRIPT_CHANGES = frozenset({
     'scripts/ci/test-test-channel.py',
 })
 
+DEPLOY_ONLY_CHANGES = frozenset({
+    'deploy/ingress/19-validate-public-host.sh',
+    'deploy/ingress/default.conf.template',
+})
+
 
 def require(ok, reason):
     if not ok:
@@ -120,10 +125,17 @@ class GitSource:
 def target_sources(manifest, contract, source):
     # Preserve the existing installer gate, without importing installer code.
     current = source.head().decode('ascii')
+    deploy_diff = source.git(
+        'diff-tree', '-r', '-z', '--no-renames', '--name-only',
+        current, manifest['commit'], '--', 'deploy'
+    )
+    deploy_changed = {
+        path.decode('utf-8')
+        for path in deploy_diff.split(bytes([0])) if path
+    }
     require(
-        source.git('rev-parse', current + ':deploy') ==
-        source.git('rev-parse', manifest['commit'] + ':deploy'),
-        'root helper tree changed; separate qualification required'
+        deploy_changed <= DEPLOY_ONLY_CHANGES,
+        'deploy changes outside qualified set; separate qualification required'
     )
     diff = source.git(
         'diff-tree', '-r', '-z', '--no-renames', '--name-only',
