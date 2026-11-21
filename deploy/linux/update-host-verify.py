@@ -20,6 +20,8 @@ QUALIFIED = {
     'update_source': ('deploy/linux/update_source.py', '2bd35239a22fe557cb0d2903f24c32476194ee75ba00986aa70994976c87b3b2'),
     'provenance': ('scripts/ci/provenance.py', '40b97dd41b7a84d0c4a380992dcb2e7d9380b1c01bf2515a7846b5405c8818dc'),
     'test_contract': ('scripts/ci/test-channel.py', '458197501f93e4784d51d576964a1a47b43e9925ca3eb9ee6d961eb023c5f03c'),
+    'ingress_validator': ('deploy/ingress/19-validate-public-host.sh', '815f108885103b4ec75c9ebecefda68623065ec27b56ad6e3225555fe1236801'),
+    'ingress_template': ('deploy/ingress/default.conf.template', '3b1dd04fd4dbaa7313bc52b2d768387197c5e5003f34cbca2371c8b4b0975d77'),
 }
 MAX_BLOB = 16 * 1024 * 1024
 
@@ -36,6 +38,11 @@ CI_ONLY_SCRIPT_CHANGES = frozenset({
     'scripts/ci/test-stage-cache-proof.py',
     'scripts/ci/test-update-host-verify.py',
     'scripts/ci/test-test-channel.py',
+})
+
+DEPLOY_ONLY_CHANGES = frozenset({
+    'deploy/ingress/19-validate-public-host.sh',
+    'deploy/ingress/default.conf.template',
 })
 
 
@@ -120,10 +127,17 @@ class GitSource:
 def target_sources(manifest, contract, source):
     # Preserve the existing installer gate, without importing installer code.
     current = source.head().decode('ascii')
+    deploy_diff = source.git(
+        'diff-tree', '-r', '-z', '--no-renames', '--name-only',
+        current, manifest['commit'], '--', 'deploy'
+    )
+    deploy_changed = {
+        path.decode('utf-8')
+        for path in deploy_diff.split(bytes([0])) if path
+    }
     require(
-        source.git('rev-parse', current + ':deploy') ==
-        source.git('rev-parse', manifest['commit'] + ':deploy'),
-        'root helper tree changed; separate qualification required'
+        deploy_changed <= DEPLOY_ONLY_CHANGES,
+        'deploy changes outside qualified set; separate qualification required'
     )
     diff = source.git(
         'diff-tree', '-r', '-z', '--no-renames', '--name-only',
@@ -156,6 +170,15 @@ def target_sources(manifest, contract, source):
             entry[0] in (b'100644', b'100755') and
             entry[1] == b'blob',
             'unsafe CI-only Git object'
+        )
+        read(path)
+    for path in deploy_changed:
+        entry = entries.get(path)
+        require(
+            entry is not None and
+            entry[0] in (b'100644', b'100755') and
+            entry[1] == b'blob',
+            'unsafe deploy Git object'
         )
         read(path)
     for path, expected in QUALIFIED.values():
