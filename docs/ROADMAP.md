@@ -506,7 +506,7 @@ In scope:
 
 Out of scope:
 - redesign backend sharing policy;
-- новые preview formats или обход существующих size limits;
+- новые preview formats, кромеvideопревью (одобрено владельцем проекта 2026-11-21, 1 кадр как картинка, см. docs/video_preview/plan.md); обход существующих size limits;
 - включение sharing/previews в первый вертикальный срез.
 
 Acceptance criteria:
