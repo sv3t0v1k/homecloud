@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api/errors'
 import { useDialogFocus } from '../accessibility/useDialogFocus'
 import type { FileItem } from '../types/files'
-import { getFilePreview, previewImageBlob, type PreviewPayload } from './preview'
+import { getFilePreview, previewImageBlob, previewVideoBlob, type PreviewPayload } from './preview'
 import { Icon } from '../ui/Icon'
 import { LiquidCloseButton } from '../ui/LiquidCloseButton'
 
@@ -13,6 +13,7 @@ type PreviewState =
       status: 'ready'
       preview: PreviewPayload
       imageUrl?: string
+      videoUrl?: string
       imageLoaded?: boolean
     }
   | { status: 'error'; message: string }
@@ -33,6 +34,10 @@ export function PreviewModal({
     state.preview.type === 'image' &&
     Boolean(state.imageUrl) &&
     !state.imageLoaded
+  const waitingForVideo =
+    state.status === 'ready' &&
+    state.preview.type === 'video' &&
+    Boolean(state.videoUrl)
   const closingAnimation = useRef<Animation | null>(null)
   const dialogRef = useDialogFocus(close, closeButtonRef)
 
@@ -94,8 +99,15 @@ export function PreviewModal({
         if (controller.signal.aborted) return
         if (preview.type === 'image') {
           objectUrl = URL.createObjectURL(previewImageBlob(preview))
+        } else if (preview.type === 'video') {
+          objectUrl = URL.createObjectURL(previewVideoBlob(preview))
         }
-        setState({ status: 'ready', preview, imageUrl: objectUrl })
+        setState({
+          status: 'ready',
+          preview,
+          imageUrl: preview.type === 'image' ? objectUrl : undefined,
+          videoUrl: preview.type === 'video' ? objectUrl : undefined,
+        })
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
@@ -121,8 +133,10 @@ export function PreviewModal({
         className="dialog-surface preview-dialog"
         data-preview-image={
           file.mimeType?.startsWith('image/') ||
+          file.mimeType?.startsWith('video/') ||
           (state.status === 'ready' &&
-            state.preview.type === 'image')
+            (state.preview.type === 'image' ||
+              state.preview.type === 'video'))
             ? 'true'
             : undefined
         }
@@ -137,7 +151,7 @@ export function PreviewModal({
           />
         </div>
         <div className="dialog-body preview-content">
-        {state.status === 'loading' || waitingForImage ? (
+        {state.status === 'loading' || waitingForImage || waitingForVideo ? (
           <div className="preview-loader" role="status">
             <span className="preview-loader-orbit" aria-hidden="true">
               <Icon name="cloud" width={32} height={32} />
@@ -173,6 +187,34 @@ export function PreviewModal({
                   ? {
                       status: 'error',
                       message: 'Не удалось отобразить изображение.',
+                    }
+                  : current,
+              )
+            }}
+          />
+        ) : null}
+        {state.status === 'ready' && state.preview.type === 'video' && state.videoUrl ? (
+          <img
+            alt={`Предпросмотр: ${file.name}`}
+            key={state.videoUrl}
+            className="preview-image"
+            src={state.videoUrl}
+            data-image-pending={waitingForVideo ? 'true' : undefined}
+            onLoad={() => {
+              setState(current =>
+                current.status === 'ready' &&
+                current.videoUrl === state.videoUrl
+                  ? { ...current, imageLoaded: true }
+                  : current,
+              )
+            }}
+            onError={() => {
+              setState(current =>
+                current.status === 'ready' &&
+                current.videoUrl === state.videoUrl
+                  ? {
+                      status: 'error',
+                      message: 'Не удалось отобразить предпросмотр видео.',
                     }
                   : current,
               )

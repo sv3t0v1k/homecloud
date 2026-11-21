@@ -10,9 +10,13 @@ import { Repository } from "typeorm";
 import sharp from "sharp";
 import { randomUUID } from "node:crypto";
 import * as fs from "fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { FileEntity } from "../entities/file.entity";
 import { assertVisibleAncestors } from "../files/file-visibility";
 import { StorageService } from "../storage/storage.service";
+
+const execFileAsync = promisify(execFile);
 
 @Injectable()
 export class PreviewsService {
@@ -24,6 +28,10 @@ export class PreviewsService {
   private readonly maxThumbnailPixels = 24_000_000;
   private activeThumbnails = 0;
   private readonly thumbnailWaiters: Array<() => void> = [];
+
+  private readonly ffmpegTimeoutMs = 30_000;
+  private readonly ffmpegMaxOutputBytes = 5 * 1024 * 1024;
+  private readonly videoMimeAllowlist = ["video/mp4", "video/webm", "video/quicktime"];
 
   private assertThumbnailActive(signal?: AbortSignal): void {
     if (signal?.aborted) {
@@ -123,6 +131,20 @@ export class PreviewsService {
       return data.length >= 12 &&
         data.toString("ascii", 0, 4) === "RIFF" &&
         data.toString("ascii", 8, 12) === "WEBP";
+    }
+    return false;
+  }
+
+  private matchesVideoContainer(data: Buffer, mime: string): boolean {
+    if (mime === "video/mp4" || mime === "video/quicktime") {
+      // MP4/MOV: ftyp box at offset 4-7 (after size uint32)
+      return data.length >= 8 &&
+        data.subarray(4, 8).equals(Buffer.from([102, 116, 121, 112])); // "ftyp"
+    }
+    if (mime === "video/webm") {
+      // WebM: EBML header 1A 45 DF A3
+      return data.length >= 4 &&
+        data.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
     }
     return false;
   }
@@ -470,6 +492,64 @@ export class PreviewsService {
     }
   }
 
+  private async generateVideoPreview(
+    filePath: string,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
+    this.assertThumbnailActive(signal);
+
+    const before = fs.statSync(filePath);
+    if (
+      !before.isFile() ||
+      !Number.isSafeInteger(before.size) ||
+      before.size <= 0 ||
+      before.size > this.maxPreviewBytes
+    ) {
+      throw new BadRequestException("Video exceeds preview limits");
+    }
+
+    const buildArgs = (seek: string): string[] => [
+      "-nostdin",
+      "-hide_banner",
+      "-loglevel", "error",
+      "-threads", "1",
+      "-ss", seek,
+      "-i", filePath,
+      "-frames:v", "1",
+      "-f", "image2",
+      "-",
+    ];
+
+    let lastError: unknown;
+    for (const seek of ["00:00:01", "0"]) {
+      this.assertThumbnailActive(signal);
+      try {
+        const result = await execFileAsync("ffmpeg", buildArgs(seek), {
+          signal,
+          timeout: this.ffmpegTimeoutMs,
+          maxBuffer: this.ffmpegMaxOutputBytes,
+        });
+        const frame = result.stdout as unknown as Buffer;
+        if (!frame.length || frame.length > this.ffmpegMaxOutputBytes) {
+          throw new BadRequestException("Video frame output exceeds limit");
+        }
+        return frame;
+      } catch (error) {
+        lastError = error;
+        const ffmpegError = error as { killed?: boolean; signal?: string; code?: string };
+        if (ffmpegError?.killed || ffmpegError?.signal === "SIGABRT") {
+          throw error;
+        }
+        if (seek === "0") {
+          throw new BadRequestException("Failed to extract video frame");
+        }
+        // First attempt failed (not abort): retry with -ss 0 for short videos.
+      }
+    }
+
+    throw lastError ? new BadRequestException("Failed to extract video frame") : new BadRequestException("Failed to extract video frame");
+  }
+
   async getPreview(
     userId: number,
     fileId: number,
@@ -530,12 +610,53 @@ export class PreviewsService {
             mimeType === "application/xml";
 
           const isImage = mimeType.startsWith("image/");
+          const isVideo = this.videoMimeAllowlist.includes(mimeType);
 
-          if (!isText && !isImage) {
+          if (!isText && !isImage && !isVideo) {
             return {
               type: "unsupported",
               content: "Preview not available for this file type.",
               mimeType: "text/plain",
+            };
+          }
+
+          if (isVideo) {
+            // Validate video container magic bytes before invoking ffmpeg.
+            const headerData = Buffer.alloc(16);
+            const fd = this.storageService.openReadOnlyFileSecure(filePath);
+            let headerRead = 0;
+            try {
+              headerRead = await new Promise<number>((resolve, reject) => {
+                fs.read(
+                  fd,
+                  headerData,
+                  0,
+                  16,
+                  0,
+                  (error, count) => {
+                    if (error) reject(error);
+                    else resolve(count);
+                  },
+                );
+              });
+            } finally {
+              fs.closeSync(fd);
+            }
+            if (
+              headerRead < 4 ||
+              !this.matchesVideoContainer(headerData, mimeType)
+            ) {
+              throw new BadRequestException("Video container mismatch");
+            }
+
+            const frame = await this.generateVideoPreview(
+              filePath,
+              deadline.signal,
+            );
+            return {
+              type: "video",
+              content: frame,
+              mimeType: "image/png",
             };
           }
 

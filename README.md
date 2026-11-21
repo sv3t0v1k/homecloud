@@ -314,7 +314,14 @@ HomeCloud/
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
 | GET | `/api/v1/previews/:id/thumbnail` | Миниатюра изображения (PNG) |
-| GET | `/api/v1/previews/:id` | Превью файла |
+| GET | `/api/v1/previews/:id` | Превью файла: текст, изображение, один кадр видео (PNG) |
+
+Поддерживаемые форматы превью:
+- Изображения: `image/jpeg`, `image/png`, `image/webp` (миниатюра 300×300 через sharp)
+- Текст: `text/*`, `application/json`, `application/javascript`, `application/xml` (содержимое до 5 MiB)
+- Видео: `video/mp4`, `video/webm`, `video/quicktime` (один PNG-кадр через ffmpeg, до 5 MiB, требует `ffmpeg` в образе backend)
+
+Видео > 5 MiB и неподдерживаемые MIME возвращают `type: "unsupported"`.
 
 ### Health
 

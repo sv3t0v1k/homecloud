@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from '../api/client'
 import type { FileItem } from '../types/files'
 import { PreviewModal } from './PreviewModal'
-import { getFilePreview, previewImageBlob } from './preview'
+import { getFilePreview, previewImageBlob, previewVideoBlob } from './preview'
 
 describe('file preview API', () => {
   beforeEach(() => {
@@ -36,6 +36,15 @@ describe('file preview API', () => {
 
     expect(blob.type).toBe('image/png')
     expect(blob.size).toBe(3)
+  })
+
+  it('converts the backend Buffer JSON shape for video preview', async () => {
+    const blob = previewVideoBlob({
+      type: 'video', mimeType: 'image/png', content: { type: 'Buffer', data: [137, 80, 78, 71] },
+    })
+
+    expect(blob.type).toBe('image/png')
+    expect(blob.size).toBe(4)
   })
 })
 
@@ -131,6 +140,20 @@ describe('PreviewModal', () => {
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(image).not.toHaveAttribute('data-image-pending')
+
+    view.unmount()
+    expect(revokeObjectURL).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview')
+  })
+
+  it('creates one video object URL and renders img for video preview', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, {
+      type: 'video', content: { type: 'Buffer', data: [137, 80, 78, 71] }, mimeType: 'image/png',
+    })
+    const view = render(<PreviewModal file={file(42, 'clip.mp4', 'video/mp4')} onClose={() => undefined} />)
+
+    expect(await screen.findByRole('img', { name: 'Предпросмотр: clip.mp4' })).toHaveAttribute('src', 'blob:preview')
+    expect(createObjectURL).toHaveBeenCalledOnce()
 
     view.unmount()
     expect(revokeObjectURL).toHaveBeenCalledOnce()
