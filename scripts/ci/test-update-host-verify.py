@@ -100,13 +100,25 @@ class Tests(unittest.TestCase):
     def test_added_target_helper_module_requires_qualification(self):
         original=self.source.git
         def changed(*args):
-            if args[0]=='rev-parse' and args[-1].endswith(':deploy'):
+            if args[0]=='diff-tree' and '--' in args and 'deploy' in args:
                 changed.calls+=1
-                return b'first' if changed.calls==1 else b'second'
+                return b'deploy/linux/root-boundary.py\x00' if changed.calls==1 else bytes([0])
             return original(*args)
         changed.calls=0
-        with patch.object(self.source,'git',side_effect=changed), self.assertRaisesRegex(ValueError,'helper tree changed'):
+        with patch.object(self.source,'git',side_effect=changed), self.assertRaisesRegex(ValueError,'deploy changes outside qualified set'):
             self.check()
+
+    def test_deploy_only_changes_are_qualified(self):
+        original=self.source.git
+        def changed(*args):
+            if args[0]=='diff-tree' and '--' in args and 'deploy' in args:
+                return b'deploy/ingress/default.conf.template\x00'
+            return original(*args)
+        with patch.object(self.source,'git',side_effect=changed):
+            self.assertEqual(
+                self.check()['status'],
+                'HOST_VERIFIED_READ_ONLY'
+            )
 
 
     def test_ci_only_script_changes_and_helpers(self):
@@ -122,6 +134,8 @@ class Tests(unittest.TestCase):
         ):
             def fake_git(*args):
                 if args[0] == 'diff-tree':
+                    if any('deploy' in str(a) for a in args):
+                        return bytes([0])  # no deploy changes in these tests
                     return path.encode() + bytes([0])
                 return original(*args)
 
@@ -147,6 +161,8 @@ class Tests(unittest.TestCase):
 
         def fake_git(*args):
             if args[0] == 'diff-tree':
+                if any('deploy' in str(a) for a in args):
+                    return bytes([0])  # no deploy changes in this test
                 return path.encode() + bytes([0])
             return original_git(*args)
 
