@@ -132,11 +132,19 @@ def target_sources(manifest, contract, source):
     deploy_changed = {
         path.decode('utf-8')
         for path in deploy_diff.split(bytes([0])) if path
+        if path.decode('utf-8').startswith('deploy/')
     }
-    require(
-        deploy_changed <= DEPLOY_ONLY_CHANGES,
-        'deploy changes outside qualified set; separate qualification required'
-    )
+    if deploy_changed:
+        require(
+            deploy_changed <= DEPLOY_ONLY_CHANGES,
+            'deploy changes outside qualified set; separate qualification required'
+        )
+    else:
+        require(
+            source.git('rev-parse', current + ':deploy') ==
+            source.git('rev-parse', manifest['commit'] + ':deploy'),
+            'root helper tree changed; separate qualification required'
+        )
     diff = source.git(
         'diff-tree', '-r', '-z', '--no-renames', '--name-only',
         current, manifest['commit'], '--', 'scripts'
