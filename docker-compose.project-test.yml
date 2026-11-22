@@ -47,9 +47,11 @@ services:
       # Файл создаётся оператором только после сверки работающего SHA и миграций.
       # /storage уже является собственным bind mount тестового проекта.
       UPDATE_INSTALLED_METADATA_PATH: /storage/.homecloud-installed-version.json
-      # Малые initial tests: 256 MiB/file, 2 GiB total. Один upload за раз.
-      MAX_FILE_SIZE: "268435456"
-      MAX_TOTAL_SIZE: "2147483648"
+      # Большие файлы: 100 GiB/file, 100 GiB total. Один upload за раз.
+      # Физическая ёмкость HDD-bind sdc сейчас ~90 GiB свободно: честный
+      # тест 100 GiB требует расширения диска в Proxmox (growpart+resize2fs).
+      MAX_FILE_SIZE: "107374182400"
+      MAX_TOTAL_SIZE: "107374182400"
     volumes: !override
       - type: bind
         source: ${HDD_STORAGE_DIR:?Укажите project HDD bind storage}
