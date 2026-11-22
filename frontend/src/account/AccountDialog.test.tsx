@@ -48,11 +48,11 @@ describe('AccountDialog', () => {
     expect(screen.queryByRole('button', { name: 'Пользователи' })).not.toBeInTheDocument()
     expect(getAdminUsers).not.toHaveBeenCalled()
   })
-  it('shows persisted name and email with a generic icon and no unsupported photo editor', async () => {
-    render(<AccountDialog onClose={vi.fn()} />)
+  it('shows persisted name and email with initials avatar and no unsupported photo editor', async () => {
+    const { container } = render(<AccountDialog onClose={vi.fn()} />)
     expect(screen.getByText('Алексей')).toBeInTheDocument()
     expect(screen.getByText('alex@example.invalid')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Общий значок пользователя' })).toBeInTheDocument()
+    expect(container.querySelector('.account-identity .initials-avatar')).toHaveTextContent('А')
     expect(screen.queryByLabelText(/Аватар/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /фото|аватар/i })).not.toBeInTheDocument()
     await selectSettingsSection('Безопасность')

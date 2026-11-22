@@ -1,4 +1,5 @@
 import { Icon } from '../ui/Icon'
+import { InitialsAvatar } from '../ui/InitialsAvatar'
 import { LiquidCloseButton } from '../ui/LiquidCloseButton'
 import { formatBytes, storagePercent } from '../ui/formatBytes'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
@@ -153,7 +154,7 @@ export function AccountDialog({ onClose }: { onClose(): void }) {
         {activeSection === 'profile' ? (
         <section aria-labelledby="account-profile-title" className="account-section">
           <h3 id="account-profile-title">Профиль</h3>
-          <div className="account-identity"><span className="avatar" role="img" aria-label="Общий значок пользователя"><Icon name="user" /></span><div><strong>{session.user?.name || session.user?.email}</strong><p className="muted">{session.user?.email}</p></div></div>
+          <div className="account-identity"><InitialsAvatar name={session.user?.name || session.user?.email || ''} size={48} /><div><strong>{session.user?.name || session.user?.email}</strong><p className="muted">{session.user?.email}</p></div></div>
           <form onSubmit={(event) => void save(event, false)}><label className="field">Имя<input autoComplete="name" className="input" disabled={busy} maxLength={100} onChange={(event) => setName(event.target.value)} required value={name} /></label><p className="account-hint">Email используется для входа. Его изменение и загрузка фото пока недоступны.</p><button className="button button--primary" disabled={busy} type="submit">Сохранить профиль</button></form>
         </section>
         ) : null}

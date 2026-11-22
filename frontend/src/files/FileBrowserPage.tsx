@@ -312,14 +312,18 @@ async function loadAncestors(folderId: number, signal: AbortSignal): Promise<Cru
 }
 
 function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
+  // Middle crumbs collapse into an ellipsis on narrow screens.
+  const collapsible = crumbs.length > 2
   return (
-    <nav aria-label="Путь к папке" className="breadcrumbs">
+    <nav aria-label="Путь к папке" className={`breadcrumbs${collapsible ? ' breadcrumbs--collapsible' : ''}`}>
       <ol className="breadcrumb-list">
         <li>{crumbs.length === 0 ? <span aria-current="page">Мои файлы</span> : <Link className="text-link" to="/files">Мои файлы</Link>}</li>
+        {collapsible ? <li aria-hidden="true" className="breadcrumb-ellipsis">…</li> : null}
         {crumbs.map((crumb, index) => {
           const current = index === crumbs.length - 1
+          const middle = collapsible && index < crumbs.length - 1
           return (
-            <li className="breadcrumb-item" key={crumb.id}>
+            <li className={`breadcrumb-item${middle ? ' breadcrumb-item--middle' : ''}`} key={crumb.id}>
               <span aria-hidden="true">/</span>
               {current ? <span aria-current="page">{crumb.name}</span> : (
                 <Link className="text-link" state={{ crumbs: crumbs.slice(0, index + 1) }} to={`/files/folders/${crumb.id}`}>{crumb.name}</Link>

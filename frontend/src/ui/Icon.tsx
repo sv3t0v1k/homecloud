@@ -27,6 +27,16 @@ import {
   Move,
   Grid,
   List,
+  AlertTriangle,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Undo2,
+  ZoomIn,
+  ZoomOut,
+  QrCode,
+  Keyboard,
+  RotateCw,
 } from 'lucide-react'
 
 type IconName =
@@ -57,6 +67,16 @@ type IconName =
   | 'move'
   | 'grid'
   | 'list'
+  | 'warning'
+  | 'sort'
+  | 'sort-asc'
+  | 'sort-desc'
+  | 'undo'
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'qr'
+  | 'keyboard'
+  | 'refresh'
 
 const iconMap: Record<IconName, React.ComponentType<SVGProps<SVGSVGElement>>> = {
   search: Search,
@@ -86,6 +106,16 @@ const iconMap: Record<IconName, React.ComponentType<SVGProps<SVGSVGElement>>> = 
   move: Move,
   grid: Grid,
   list: List,
+  warning: AlertTriangle,
+  sort: ArrowUpDown,
+  'sort-asc': ArrowUp,
+  'sort-desc': ArrowDown,
+  undo: Undo2,
+  'zoom-in': ZoomIn,
+  'zoom-out': ZoomOut,
+  qr: QrCode,
+  keyboard: Keyboard,
+  refresh: RotateCw,
 }
 
 export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {

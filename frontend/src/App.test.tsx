@@ -307,6 +307,16 @@ describe('authentication UX', () => {
   })
 })
 
+describe('not found page', () => {
+  it('renders a styled 404 with a link back to files', () => {
+    renderApp('/definitely-not-a-route')
+    expect(screen.getByRole('heading', { name: 'Страница не найдена' })).toBeInTheDocument()
+    expect(screen.getByText(/Такого адреса в HomeCloud нет/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'К моим файлам' })).toHaveAttribute('href', '/files')
+    expect(document.querySelector('.not-found-page .empty-state svg')).toBeInTheDocument()
+  })
+})
+
 function renderApp(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
