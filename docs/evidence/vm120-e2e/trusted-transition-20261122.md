@@ -87,6 +87,30 @@ UI-путь не использовался нарочно (операторск
 - Discovery timer `enabled/active`, `AUTO_UPDATE=false`.
 - Бэкап перехода: `/root/anchor-backup-20261122T114906Z/`.
 
+## Дополнение: полный UI-цикл на свежем кандидате (23:15–23:32 VLAT)
+
+После влития evidence (PR #79, squash `6235418e`) discovery опубликовал нового
+кандидата `test-6235418` (`sourceGitSha=c153ef2 == installed`). Штатный
+пользовательский путь подтверждён end-to-end через тот же API-контур, что использует UI:
+
+1. Вход администратора → `GET /updates`: установлен `c153ef2`, доступен
+   `test-6235418`, статус `available` — кнопка «Установить» активна.
+2. `POST /updates/installations` с `manifestSha256=ee25078c…` → `QUEUED`
+   (backend записал заявку в inbox в формате `homecloud-update-request-v1`).
+3. Оператор открыл окно (`systemctl enable --now homecloud-update-admission.path`);
+   admission принял заявку, установщик прошёл фазы VERIFY_TRUST → FETCH_MANIFEST →
+   VERIFY_IMAGES → BACKUP → START_SERVICES → SMOKE → COMMIT_STATE → COMPLETE.
+   Квитанция: `status/archive/ee25078c….json` — INSTALLED (13:28:36 UTC).
+4. Окно закрыто (`disable --now`), inbox пуст.
+5. Пост-проверки: `installed.json = 6235418` (35 миграций), 4 контейнера healthy,
+   HTTPS 200; `GET /updates` → статус `current`, `available: null`;
+   `installations/current` → `NO_JOB`; discovery: кандидат «current»
+   (`commit == sourceGitSha == 6235418`).
+
+Замечание по эксплуатации: `homecloud-update-admission.path` на стенде по умолчанию
+выключен (`AUTO_UPDATE=false`), поэтому заявка из UI ожидает открытия операторского
+окна — это штатная, а не ошибочная задержка.
+
 ## Точки отката
 
 - До установки: якоря из `/root/anchor-backup-20261122T114906Z/` +
