@@ -1,5 +1,7 @@
 # HomeCloud — единый roadmap
 
+**TEST Channel — актуальное состояние VM 120 на 2026-11-22:** установлен `6235418e83ecd42d46ea431cae1c7455808939cf` (иконки действий пользователей, PR #78 + discovery-фикс `sourceGitSha` из `installed.json` + evidence, PR #79). Trusted-переход якоря `homecloud-update-discover` на `c153ef2` выполнен с квалификационными проверками; полный UI-цикл «доступно обновление → установить → current» подтверждён на кандидате `test-6235418`. 35 миграций, 4 контейнера healthy, HTTPS 200, discovery timer `enabled/active`, установка только по нажатию администратора при открытом операторском окне, `AUTO_UPDATE=false`. [Evidence перехода и UI-цикла](./evidence/vm120-e2e/trusted-transition-20261122.md). **Production RELEASE — NO_GO.**
+
 **TEST Channel v1 и периодическое TEST Discovery — Operational E2E PASS на VM 120 (2026-11-06).** На VM установлена J `76474223ebd7a2fc0dab418a2778dcdd42ab18bc`; защищённый `test` содержит обнаруженную K `8dbcc4088f9545863ed78d31c4446964ba534a93`. Установка I → J из административного UI, backup, restore и version rollback проверены на TEST; четыре контейнера healthy, 30 миграций, HTTPS, авторизация и файлы подтверждены. Discovery timer `enabled/active`, обнаружение автоматическое, установка только по нажатию администратора, `AUTO_UPDATE=false`. [TEST Channel checkpoint](./evidence/test-channel-v1-operational-20261106.md), [discovery evidence из PR #34](./evidence/vm120-e2e/test-discovery-2026-11-06.md), [PR #34](https://github.com/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/pull/34). **Production RELEASE — NO_GO.**
 
 **Исторический test checkpoint на 2026-10-30:** установлен backend `0387feda2496adc3c0e97d2653c7de6bc055a9d7` и frontend `52ddb5dac277a11ec783b4ca9bdeb89e992c4487`. Browser Acceptance QA, включая UX v2, ZIP и Public Sharing, принята в проверенном тестовом объёме; backup/isolated restore, метаданные установленной версии, 30 миграций и health 4/4 — PASS. QA-данные перемещены в корзину, evidence сохранены. [Границы и доказательства](#test-deployment-and-browser-acceptance-2026-10-30). Production — **NO_GO**, Multi-Storage — **DEFERRED**.
@@ -627,6 +629,18 @@ Evidence: focused 64/64 PASS; full backend 609 PASS / 15 SKIPPED (51 suites PASS
 Эти направления остаются будущей работой без новых номеров Phase; завершённые backend hardening и frontend здесь не дублируются:
 
 - **Production readiness — INCOMPLETE:** production offsite/operator qualification, final recovery/production deployment acceptance и public CA/domain qualification; TLS/proxy baseline см. checkpoint выше; incremental strategy — отдельное решение. Architecture & Release Gate см. checkpoint выше.
+
+### Internal Sharing (user-to-user) — идея backlog (2026-11-22)
+
+Статус: `IDEA / BACKLOG`, решение о старте не принималось. Публичный шаринг не затрагивается и продолжает работать как есть.
+
+Суть: приватное расшаривание файлов/папок между пользователями сервиса (не публичные ссылки) + чекбокс при удалении аккаунта «удалять файлы или нет»: при выборе «нет» поделённые файлы физически остаются на диске и доступ получателям сохраняется, при выборе «удалить» удаляется всё, включая доступ.
+
+Предварительная резолюция (не план работ):
+- отдельная сущность грантов (`ownerId`, `recipientId`, `fileId`, `permission`) и отдельный API-контур «Доступно мне»; существующие `userId`-скопленные запросы `FilesService` и публичный capability-механизм не меняются;
+- передача владения при «сохранить» без физического перемещения: переписывается `userId` записей, `storagePath` остаётся валидным; физическая чистка журнала `UserDeletionEntity` идёт только по неподелённым файлам;
+- публичные ссылки при удалении владельца по-прежнему отзываются (`owner.isActive`-проверка сохраняется);
+- открытые решения до старта: политика при нескольких получателях одного объекта, расположение чекбокса (админское удаление vs самоудаление), участие расшаренного в глобальном поиске и квотах получателя.
 
 Ни одно planned-направление не разрешено начинать автоматически.
 
