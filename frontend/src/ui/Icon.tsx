@@ -90,5 +90,5 @@ const iconMap: Record<IconName, React.ComponentType<SVGProps<SVGSVGElement>>> = 
 
 export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGElement>) {
   const Component = iconMap[name]
-  return <Component aria-hidden="true" {...props} strokeWidth={1.7} width={20} height={20} />
+  return <Component aria-hidden="true" strokeWidth={1.7} width={20} height={20} {...props} />
 }
