@@ -1057,6 +1057,69 @@ describe('FileBrowserPage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('sorts rows by a clicked column and reverses on a second click', async () => {
+    sessionStorage.clear()
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders'
+      ? []
+      : [file(11, 'big.txt', '2048'), file(12, 'small.txt', '10'), file(13, 'mid.txt', '512')])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'big.txt' })
+
+    const rows = () => Array.from(document.querySelectorAll('.directory-row .file-name'))
+      .map((button) => button.textContent)
+
+    expect(rows()).toEqual(['big.txt', 'mid.txt', 'small.txt'])
+
+    const sizeHeader = screen.getByRole('button', { name: 'Сортировать: Размер' })
+    await user.click(sizeHeader)
+    expect(rows()).toEqual(['small.txt', 'mid.txt', 'big.txt'])
+    expect(sizeHeader.closest('th')).toHaveAttribute('aria-sort', 'ascending')
+
+    await user.click(screen.getByRole('button', { name: 'Сортировать: Размер' }))
+    expect(rows()).toEqual(['big.txt', 'mid.txt', 'small.txt'])
+    expect(screen.getByRole('button', { name: 'Сортировать: Размер' }).closest('th')).toHaveAttribute('aria-sort', 'descending')
+
+    expect(JSON.parse(sessionStorage.getItem('homecloud.directorySort') ?? '{}')).toEqual({ key: 'size', direction: 'desc' })
+  })
+
+  it('filters rows by name and restores them on clear', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders'
+      ? [folder(7, 'Архив', null)]
+      : [file(11, 'report.txt', '10'), file(12, 'photo.png', '20')])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'report.txt' })
+
+    const filter = screen.getByRole('searchbox', { name: 'Фильтр по имени в этой папке' })
+    await user.type(filter, 'реп')
+    expect(screen.queryByRole('button', { name: 'report.txt' })).not.toBeInTheDocument()
+    await user.clear(filter)
+    await user.type(filter, 'rep')
+    expect(screen.getByRole('button', { name: 'report.txt' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'photo.png' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Архив' })).not.toBeInTheDocument()
+    expect(screen.getByText(/По фильтру: 1/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Очистить фильтр' }))
+    expect(screen.getByRole('button', { name: 'photo.png' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Архив' })).toBeInTheDocument()
+  })
+
+  it('shows a dedicated state when the filter matches nothing', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'report.txt', '10')])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'report.txt' })
+
+    await user.type(screen.getByRole('searchbox', { name: 'Фильтр по имени в этой папке' }), 'zzz')
+    expect(screen.getByText('По фильтру ничего не найдено')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'report.txt' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Сбросить фильтр' }))
+    expect(screen.getByRole('button', { name: 'report.txt' })).toBeInTheDocument()
+  })
+
 })
 
 async function chooseAction(user: ReturnType<typeof userEvent.setup>, name: string, action: string) {

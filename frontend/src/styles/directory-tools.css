@@ -1,0 +1,74 @@
+/* U2: сортировка колонок и локальный фильтр в текущей папке. */
+
+.directory-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.directory-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-muted);
+}
+
+.directory-filter:focus-within {
+  border-color: var(--border-focus);
+}
+
+.directory-filter-input {
+  width: clamp(140px, 22vw, 260px);
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.directory-filter-input:focus { outline: none; }
+.directory-filter-input::placeholder { color: var(--text-muted); }
+
+/* Keep the native clear button of type=search from doubling ours */
+.directory-filter-input::-webkit-search-cancel-button { display: none; }
+
+.directory-filter-clear {
+  width: 32px;
+  min-height: 32px;
+  color: var(--text-muted);
+}
+
+.column-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 36px;
+  padding: var(--space-1) var(--space-2);
+  margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-2));
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.column-sort svg { width: 14px; height: 14px; opacity: 0; transition: opacity var(--motion-fast); }
+.column-sort:hover svg, .column-sort:focus-visible svg { opacity: 0.7; }
+.column-sort.is-active { color: var(--accent); }
+.column-sort.is-active svg { opacity: 1; }
+.column-sort:hover { color: var(--text-primary); }
+.column-sort.is-active:hover { color: var(--accent-hover); }
+
+@media (max-width: 700px) {
+  .directory-filter { flex: 1 1 100%; order: 2; }
+  .directory-filter-input { width: 100%; flex: 1; }
+}

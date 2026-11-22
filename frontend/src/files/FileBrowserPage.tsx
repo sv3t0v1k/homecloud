@@ -1,5 +1,5 @@
 import { formatBytes } from '../ui/formatBytes'
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { Icon } from '../ui/Icon'
 import { LiquidCloseButton } from '../ui/LiquidCloseButton'
@@ -23,6 +23,17 @@ import { PreviewModal } from './PreviewModal'
 import { FileThumbnail } from './FileThumbnail'
 import { safeOperationError } from './operationErrors'
 import { locatedTarget, searchReturn } from './searchNavigation'
+import {
+  fileTypeLabel,
+  filterByName,
+  readSavedSort,
+  saveSort,
+  sortFiles,
+  sortFolders,
+  toggleSort,
+  type DirectorySort,
+  type SortKey,
+} from './directorySort'
 
 interface Crumb { id: number; name: string }
 
@@ -338,6 +349,23 @@ function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
 
 type ItemAction = { kind: 'file' | 'folder'; item: FileItem | FolderItem; action: 'rename' | 'move' | 'copy' | 'trash' }
 
+function SortableTh({ column, label, sort, onSort }: { column: SortKey; label: string; sort: DirectorySort; onSort(key: SortKey): void }) {
+  const active = sort.key === column
+  return (
+    <th aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined} scope="col">
+      <button
+        aria-label={`Сортировать: ${label}`}
+        className={`column-sort${active ? ' is-active' : ''}`}
+        onClick={() => onSort(column)}
+        type="button"
+      >
+        <span>{label}</span>
+        <Icon name={active ? (sort.direction === 'asc' ? 'sort-asc' : 'sort-desc') : 'sort'} />
+      </button>
+    </th>
+  )
+}
+
 function DirectoryTable({
   contents, currentFolderId, onChanged, onOpenFolder,
   locatedKey, motionHistory, motionPath,
@@ -596,8 +624,24 @@ function DirectoryTable({
       'click', clearSelectionOnBackground, true,
     )
   }, [selection.size])
-  const folders = contents.folders
-  const files = contents.files
+  const [sort, setSort] = useState<DirectorySort>(() => readSavedSort(typeof sessionStorage === 'undefined' ? undefined : sessionStorage))
+  const [filter, setFilter] = useState('')
+  function changeSort(key: SortKey) {
+    setSort((current) => {
+      const next = toggleSort(current, key)
+      saveSort(next, typeof sessionStorage === 'undefined' ? undefined : sessionStorage)
+      return next
+    })
+  }
+  const folders = useMemo(
+    () => sortFolders(filterByName(contents.folders, filter), sort),
+    [contents.folders, filter, sort],
+  )
+  const files = useMemo(
+    () => sortFiles(filterByName(contents.files, filter), sort),
+    [contents.files, filter, sort],
+  )
+  const filtering = filter.trim().length > 0
   const visibleKeys = [...folders.map((item) => `folder:${item.id}`), ...files.map((item) => `file:${item.id}`)]
   function select(key: string, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }, toggle = false) {
     setSelection((previous) => {
@@ -682,10 +726,11 @@ function DirectoryTable({
   }
 
   const empty = folders.length === 0 && files.length === 0
+  const trulyEmpty = contents.folders.length === 0 && contents.files.length === 0
   return (
     <div ref={directoryRef}>
       <div className="directory-controls">
-        <div className="directory-toolbar"><p className="muted">Папок: {contents.folders.length} · Файлов: {contents.files.length}</p><div className="view-switch" aria-label="Вид файлов"><button aria-label="Список" aria-pressed={view === 'list'} className={view === 'list' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('list')} type="button"><Icon name="list" /></button><button aria-label="Плитка" aria-pressed={view === 'grid'} className={view === 'grid' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('grid')} type="button"><Icon name="grid" /></button></div></div>
+        <div className="directory-toolbar"><p className="muted">Папок: {contents.folders.length} · Файлов: {contents.files.length}{filtering ? ` · По фильтру: ${folders.length + files.length}` : ''}</p><div className="directory-tools"><label className="directory-filter"><Icon name="search" /><input aria-label="Фильтр по имени в этой папке" className="directory-filter-input" onChange={(event) => setFilter(event.target.value)} placeholder="Фильтр по имени" type="search" value={filter} />{filtering ? <button aria-label="Очистить фильтр" className="icon-button directory-filter-clear" onClick={() => setFilter('')} type="button"><Icon name="close" /></button> : null}</label><div className="view-switch" aria-label="Вид файлов"><button aria-label="Список" aria-pressed={view === 'list'} className={view === 'list' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('list')} type="button"><Icon name="list" /></button><button aria-label="Плитка" aria-pressed={view === 'grid'} className={view === 'grid' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('grid')} type="button"><Icon name="grid" /></button></div></div></div>
       </div>
       {selection.size ? <><div
         className="selection-toolbar liquid-selection-dock"
@@ -800,7 +845,9 @@ function DirectoryTable({
       </div>{archiveError ? <p className="inline-alert" role="alert">{archiveError}</p> : null}{archiveHandedOff ? <p className="muted" role="status">ZIP передан браузеру. Состояние смотрите в его загрузках.</p> : null}</> : null}
       {bulkOpen ? <SmallDialog title="Переместить выбранное в корзину?" onClose={() => { if (!pending) setBulkOpen(false) }}><p>Объектов: {selection.size}. Их можно будет восстановить.</p>{bulkError ? <p role="alert">{bulkError}</p> : null}<div className="dialog-actions"><button className="button button--ghost" disabled={pending} onClick={() => setBulkOpen(false)} type="button">Отмена</button><button className="button button--danger" disabled={pending} onClick={() => void trashSelection()} type="button">{pending ? 'Выполняется…' : 'Переместить выбранное'}</button></div></SmallDialog> : null}
       {fileHandedOff ? <p className="muted" role="status">Скачивание передано браузеру. Состояние смотрите в его загрузках.</p> : null}
-      {empty ? <div className="empty-state"><Icon name="folder" /><h3>В этой папке пока пусто</h3><p>Перетащите файлы сюда или воспользуйтесь кнопкой «Добавить».</p></div> : (
+      {trulyEmpty ? <div className="empty-state"><Icon name="folder" /><h3>В этой папке пока пусто</h3><p>Перетащите файлы сюда или воспользуйтесь кнопкой «Добавить».</p></div> : empty ? (
+        <div className="empty-state" role="status"><Icon name="search" /><h3>По фильтру ничего не найдено</h3><p>В этой папке нет имён, содержащих «{filter.trim()}».</p><button className="text-link" onClick={() => setFilter('')} type="button">Сбросить фильтр</button></div>
+      ) : (
         <table
           className={view === 'grid' ? 'directory-list directory-grid' : 'directory-list'}
           data-view-motion={viewMotion ?? undefined}
@@ -808,7 +855,13 @@ function DirectoryTable({
           onFocusCapture={() => setViewMotion(null)}
         >
           <caption className="sr-only">Файлы и папки в текущем расположении</caption>
-          <thead className="directory-header"><tr><th scope="col">Название</th><th scope="col">Тип</th><th scope="col">Размер</th><th scope="col">Изменено</th><th scope="col"><span className="sr-only">Действия</span></th></tr></thead>
+          <thead className="directory-header"><tr>
+            <SortableTh column="name" label="Название" onSort={changeSort} sort={sort} />
+            <SortableTh column="type" label="Тип" onSort={changeSort} sort={sort} />
+            <SortableTh column="size" label="Размер" onSort={changeSort} sort={sort} />
+            <SortableTh column="updatedAt" label="Изменено" onSort={changeSort} sort={sort} />
+            <th scope="col"><span className="sr-only">Действия</span></th>
+          </tr></thead>
           <tbody>
             {folders.map((folder) => <tr data-object-key={`folder:${folder.id}`} className={`directory-row${selection.has(`folder:${folder.id}`) ? ' is-selected' : ''}${locatedKey === `folder:${folder.id}` ? ' is-located' : ''}`} key={`folder-${folder.id}`} onContextMenu={(event) => contextMenu(event, `folder:${folder.id}`)} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) select(`folder:${folder.id}`, event) }}>
               <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${folder.name}`} type="checkbox" checked={selection.has(`folder:${folder.id}`)} onChange={() => {}} onClick={(event) => select(`folder:${folder.id}`, event, true)} /></label><span className="file-icon file-icon-folder"><Icon name="folder" /></span><button className="file-name" onDoubleClick={() => onOpenFolder(folder)} onKeyDown={(event) => { if (event.key === "Enter") onOpenFolder(folder) }} type="button">{folder.name}</button></td>
@@ -857,7 +910,7 @@ function FileRow({ disabled, file, onAction, onDownloadStarted, onDownloadHanded
   const fileType = file.mimeType?.startsWith('image/') ? 'image' : file.mimeType?.startsWith('text/') ? 'text' : 'file'
   return <tr data-object-key={`file:${file.id}`} className={`directory-row${selected ? ' is-selected' : ''}`} onContextMenu={onContextMenu} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) onSelect(event) }}>
     <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${file.name}`} type="checkbox" checked={selected} onChange={() => {}} onClick={(event) => onSelect(event, true)} /></label>{['image/jpeg', 'image/png', 'image/webp'].includes(file.mimeType ?? '') ? <FileThumbnail key={`${file.id}:${file.updatedAt}`} fileId={file.id} /> : <span className={`file-icon file-icon-${fileType}`}><Icon name={fileType} /></span>}<button className="file-name" onDoubleClick={(event) => { event.currentTarget.focus(); setShowPreview(true) }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); setShowPreview(true) } }} title={file.name} type="button">{file.name}</button></td>
-    <td className="file-meta"><span className="mobile-label">Тип: </span>{fileType === 'image' ? 'Изображение' : fileType === 'text' ? 'Текстовый документ' : file.mimeType === 'application/pdf' ? 'Документ PDF' : 'Файл'}</td>
+    <td className="file-meta"><span className="mobile-label">Тип: </span>{fileTypeLabel(file.mimeType)}</td>
     <td className="file-meta"><span className="mobile-label">Размер: </span>{formatBytes(file.size)}</td>
     <td className="file-meta"><span className="mobile-label">Изменено: </span>{formatDate(file.updatedAt)}</td>
     <td className="file-actions"><ActionMenu label={`Действия: ${file.name}`} disabled={disabled} items={[
