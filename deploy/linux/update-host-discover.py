@@ -16,6 +16,7 @@ ANCHOR = Path('/usr/local/sbin/homecloud-update-discover')
 VERIFIER = Path('/usr/local/sbin/homecloud-update-verify')
 STATUS_DIR = Path('/var/lib/homecloud-update/status')
 CANDIDATE = STATUS_DIR / 'available.json'
+INSTALLED = STATUS_DIR / 'installed.json'
 FORMAT = 'homecloud-host-test-candidate-v1'
 SHA = re.compile(r'[a-f0-9]{40}\Z')
 HASH = re.compile(r'[a-f0-9]{64}\Z')
@@ -79,6 +80,26 @@ def read_cache(path=CANDIDATE):
                 ('runId', 'attempt', 'artifactId')),
             'invalid discovery run identity')
     return value
+
+
+def read_installed_git_sha():
+    """Read the git SHA of the currently installed TEST build."""
+    try:
+        fd = os.open(INSTALLED, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and
+                info.st_gid == GID and stat.S_IMODE(info.st_mode) == 0o640 and
+                info.st_nlink == 1 and 0 < info.st_size <= 4096, 'unsafe installed metadata')
+        value = json.loads(os.read(fd, 4097))
+    finally:
+        os.close(fd)
+    require(type(value) is dict and value.get('format') ==
+            'homecloud-installed-test-v1' and type(value.get('gitSha')) is str and
+            SHA.fullmatch(value['gitSha']), 'invalid installed metadata')
+    return value['gitSha']
 
 
 def publish(value, path=CANDIDATE):
@@ -215,6 +236,8 @@ def main():
     STATUS_READY = True
     source = anchor['GitSource'](ROOT, boundary.clean_environment())
     current = source.head().decode('ascii')
+    installed_git_sha = read_installed_git_sha()
+    require(installed_git_sha is not None, 'installed TEST metadata unavailable')
     client = modules['update_source'].GitHubClient(os.environ.get('GH_TOKEN', ''))
     branch, head = protected_head(client, modules['update_source'])
     # Host-only Git fetch makes the protected target object available to the
@@ -222,7 +245,7 @@ def main():
     fetch_protected_target(source, current, head)
     now = int(time.time())
     cached = read_cache()
-    if (cached and cached['commit'] == head and cached['sourceGitSha'] == current and
+    if (cached and cached['commit'] == head and cached['sourceGitSha'] == installed_git_sha and
             0 <= now - cached['verifiedAt'] < 43200):
         recheck_cache(cached, modules, client, head)
         _, final_head = protected_head(client, modules['update_source'])
@@ -249,7 +272,7 @@ def main():
     require(current == head or source.git('merge-base', '--is-ancestor', current, head) == b'',
             'target is not descendant of installed source')
     value = dict(format=FORMAT, checkedAt=now, verifiedAt=now,
-                 sourceGitSha=current, commit=head,
+                 sourceGitSha=installed_git_sha, commit=head,
                  manifestSha256=manifest['manifest_sha256'],
                  backendDigest=manifest['images']['backend']['digest'],
                  frontendDigest=manifest['images']['frontend']['digest'],

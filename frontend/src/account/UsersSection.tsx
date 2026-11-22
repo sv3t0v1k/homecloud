@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { ApiError } from '../api/errors'
 import { formatBytes } from '../ui/formatBytes'
+import { Icon } from '../ui/Icon'
 import {
   changeAdminUserPassword,
   changeAdminUserStatus,
@@ -279,10 +280,10 @@ export function UsersSection({ currentUserId, onCurrentUserSessionRevoked, onCur
             <td>{user.folderCount.toLocaleString('ru-RU')}</td>
             <td><time dateTime={user.createdAt}>{formatDate(user.createdAt)}</time></td>
             <td><div className="admin-user-actions">
-              <button className="button button--ghost" disabled={busy} onClick={() => openEditor({ kind: 'edit', user, name: user.name, email: user.email, role: user.role, quota: user.storageQuota })} type="button">Изменить {user.name}</button>
-              <button className="button button--ghost" disabled={busy} onClick={() => openEditor({ kind: 'password', user, password: '', confirmation: '' })} type="button">Сменить пароль {user.name}</button>
-              <button className="button button--ghost" disabled={busy} onClick={() => openEditor({ kind: 'status', user })} type="button">{user.isActive ? 'Заблокировать' : 'Реактивировать'} {user.name}</button>
-              <button className="button button--danger" disabled={busy || user.id === currentUserId} onClick={() => openEditor({ kind: 'delete', user, confirmation: '' })} title={user.id === currentUserId ? 'Нельзя удалить собственный аккаунт' : undefined} type="button">Удалить {user.name}</button>
+              <button className="icon-button" disabled={busy} onClick={() => openEditor({ kind: 'edit', user, name: user.name, email: user.email, role: user.role, quota: user.storageQuota })} type="button" aria-label={`Редактировать ${user.name}`}><Icon name="edit" /></button>
+              <button className="icon-button" disabled={busy} onClick={() => openEditor({ kind: 'password', user, password: '', confirmation: '' })} type="button" aria-label={`Сменить пароль ${user.name}`}><Icon name="key" /></button>
+              <button className="icon-button" disabled={busy} onClick={() => openEditor({ kind: 'status', user })} type="button" aria-label={user.isActive ? `Заблокировать ${user.name}` : `Реактивировать ${user.name}`}><Icon name={user.isActive ? 'lock' : 'user'} /></button>
+              <button className="icon-button" disabled={busy || user.id === currentUserId} onClick={() => openEditor({ kind: 'delete', user, confirmation: '' })} title={user.id === currentUserId ? 'Нельзя удалить собственный аккаунт' : undefined} type="button" aria-label={`Удалить ${user.name}`}><Icon name="trash" /></button>
             </div></td>
           </tr>)}</tbody>
         </table>
