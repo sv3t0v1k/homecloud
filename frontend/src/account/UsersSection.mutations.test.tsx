@@ -164,11 +164,11 @@ describe('UsersSection mutations', () => {
     expect(await screen.findByText('Пароль изменён. Все сеансы пользователя отозваны.')).toBeInTheDocument()
   })
 
-  it.skip('blocks and reactivates with explicit status payloads', async () => {
+  it('blocks and reactivates with explicit status payloads', async () => {
     let isBlocked = false
     vi.mocked(apiRequest).mockImplementation(async (config) => {
       const request = config as { method?: string; data?: { isActive: boolean }; url?: string }
-      if (request.method === 'GET') return page([admin, { ...member, isActive: isBlocked }])
+      if (request.method === 'GET') return page([admin, { ...member, isActive: !isBlocked }])
       if (request.method === 'PATCH' && request.url?.includes('/status')) {
         isBlocked = request.data?.isActive === false
         return { ...member, isActive: request.data?.isActive ?? true }
