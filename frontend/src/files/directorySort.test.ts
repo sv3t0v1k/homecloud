@@ -15,7 +15,7 @@ function folder(id: number, name: string, updatedAt = '2026-01-01T00:00:00Z') {
   return { id, shareFileId: id + 1000, name, parentId: null, isDeleted: false, updatedAt }
 }
 
-function file(id: number, name: string, size: string | number, mimeType = 'text/plain', updatedAt = '2026-01-01T00:00:00Z') {
+function file(id: number, name: string, size: string | number = 1, mimeType = 'text/plain', updatedAt = '2026-01-01T00:00:00Z') {
   return { id, name, size, mimeType, parentId: null, isDeleted: false, isStarred: false, updatedAt }
 }
 

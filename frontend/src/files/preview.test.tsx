@@ -49,7 +49,7 @@ describe('file preview API', () => {
 })
 
 describe('PreviewModal', () => {
-  const createObjectURL = vi.fn(() => 'blob:preview')
+  const createObjectURL = vi.fn((_blob: Blob | MediaSource) => 'blob:preview')
   const revokeObjectURL = vi.fn()
 
   beforeEach(() => {
