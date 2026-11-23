@@ -613,7 +613,24 @@ function errorMessage(error: unknown) {
     if (error.status === 404) return 'Сессия загрузки больше не доступна: она могла истечь.'
     return 'Не удалось выполнить запрос к серверу.'
   }
-  return error instanceof Error ? error.message : 'Не удалось загрузить файл.'
+  // Браузерные ошибки чтения локального файла (DOMException может не наследовать Error)
+  // приходят на английском и ни о чём не говорят: чаще всего это пакет macOS
+  // (каталог .app и т.п.) или dataless-файл iCloud.
+  const rawText = errorText(error)
+  if (/no longer exists|no longer a directory|could not be read|NotReadableError|file.*changed|changed since/i.test(rawText)) {
+    return 'Не удалось прочитать файл с диска. Если это пакет macOS (например, приложение .app), сожмите его в ZIP или загрузите как папку. Если файл лежит в iCloud, дождитесь его скачивания и повторите.'
+  }
+  if (error instanceof Error) return error.message
+  return 'Не удалось загрузить файл.'
+}
+
+/** Текст и имя ошибки, включая DOMException без наследования от Error. */
+function errorText(error: unknown): string {
+  if (typeof error !== 'object' || error === null) return String(error ?? '')
+  const holder = error as { message?: unknown; name?: unknown }
+  const message = typeof holder.message === 'string' ? holder.message : ''
+  const name = typeof holder.name === 'string' ? holder.name : ''
+  return `${name} ${message}`.trim()
 }
 
 function validSession(session: Session): boolean {
