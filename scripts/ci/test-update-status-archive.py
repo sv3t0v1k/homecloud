@@ -237,6 +237,49 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(len(set(archived)), 2)
         self.assertTrue(all(path.startswith(IDENTITY + '-') for path in archived))
 
+    def test_preparation_crash_after_hardlink_recovers_without_overwrite(self):
+        self.current.write_text(json.dumps(dict(
+            format='homecloud-update-status-v1', status='STOP',
+            manifestSha256=IDENTITY, phase='PREPARATION', updatedAt='crash-after-link')))
+        self.current.chmod(0o640)
+        self.original_fstat = os.fstat
+        with patch.object(archive.os, 'fstat', side_effect=self.fake_root_stat):
+            archive_name = archive.receipt_archive_name(self.current)
+            target = self.status / 'archive' / archive_name
+            target.parent.mkdir()
+            os.link(self.current, target)
+            archive.create_marker(IDENTITY, archive_name)
+            with patch.object(archive, 'verify_complete',
+                              side_effect=lambda *_: (IDENTITY, self.current.stat())):
+                self.assertTrue(archive.archive_complete())
+        self.assertFalse(self.current.exists())
+        self.assertFalse((self.status / 'archiving.json').exists())
+        self.assertTrue(target.exists())
+        self.assertEqual(target.stat().st_nlink, 1)
+        self.assertNotEqual(target.name, IDENTITY + '.json')
+
+    def test_preparation_crash_after_current_unlink_recovers_from_marker(self):
+        self.current.write_text(json.dumps(dict(
+            format='homecloud-update-status-v1', status='STOP',
+            manifestSha256=IDENTITY, phase='PREPARATION', updatedAt='crash-after-unlink')))
+        self.current.chmod(0o640)
+        self.original_fstat = os.fstat
+        with patch.object(archive.os, 'fstat', side_effect=self.fake_root_stat):
+            archive_name = archive.receipt_archive_name(self.current)
+            target = self.status / 'archive' / archive_name
+            target.parent.mkdir()
+            os.link(self.current, target)
+            archive.create_marker(IDENTITY, archive_name)
+            self.current.unlink()
+            with patch.object(archive, 'verify_complete',
+                              return_value=(IDENTITY, target.stat())) as verify:
+                self.assertTrue(archive.archive_complete())
+                verify.assert_called_once_with(target)
+        self.assertFalse(self.current.exists())
+        self.assertFalse((self.status / 'archiving.json').exists())
+        self.assertTrue(target.exists())
+        self.assertNotEqual(target.name, IDENTITY + '.json')
+
     def test_other_stop_phase_is_not_archivable(self):
         receipt = dict(format='homecloud-update-status-v1', status='STOP',
                        manifestSha256=IDENTITY, phase='VERIFY_TRUST', updatedAt='now')
