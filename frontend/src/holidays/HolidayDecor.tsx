@@ -22,7 +22,7 @@ function particleStyle(index: number, fireworks: boolean): CSSProperties {
   const left = (index * 37 + 13) % 97
   const delay = -(((index * 29 + 7) % 140) / 10)
   const duration = 9 + ((index * 17) % 70) / 10
-  const size = Math.round(8 + ((index * 11) % 40) / 4)
+  const size = Math.round(10 + ((index * 11) % 48) / 4)
   const style: CSSProperties = {
     left: `${left}%`,
     animationDelay: `${delay}s, ${delay / 2}s`,

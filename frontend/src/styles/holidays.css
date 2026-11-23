@@ -6,6 +6,9 @@
   z-index: 20;
   overflow: hidden;
   pointer-events: none;
+  /* Траектории частиц в cqh — относительно слоя, а не viewport: в мини-сценах
+     галереи плотность частиц такая же, как на весь экран. */
+  container-type: size;
 }
 
 .holiday-decor--inline {
@@ -188,13 +191,13 @@
 /* ---------- Анимации ---------- */
 
 @keyframes holiday-fall {
-  from { transform: translateY(-4vh) rotate(0deg); }
-  to { transform: translateY(110vh) rotate(320deg); }
+  from { transform: translateY(-8cqh) rotate(0deg); }
+  to { transform: translateY(112cqh) rotate(320deg); }
 }
 
 @keyframes holiday-rise {
   from { transform: translateY(0) rotate(45deg); }
-  to { transform: translateY(-115vh) rotate(45deg); }
+  to { transform: translateY(-118cqh) rotate(45deg); }
 }
 
 @keyframes holiday-sway {
@@ -209,8 +212,8 @@
 
 @keyframes holiday-burst {
   0% { transform: scale(0.1); opacity: 1; }
-  70% { opacity: 0.9; }
-  100% { transform: scale(6); opacity: 0; }
+  60% { opacity: 0.9; }
+  100% { transform: scale(3.5); opacity: 0; }
 }
 
 @keyframes holiday-bulb {
