@@ -11,6 +11,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 
 import { apiClient } from '../api/client'
 import { FileBrowserPage } from './FileBrowserPage'
+import { ITEMS_MIME } from './dragItems'
 
 describe('FileBrowserPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks() })
@@ -1259,11 +1260,119 @@ describe('FileBrowserPage', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('moves a file onto a folder row with drag and drop', async () => {
+    let moved = false
+    const mutations: Array<{ url?: string; method?: string; data?: unknown }> = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [folder(7, 'Архив', null)])
+      if (config.url === '/files') return ok(config, moved ? [] : [file(11, 'a.txt', 1)])
+      mutations.push({ url: config.url, method: config.method, data: config.data ? JSON.parse(String(config.data)) : undefined })
+      if (config.url === '/files/11/move') moved = true
+      return ok(config, {})
+    }
+    renderPage('/files')
+    const fileRow = (await screen.findByRole('button', { name: 'a.txt' })).closest('tr')!
+    const folderRow = screen.getByRole('button', { name: 'Архив' }).closest('tr')!
+
+    const transfer = dataTransfer()
+    fireEvent.dragStart(fileRow, { dataTransfer: transfer })
+    expect(transfer.types).toContain(ITEMS_MIME)
+
+    fireEvent.dragOver(folderRow, { dataTransfer: transfer })
+    expect(folderRow).toHaveClass('is-drop-target')
+
+    fireEvent.drop(folderRow, { dataTransfer: transfer })
+    fireEvent.dragEnd(fileRow, { dataTransfer: transfer })
+
+    await screen.findByText('Перемещено: 1')
+    expect(mutations).toEqual([{ url: '/files/11/move', method: 'post', data: { targetParentId: 7 } }])
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'a.txt' })).not.toBeInTheDocument())
+  })
+
+  it('refuses to drop a folder onto itself', async () => {
+    const mutations: Array<{ url?: string; method?: string }> = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [folder(7, 'Архив', null)])
+      if (config.url === '/files') return ok(config, [])
+      mutations.push({ url: config.url, method: config.method })
+      return ok(config, {})
+    }
+    renderPage('/files')
+    const folderRow = (await screen.findByRole('button', { name: 'Архив' })).closest('tr')!
+
+    const transfer = dataTransfer()
+    fireEvent.dragStart(folderRow, { dataTransfer: transfer })
+    fireEvent.dragOver(folderRow, { dataTransfer: transfer })
+    expect(folderRow).not.toHaveClass('is-drop-target')
+    fireEvent.drop(folderRow, { dataTransfer: transfer })
+    fireEvent.dragEnd(folderRow, { dataTransfer: transfer })
+
+    expect(mutations).toEqual([])
+  })
+
+  it('drags the whole selection when a selected row is dragged', async () => {
+    const moves: string[] = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [folder(7, 'Архив', null)])
+      if (config.url === '/files') return ok(config, [file(11, 'a.txt', 1), file(12, 'b.txt', 1)])
+      if (config.url?.endsWith('/move')) { moves.push(config.url); return ok(config, {}) }
+      throw new Error(`Unexpected request: ${config.url}`)
+    }
+    renderPage('/files')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('checkbox', { name: 'Выбрать a.txt' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать b.txt' }))
+    expect(screen.getByText('Выбрано: 2')).toBeInTheDocument()
+
+    const transfer = dataTransfer()
+    fireEvent.dragStart(screen.getByRole('button', { name: 'a.txt' }).closest('tr')!, { dataTransfer: transfer })
+    expect(JSON.parse(transfer.getData(ITEMS_MIME)).keys.sort()).toEqual(['file:11', 'file:12'])
+    fireEvent.drop(screen.getByRole('button', { name: 'Архив' }).closest('tr')!, { dataTransfer: transfer })
+
+    await screen.findByText('Перемещено: 2')
+    expect(moves.sort()).toEqual(['/files/11/move', '/files/12/move'])
+  })
+
+  it('moves an item to the root through the breadcrumbs', async () => {
+    const mutations: Array<{ url?: string; method?: string; data?: unknown }> = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders/7') return ok(config, folder(7, 'Вложенная', null))
+      if (config.url === '/files/folders') return ok(config, [])
+      if (config.url === '/files') return ok(config, [file(11, 'a.txt', 1)])
+      mutations.push({ url: config.url, method: config.method, data: config.data ? JSON.parse(String(config.data)) : undefined })
+      return ok(config, {})
+    }
+    renderPage('/files/folders/7')
+    const fileRow = (await screen.findByRole('button', { name: 'a.txt' })).closest('tr')!
+    const rootCrumb = screen.getByRole('link', { name: 'Мои файлы' }).closest('li')!
+
+    const transfer = dataTransfer()
+    fireEvent.dragStart(fileRow, { dataTransfer: transfer })
+    fireEvent.dragOver(rootCrumb, { dataTransfer: transfer })
+    expect(rootCrumb).toHaveClass('is-drop-target')
+    fireEvent.drop(rootCrumb, { dataTransfer: transfer })
+    fireEvent.dragEnd(fileRow, { dataTransfer: transfer })
+
+    await screen.findByText('Перемещено: 1')
+    expect(mutations).toEqual([{ url: '/files/11/move', method: 'post', data: {} }])
+  })
+
 })
 
 async function chooseAction(user: ReturnType<typeof userEvent.setup>, name: string, action: string) {
   await user.click(await screen.findByRole('button', { name: `Действия: ${name}` }))
   await user.click(screen.getByRole('menuitem', { name: action }))
+}
+
+function dataTransfer() {
+  const data = new Map<string, string>()
+  return {
+    types: [] as string[],
+    effectAllowed: '',
+    dropEffect: '',
+    setData(type: string, value: string) { data.set(type, value); this.types = Array.from(data.keys()) },
+    getData(type: string) { return data.get(type) ?? '' },
+  }
 }
 
 function renderPage(path: string) {

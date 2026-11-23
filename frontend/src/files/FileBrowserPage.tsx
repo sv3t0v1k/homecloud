@@ -26,6 +26,7 @@ import { locatedTarget, searchReturn } from './searchNavigation'
 import { ToastProvider } from '../ui/toast'
 import { useToast } from '../ui/toastContext'
 import { DIRECTORY_SHORTCUTS } from './shortcuts'
+import { clearActiveDrag, encodeDragItems, setActiveDrag, useItemsDrop } from './dragItems'
 import {
   fileTypeLabel,
   filterByName,
@@ -237,7 +238,7 @@ export function FileBrowserPage({ revision = 0 }: { revision?: number }) {
       ) : null}
       {dropError ? <p className="inline-alert" role="alert">{dropError}</p> : null}
       {collecting ? <p role="status">Добавляем папки и файлы…</p> : null}
-      <Breadcrumbs crumbs={crumbs} />
+      <Breadcrumbs crumbs={crumbs} onChanged={refresh} />
       {searchBack ? <div className="located-object-note"><Link className="text-link" to={searchBack}><Icon name="arrow-left" />Вернуться к результатам поиска</Link>{readyPage && target ? <span role="status">{(target.kind === 'file' ? readyPage.contents.files : readyPage.contents.folders).some(item => item.id === target.id) ? 'Найденный объект выделен в папке.' : 'Расположение изменилось или объект больше недоступен. Повторите поиск.'}</span> : null}</div> : null}
       <div className="files-page-header">
       <div className="page-heading"><h2 id="files-heading">{title}</h2></div>
@@ -327,19 +328,29 @@ async function loadAncestors(folderId: number, signal: AbortSignal): Promise<Cru
   return reversed.reverse()
 }
 
-function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
+function Breadcrumbs({ crumbs, onChanged }: { crumbs: Crumb[]; onChanged(): void }) {
   // Middle crumbs collapse into an ellipsis on narrow screens.
   const collapsible = crumbs.length > 2
+  const itemsDrop = useItemsDrop(onChanged)
+  const rootKey = 'folder:root'
   return (
     <nav aria-label="Путь к папке" className={`breadcrumbs${collapsible ? ' breadcrumbs--collapsible' : ''}`}>
       <ol className="breadcrumb-list">
-        <li>{crumbs.length === 0 ? <span aria-current="page">Мои файлы</span> : <Link className="text-link" to="/files">Мои файлы</Link>}</li>
+        <li
+          className={itemsDrop.dropKey === rootKey ? 'is-drop-target' : undefined}
+          {...(crumbs.length > 0 ? itemsDrop.targetHandlers(rootKey, null) : {})}
+        >{crumbs.length === 0 ? <span aria-current="page">Мои файлы</span> : <Link className="text-link" to="/files">Мои файлы</Link>}</li>
         {collapsible ? <li aria-hidden="true" className="breadcrumb-ellipsis">…</li> : null}
         {crumbs.map((crumb, index) => {
           const current = index === crumbs.length - 1
           const middle = collapsible && index < crumbs.length - 1
+          const targetKey = `folder:${crumb.id}`
           return (
-            <li className={`breadcrumb-item${middle ? ' breadcrumb-item--middle' : ''}`} key={crumb.id}>
+            <li
+              className={`breadcrumb-item${middle ? ' breadcrumb-item--middle' : ''}${itemsDrop.dropKey === targetKey ? ' is-drop-target' : ''}`}
+              key={crumb.id}
+              {...(!current ? itemsDrop.targetHandlers(targetKey, crumb.id) : {})}
+            >
               <span aria-hidden="true">/</span>
               {current ? <span aria-current="page">{crumb.name}</span> : (
                 <Link className="text-link" state={{ crumbs: crumbs.slice(0, index + 1) }} to={`/files/folders/${crumb.id}`}>{crumb.name}</Link>
@@ -823,6 +834,19 @@ function DirectoryTable({
 
   const empty = folders.length === 0 && files.length === 0
   const trulyEmpty = contents.folders.length === 0 && contents.files.length === 0
+  const itemsDrop = useItemsDrop(() => onChanged())
+  function rowDragStart(event: React.DragEvent, key: string) {
+    const keys = selection.has(key) ? [...selection] : [key]
+    if (!selection.has(key)) {
+      anchor.current = key
+      setSelection(new Set([key]))
+    }
+    setActiveDrag(keys)
+    encodeDragItems(event.dataTransfer, keys)
+  }
+  function rowDragEnd() {
+    clearActiveDrag()
+  }
   return (
     <div ref={directoryRef}>
       <div className="directory-controls">
@@ -960,7 +984,7 @@ function DirectoryTable({
             <th scope="col"><span className="sr-only">Действия</span></th>
           </tr></thead>
           <tbody>
-            {folders.map((folder) => <tr data-object-key={`folder:${folder.id}`} className={`directory-row${selection.has(`folder:${folder.id}`) ? ' is-selected' : ''}${locatedKey === `folder:${folder.id}` ? ' is-located' : ''}`} key={`folder-${folder.id}`} onContextMenu={(event) => contextMenu(event, `folder:${folder.id}`)} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) select(`folder:${folder.id}`, event) }}>
+            {folders.map((folder) => <tr data-object-key={`folder:${folder.id}`} className={`directory-row${selection.has(`folder:${folder.id}`) ? ' is-selected' : ''}${locatedKey === `folder:${folder.id}` ? ' is-located' : ''}${itemsDrop.dropKey === `folder:${folder.id}` ? ' is-drop-target' : ''}`} key={`folder-${folder.id}`} draggable onDragStart={(event) => rowDragStart(event, `folder:${folder.id}`)} onDragEnd={rowDragEnd} {...itemsDrop.targetHandlers(`folder:${folder.id}`, folder.id)} onContextMenu={(event) => contextMenu(event, `folder:${folder.id}`)} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) select(`folder:${folder.id}`, event) }}>
               <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${folder.name}`} type="checkbox" checked={selection.has(`folder:${folder.id}`)} onChange={() => {}} onClick={(event) => select(`folder:${folder.id}`, event, true)} /></label><span className="file-icon file-icon-folder"><Icon name="folder" /></span><button className="file-name" onDoubleClick={() => onOpenFolder(folder)} onKeyDown={(event) => { if (event.key === "Enter") onOpenFolder(folder) }} type="button">{folder.name}</button></td>
               <td className="file-meta"><span className="mobile-label">Тип: </span>Папка</td><td className="file-meta"><span className="mobile-label">Размер: </span>—</td><td className="file-meta"><span className="mobile-label">Изменено: </span>{formatDate(folder.updatedAt)}</td>
               <td className="file-actions"><ActionMenu label={`Действия: ${folder.name}`} disabled={pending} items={[
@@ -971,7 +995,7 @@ function DirectoryTable({
                 { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'folder', item: folder, action: 'trash' }) },
               ]} /></td>
             </tr>)}
-            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} disabled={pending} file={file} key={`file-${file.id}`} siblings={files} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => toast.dismissKey('file-download')} onDownloadHandedOff={() => toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })} onShare={() => setShareTarget({
+            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} onDragStart={(event) => rowDragStart(event, `file:${file.id}`)} onDragEnd={rowDragEnd} disabled={pending} file={file} key={`file-${file.id}`} siblings={files} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => toast.dismissKey('file-download')} onDownloadHandedOff={() => toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })} onShare={() => setShareTarget({
       fileId: file.id,
       name: file.name,
       isFolder: false,
@@ -989,7 +1013,7 @@ function DirectoryTable({
   )
 }
 
-function FileRow({ disabled, file, siblings, onAction, onDownloadStarted, onDownloadHandedOff, onShare, selected, onSelect, onContextMenu }: { selected: boolean; onSelect(event: React.MouseEvent, toggle?: boolean): void; onContextMenu(event: React.MouseEvent<HTMLTableRowElement>): void; disabled: boolean; file: FileItem; siblings: FileItem[]; onAction(action: ItemAction['action']): void; onDownloadStarted(): void; onDownloadHandedOff(): void; onShare(): void }) {
+function FileRow({ disabled, file, siblings, onAction, onDownloadStarted, onDownloadHandedOff, onShare, selected, onSelect, onContextMenu, onDragStart, onDragEnd }: { selected: boolean; onSelect(event: React.MouseEvent, toggle?: boolean): void; onContextMenu(event: React.MouseEvent<HTMLTableRowElement>): void; onDragStart(event: React.DragEvent<HTMLTableRowElement>): void; onDragEnd(event: React.DragEvent<HTMLTableRowElement>): void; disabled: boolean; file: FileItem; siblings: FileItem[]; onAction(action: ItemAction['action']): void; onDownloadStarted(): void; onDownloadHandedOff(): void; onShare(): void }) {
   const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'handed-off'>('idle')
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [showPreview, setShowPreview] = useState(false)
@@ -1005,7 +1029,7 @@ function FileRow({ disabled, file, siblings, onAction, onDownloadStarted, onDown
     finally { downloadPending.current = false }
   }
   const fileType = file.mimeType?.startsWith('image/') ? 'image' : file.mimeType?.startsWith('text/') ? 'text' : 'file'
-  return <tr data-object-key={`file:${file.id}`} className={`directory-row${selected ? ' is-selected' : ''}`} onContextMenu={onContextMenu} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) onSelect(event) }}>
+  return <tr data-object-key={`file:${file.id}`} className={`directory-row${selected ? ' is-selected' : ''}`} draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onContextMenu={onContextMenu} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) onSelect(event) }}>
     <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${file.name}`} type="checkbox" checked={selected} onChange={() => {}} onClick={(event) => onSelect(event, true)} /></label>{['image/jpeg', 'image/png', 'image/webp'].includes(file.mimeType ?? '') ? <FileThumbnail key={`${file.id}:${file.updatedAt}`} fileId={file.id} /> : <span className={`file-icon file-icon-${fileType}`}><Icon name={fileType} /></span>}<button className="file-name" onDoubleClick={(event) => { event.currentTarget.focus(); setShowPreview(true) }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); setShowPreview(true) } }} title={file.name} type="button">{file.name}</button></td>
     <td className="file-meta"><span className="mobile-label">Тип: </span>{fileTypeLabel(file.mimeType)}</td>
     <td className="file-meta"><span className="mobile-label">Размер: </span>{formatBytes(file.size)}</td>
