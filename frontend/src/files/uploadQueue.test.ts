@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AxiosRequestConfig } from 'axios'
 import { apiRequest } from '../api/client'
 import { ApiError } from '../api/errors'
-import { UploadQueue } from './uploadQueue'
+import { localFileReadError, UploadQueue } from './uploadQueue'
 
 vi.mock('../api/client', () => ({ apiRequest: vi.fn() }))
 const request = vi.mocked(apiRequest)
@@ -406,6 +406,17 @@ describe('UploadQueue', () => {
     expect(state(q, id).error).toContain('iCloud')
     expect(state(q, id).error).not.toContain('Path no longer exists')
     expect(server.creates()).toBe(0)
+  })
+
+  it('localFileReadError explains raw browser read failures and ignores other errors', () => {
+    const domException = new DOMException('Path no longer exists or is no longer a directory', 'NotReadableError')
+    expect(localFileReadError(domException)).toContain('сожмите его в ZIP или загрузите как папку')
+    // DOMException в jsdom может не наследовать Error — хелпер обязан работать и с такими объектами.
+    const plainDomLike = { name: 'NotReadableError', message: 'A file could not be read' }
+    expect(localFileReadError(plainDomLike)).toContain('iCloud')
+    expect(localFileReadError(new Error('Network connection lost'))).toBeNull()
+    expect(localFileReadError(new ApiError('not found', 'unknown', 404))).toBeNull()
+    expect(localFileReadError(null)).toBeNull()
   })
 
   it('StrictMode authenticated discovery can remount a disposed queue without losing controls', async () => {

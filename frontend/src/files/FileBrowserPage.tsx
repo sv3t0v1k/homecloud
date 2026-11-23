@@ -14,7 +14,7 @@ import { copyFile, createFolder, getFolder, getFolderContents, moveFile, moveFol
 import { downloadOriginalFile, downloadSelectionArchive, type ArchiveSelection } from './download'
 import { droppedEntries, inputEntries, pickDirectory } from '../sharing/publicTree'
 import { enqueueTree } from './treeUpload'
-import { UploadQueue, type UploadQueueItem } from './uploadQueue'
+import { localFileReadError, UploadQueue, type UploadQueueItem } from './uploadQueue'
 import { formatEta, UploadSpeedTracker } from './uploadSpeed'
 import {
   ShareDialog,
@@ -179,7 +179,7 @@ export function FileBrowserPage({ revision = 0 }: { revision?: number }) {
         const target = folderId ?? undefined
         void droppedEntries(event.dataTransfer.items ?? [] as unknown as DataTransferItemList, event.dataTransfer.files)
           .then((entries) => enqueueTree(entries, queue, target, () => alive.current, () => { if (alive.current) setReloadKey((key) => key + 1) }))
-          .catch((cause: unknown) => { if (alive.current) setDropError(cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'Не удалось добавить дерево папки. Уже добавленные объекты сохранены. Проверьте папку перед повтором.') })
+          .catch((cause: unknown) => { if (alive.current) setDropError(localFileReadError(cause) ?? (cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'Не удалось добавить дерево папки. Уже добавленные объекты сохранены. Проверьте папку перед повтором.')) })
           .finally(() => { collectionLock.current = false; if (alive.current) setCollecting(false) })
       }}>
       {dragging ? (
@@ -1297,7 +1297,7 @@ function UploadControl({ enabled, parentId, onUploaded, queue }: { enabled: bool
     if (busy.current || !enabled) return
     busy.current = true; setCollecting(true); setTreeError(null)
     try { await enqueueTree(entries, queue, target, () => alive.current, onUploaded) }
-    catch (cause) { if (alive.current) setTreeError(cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'Не удалось добавить папку. Уже добавленные объекты сохранены. Проверьте результат перед повтором.') }
+    catch (cause) { if (alive.current) setTreeError(localFileReadError(cause) ?? (cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'Не удалось добавить папку. Уже добавленные объекты сохранены. Проверьте результат перед повтором.')) }
     finally { busy.current = false; if (alive.current) setCollecting(false) }
   }
   async function chooseFolder() {
@@ -1318,9 +1318,9 @@ function UploadControl({ enabled, parentId, onUploaded, queue }: { enabled: bool
       { label: 'Новая папка', icon: 'plus', disabled: createBusy, onSelect: () => setCreateOpen(true) },
     ]} />
     <input ref={inputRef} aria-label="Выбрать файл для загрузки" className="sr-only upload-input" disabled={!enabled || collecting} multiple type="file"
-      onChange={(event) => { try { void add(inputEntries(event.target.files ?? [])) } catch (cause) { setTreeError(cause instanceof Error ? cause.message : 'Не удалось прочитать файлы.') } event.target.value = '' }} />
+      onChange={(event) => { try { void add(inputEntries(event.target.files ?? [])) } catch (cause) { setTreeError(localFileReadError(cause) ?? (cause instanceof Error ? cause.message : 'Не удалось прочитать файлы.')) } event.target.value = '' }} />
     <input ref={folderRef} aria-label="Выбрать папку для загрузки" className="sr-only upload-input" disabled={!enabled || collecting} multiple type="file" {...{ webkitdirectory: '', directory: '' }}
-      onChange={(event) => { try { void add(inputEntries(event.target.files ?? [])) } catch (cause) { setTreeError(cause instanceof Error ? cause.message : 'Не удалось прочитать папку.') } event.target.value = '' }} />
+      onChange={(event) => { try { void add(inputEntries(event.target.files ?? [])) } catch (cause) { setTreeError(localFileReadError(cause) ?? (cause instanceof Error ? cause.message : 'Не удалось прочитать папку.')) } event.target.value = '' }} />
     <CreateFolderControl key={`create-${parentId}`} enabled={enabled} parentId={parentId} onCreated={onUploaded} open={createOpen} setOpen={setCreateOpen} onBusyChange={setCreateBusy} />
     {collecting ? <p role="status">Добавляем папки и файлы…</p> : null}
     {treeError ? <p className="inline-alert" role="alert">{treeError}</p> : null}
@@ -1480,7 +1480,7 @@ function UploadRow({ item, queue }: { item: UploadQueueItem; queue: UploadQueue 
     <div className="state-actions">
       {canPause ? <button aria-label={`Пауза: ${item.name}`} className="button button--ghost" onClick={() => queue.pause(item.id)} type="button">Пауза</button> : null}
       {canResume ? <button aria-label={`Продолжить: ${item.name}`} className="button button--ghost" onClick={() => queue.resume(item.id)} type="button">{item.state === 'error' && !item.uploadId ? 'Повторить загрузку' : 'Продолжить'}</button> : null}
-      {item.needsFile ? <label className="button button--ghost">Выбрать исходный файл<input aria-label={`Исходный файл: ${item.name}`} className="sr-only upload-input" type="file" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; setReselectionError(null); void queue.reselect(item.id, file).catch((error: unknown) => setReselectionError(error instanceof Error ? error.message : 'Не удалось проверить исходный файл.')) }} /></label> : null}
+      {item.needsFile ? <label className="button button--ghost">Выбрать исходный файл<input aria-label={`Исходный файл: ${item.name}`} className="sr-only upload-input" type="file" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; setReselectionError(null); void queue.reselect(item.id, file).catch((error: unknown) => setReselectionError(localFileReadError(error) ?? (error instanceof Error ? error.message : 'Не удалось проверить исходный файл.'))) }} /></label> : null}
       {canCancel ? <button aria-label={`Отменить загрузку: ${item.name}`} className="button button--ghost" onClick={() => queue.cancel(item.id)} type="button">Отменить загрузку</button> : null}
     </div>
   </li>

@@ -616,12 +616,22 @@ function errorMessage(error: unknown) {
   // Браузерные ошибки чтения локального файла (DOMException может не наследовать Error)
   // приходят на английском и ни о чём не говорят: чаще всего это пакет macOS
   // (каталог .app и т.п.) или dataless-файл iCloud.
-  const rawText = errorText(error)
-  if (/no longer exists|no longer a directory|could not be read|NotReadableError|file.*changed|changed since/i.test(rawText)) {
-    return 'Не удалось прочитать файл с диска. Если это пакет macOS (например, приложение .app), сожмите его в ZIP или загрузите как папку. Если файл лежит в iCloud, дождитесь его скачивания и повторите.'
-  }
+  const localRead = localFileReadError(error)
+  if (localRead) return localRead
   if (error instanceof Error) return error.message
   return 'Не удалось загрузить файл.'
+}
+
+/**
+ * Понятное сообщение для браузерных ошибок чтения локального файла
+ * (пакет macOS, dataless-файл iCloud); null, если ошибка другого рода.
+ * Используется и очередью загрузки, и обработчиками добавления файлов на странице.
+ */
+export function localFileReadError(error: unknown): string | null {
+  if (/no longer exists|no longer a directory|could not be read|NotReadableError|file.*changed|changed since/i.test(errorText(error))) {
+    return 'Не удалось прочитать файл с диска. Если это пакет macOS (например, приложение .app), сожмите его в ZIP или загрузите как папку. Если файл лежит в iCloud, дождитесь его скачивания и повторите.'
+  }
+  return null
 }
 
 /** Текст и имя ошибки, включая DOMException без наследования от Error. */
