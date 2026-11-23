@@ -55,13 +55,24 @@ describe('HolidayLogoDecor', () => {
     }
   })
 
-  it('на Новый год добавляет мини-гирлянду на логотип', () => {
+  it('на Новый год обрамляет логотип гирляндой по периметру', () => {
     const { container } = render(<HolidayLogoDecor theme={holidayById('new-year')!} />)
-    expect(container.querySelector('.holiday-mini-garland')).not.toBeNull()
+    const frame = container.querySelector('.holiday-garland-frame')
+    expect(frame).not.toBeNull()
+    expect(frame?.classList.contains('holiday-garland-frame--compact')).toBe(true)
+    expect(container.querySelectorAll('.holiday-garland-side').length).toBe(4)
     expect(container.querySelectorAll('.holiday-garland-bulb').length).toBeGreaterThan(0)
 
     const { container: other } = render(<HolidayLogoDecor theme={holidayById('valentine')!} />)
-    expect(other.querySelector('.holiday-mini-garland')).toBeNull()
+    expect(other.querySelector('.holiday-garland-frame')).toBeNull()
+  })
+
+  it('рисует инлайн-SVG для букета, ростка, ленты и кленового листа', () => {
+    for (const id of ['women-day', 'spring-labour', 'victory', 'knowledge-day']) {
+      const { container, unmount } = render(<HolidayLogoDecor theme={holidayById(id)!} />)
+      expect(container.querySelector('.holiday-logo-decor svg'), id).not.toBeNull()
+      unmount()
+    }
   })
 })
 
