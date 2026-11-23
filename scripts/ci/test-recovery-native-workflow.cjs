@@ -15,9 +15,29 @@ const read = name => yaml.load(
 
 const workflow = read('recovery-native.yml');
 const job = workflow.jobs['native-recovery'];
+const scenarioJob = workflow.jobs['native-recovery-scenarios'];
+const gateJob = workflow.jobs['native-recovery-gate'];
 const steps = job.steps;
+const scenarioSteps = scenarioJob.steps;
 const runs = steps.map(step => step.run || '').join('\n');
+const scenarioRuns = scenarioSteps.map(step => step.run || '').join('\n');
+const allRuns = Object.values(workflow.jobs).flatMap(
+  item => item.steps || []
+).map(step => step.run || '').join('\n');
 const named = name => steps.find(step => step.name === name);
+const scenarioNamed = name => scenarioSteps.find(step => step.name === name);
+const expectedScenarios = [
+  'plain',
+  'encrypted',
+  'historical',
+  'partial-stop',
+  'staged',
+  'db-restored',
+  'reconciled',
+  'ready-before-clear',
+  'ready-after-clear',
+  'foreign-writer',
+];
 
 test('recovery is read-only and callable-only', () => {
   assert.deepEqual(workflow.permissions, { contents: 'read' });
@@ -25,7 +45,11 @@ test('recovery is read-only and callable-only', () => {
   assert.deepEqual(workflow.on.workflow_call.inputs, {
     source_sha: { type: 'string', required: true },
   });
-  assert.deepEqual(Object.keys(workflow.jobs), ['native-recovery']);
+  assert.deepEqual(Object.keys(workflow.jobs), [
+    'native-recovery',
+    'native-recovery-scenarios',
+    'native-recovery-gate',
+  ]);
   assert.equal(job['runs-on'], 'ubuntu-24.04');
   assert.equal(job.strategy, undefined);
   assert.equal(job['continue-on-error'], undefined);
@@ -33,9 +57,13 @@ test('recovery is read-only and callable-only', () => {
   assert.ok(steps.every(step => !step['continue-on-error']));
   assert.ok(steps.every(step => !step.if));
   assert.ok(steps.every(step => !(step.uses || '').includes('docker/login-action')));
+  assert.equal(scenarioJob['continue-on-error'], undefined);
+  assert.equal(gateJob['continue-on-error'], undefined);
+  assert.ok(scenarioSteps.every(step => !step['continue-on-error']));
+  assert.ok(scenarioSteps.every(step => !(step.uses || '').includes('docker/login-action')));
 });
 
-test('recovery checks exact source and builds offline AMD64 OCI', () => {
+test('recovery checks exact source and builds offline AMD64 OCI once', () => {
   const checkout = steps.find(
     step => (step.uses || '').startsWith('actions/checkout@')
   );
@@ -56,7 +84,7 @@ test('recovery checks exact source and builds offline AMD64 OCI', () => {
 
   assert.ok(bootstrap);
   assert.ok(steps.indexOf(verify) < steps.indexOf(bootstrap));
-  assert.doesNotMatch(runs, /minimize-runner\.py/);
+  assert.doesNotMatch(allRuns, /minimize-runner\.py/);
 
   const source = steps.find(step => step.id === 'source');
   assert.equal(source.env.EXPECTED_SOURCE_SHA, '${{ github.event.pull_request.head.sha }}');
@@ -75,9 +103,18 @@ test('recovery checks exact source and builds offline AMD64 OCI', () => {
     step => (step.uses || '').startsWith('docker/setup-buildx-action@')
   );
   assert.match(builder.with['driver-opts'], /@sha256:[a-f0-9]{64}$/);
+
+  const archive = steps.find(step => step.id === 'candidate-archive');
+  assert.equal(
+    archive.with.name,
+    'native-recovery-backend-oci-${{ github.run_attempt }}'
+  );
+  assert.equal(archive.with.path, '${{ runner.temp }}/backend.oci.tar');
+  assert.equal(archive.with['compression-level'], 0);
+  assert.equal(archive.with['if-no-files-found'], 'error');
 });
 
-test('the exact retained image reaches real recovery tests', () => {
+test('one verified OCI reaches ten independent parallel recovery scenarios', () => {
   const provenance = named('Verify offline OCI digest, source and attestation');
   assert.match(provenance.run, /scripts\/ci\/provenance\.py dry-run/);
 
@@ -92,44 +129,117 @@ test('the exact retained image reaches real recovery tests', () => {
   assert.match(native.run, /test-maintenance-supervisor\.sh/);
   assert.match(native.run, /test-copy-recovery-e2e\.sh/);
 
-  const recovery = named('Real Backup Restore in an isolated nested Docker daemon');
-  const commands = recovery.run.split('\n').filter(
-    line => line.includes('bash scripts/ci/run-restore-')
-  );
-
-  assert.equal(commands.length, 4);
-
-  const exactImage = '${{ steps.image.outputs.image_id }}';
-
-  assert.deepEqual(recovery.env, {
-    HOMECLOUD_E2E_BACKEND_IMAGE: exactImage,
-    HOMECLOUD_E2E_BACKEND_IMAGE_ID: exactImage,
-  });
-
-  assert.ok(commands.every(
-    line => !line.includes('HOMECLOUD_E2E_BACKEND_IMAGE=')
-  ));
-
   const binding = steps.find(step => step.id === 'image');
-
   assert.ok(binding);
   assert.equal(steps.indexOf(runtime) + 1, steps.indexOf(binding));
   assert.ok(steps.indexOf(binding) < steps.indexOf(native));
-  assert.ok(commands.some(line => line.includes('--encrypted-only')));
-  assert.ok(commands.some(line => line.includes('--historical-schema-only')));
-  assert.ok(commands.some(line => line.includes('run-restore-fault-e2e-local.sh')));
-
   assert.ok(steps.indexOf(provenance) < steps.indexOf(runtime));
   assert.ok(steps.indexOf(runtime) < steps.indexOf(native));
-  assert.ok(steps.indexOf(native) < steps.indexOf(recovery));
+
+  assert.equal(scenarioJob.needs, 'native-recovery');
+  assert.equal(scenarioJob['runs-on'], 'ubuntu-24.04');
+  assert.equal(scenarioJob.strategy['fail-fast'], false);
+  assert.deepEqual(scenarioJob.strategy.matrix.scenario, expectedScenarios);
+  assert.equal(new Set(expectedScenarios).size, 10);
+
+  const checkout = scenarioSteps.find(
+    step => (step.uses || '').startsWith('actions/checkout@')
+  );
+  assert.equal(checkout.with.ref, '${{ github.event.pull_request.head.sha }}');
+  assert.equal(checkout.with['persist-credentials'], false);
+
+  const download = scenarioSteps.find(
+    step => (step.uses || '').startsWith('actions/download-artifact@')
+  );
+  assert.equal(
+    download.with.name,
+    'native-recovery-backend-oci-${{ github.run_attempt }}'
+  );
+
+  const scenarioRuntime = scenarioSteps.find(step => step.id === 'runtime');
+  assert.match(scenarioRuntime.run, /Linux\/x86_64/);
+  assert.match(scenarioRuntime.run, /skopeo copy --override-os linux --override-arch amd64/);
+  assert.match(scenarioRuntime.run, /oci-scan-binding\.py.*--loaded-inspect/);
+  assert.match(scenarioRuntime.run, /native-recovery-candidate\/backend\.oci\.tar/);
+
+  const scenarioBinding = scenarioSteps.find(step => step.id === 'image');
+  assert.equal(
+    scenarioSteps.indexOf(scenarioBinding),
+    scenarioSteps.indexOf(scenarioRuntime) + 1
+  );
+  assert.equal(
+    scenarioBinding.env.EXPECTED_SOURCE_SHA,
+    '${{ github.event.pull_request.head.sha }}'
+  );
+  assert.equal(scenarioBinding.run, binding.run);
+
+  const recovery = scenarioNamed('Run one fresh isolated Backup Restore scenario');
+  const exactImage = '${{ steps.image.outputs.image_id }}';
+  assert.deepEqual(recovery.env, {
+    SCENARIO: '${{ matrix.scenario }}',
+    HOMECLOUD_E2E_BACKEND_IMAGE: exactImage,
+    HOMECLOUD_E2E_BACKEND_IMAGE_ID: exactImage,
+  });
+  assert.match(recovery.run, /encrypted\) options=\(--encrypted-only\)/);
+  assert.match(recovery.run, /historical\) options=\(--historical-schema-only\)/);
+  assert.match(recovery.run, /options=\("--fault-case=\$SCENARIO"\)/);
+  assert.match(recovery.run, /run-restore-e2e-local\.sh linux\/amd64 "\$\{options\[@\]\}"/);
+  assert.doesNotMatch(recovery.run, /run-restore-fault-e2e-local\.sh/);
+  assert.ok(scenarioSteps.indexOf(scenarioBinding) < scenarioSteps.indexOf(recovery));
+
+  const upload = scenarioNamed('Retain evidence for this exact scenario');
+  assert.equal(
+    upload.with.name,
+    'native-recovery-scenario-${{ matrix.scenario }}-${{ github.run_attempt }}'
+  );
+  assert.equal(upload.with['if-no-files-found'], 'error');
+  assert.match(upload.with.path, /native-recovery-\$\{\{ matrix\.scenario \}\}\.json/);
+  assert.match(upload.with.path, /backend\.loaded\.binding\.json/);
+});
+
+test('the aggregate gate requires the build and complete matrix', () => {
+  assert.equal(gateJob.if, 'always()');
+  assert.deepEqual(
+    gateJob.needs,
+    ['native-recovery', 'native-recovery-scenarios']
+  );
+
+  const gate = gateJob.steps[0];
+  const code = gate.run.split("python3 - <<'PY'\n")[1].split('\nPY')[0];
+  const { spawnSync } = require('node:child_process');
+  const execute = results => spawnSync('python3', ['-c', code], {
+    env: { ...process.env, RESULTS: JSON.stringify(results) },
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  const valid = {
+    'native-recovery': { result: 'success' },
+    'native-recovery-scenarios': { result: 'success' },
+  };
+
+  const accepted = execute(valid);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.match(accepted.stdout, /all 10 Native Recovery scenarios/);
+
+  for (const name of Object.keys(valid)) {
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      const rejected = execute({
+        ...valid,
+        [name]: { result },
+      });
+      assert.notEqual(rejected.status, 0, `${name}=${result}`);
+      assert.doesNotMatch(rejected.stdout, /PASS:/);
+    }
+  }
 });
 
 test('recovery does not run the entire release pipeline', () => {
-  assert.doesNotMatch(runs, /scan-environment\.sh/);
-  assert.doesNotMatch(runs, /qualify-stages\.sh/);
-  assert.doesNotMatch(runs, /policy-coverage\.py/);
-  assert.doesNotMatch(runs, /npm test -- --runInBand/);
-  assert.doesNotMatch(runs, /docker push/);
+  assert.doesNotMatch(allRuns, /scan-environment\.sh/);
+  assert.doesNotMatch(allRuns, /qualify-stages\.sh/);
+  assert.doesNotMatch(allRuns, /policy-coverage\.py/);
+  assert.doesNotMatch(allRuns, /npm test -- --runInBand/);
+  assert.doesNotMatch(allRuns, /docker push/);
+  assert.doesNotMatch(scenarioRuns, /docker\/build-push-action/);
 
   const upload = steps.find(
     step => (step.uses || '').startsWith('actions/upload-artifact@')

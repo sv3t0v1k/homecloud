@@ -54,6 +54,8 @@ CI_ONLY_SCRIPT_CHANGES = frozenset({
     'scripts/ci/test-stage-cache-proof.py',
     'scripts/ci/test-update-host-verify.py',
     'scripts/ci/test-test-channel.py',
+    'scripts/ci/test-recovery-native-workflow.cjs',
+    'scripts/ci/test-recovery-workflow.cjs',
 })
 
 boundary_spec = importlib.util.spec_from_file_location('root_boundary_installer', ROOT / 'deploy/linux/root-boundary.py')
