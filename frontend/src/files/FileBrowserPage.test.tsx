@@ -1120,6 +1120,55 @@ describe('FileBrowserPage', () => {
     expect(screen.getByRole('button', { name: 'report.txt' })).toBeInTheDocument()
   })
 
+  it('offers an undo toast after moving a file to trash and restores it', async () => {
+    let trashed = false
+    const mutations: Array<{ url?: string; method?: string }> = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [])
+      if (config.url === '/files') return ok(config, trashed ? [] : [file(11, 'report.txt', 2)])
+      mutations.push({ url: config.url, method: config.method })
+      if (config.url === '/files/11' && config.method === 'delete') trashed = true
+      if (config.url === '/files/11/restore' && config.method === 'post') trashed = false
+      return ok(config, {})
+    }
+    renderPage('/files')
+    const user = userEvent.setup()
+    await chooseAction(user, 'report.txt', 'В корзину')
+    await user.click(screen.getByRole('button', { name: 'Переместить в корзину' }))
+    await screen.findByText('Файл перемещён в корзину')
+    await user.click(screen.getByRole('button', { name: 'Отменить' }))
+    await waitFor(() => expect(mutations).toEqual(expect.arrayContaining([
+      { url: '/files/11', method: 'delete' },
+      { url: '/files/11/restore', method: 'post' },
+    ])))
+    expect(await screen.findByRole('button', { name: 'report.txt' })).toBeInTheDocument()
+  })
+
+  it('offers an undo toast after bulk trash and restores every item', async () => {
+    const trashed = new Set<number>()
+    const restored: string[] = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [])
+      if (config.url === '/files') return ok(config, [file(11, 'a.txt', 1), file(12, 'b.txt', 1)].filter((item) => !trashed.has(item.id)))
+      const single = /^\/files\/(\d+)$/.exec(config.url ?? '')
+      if (single && config.method === 'delete') { trashed.add(Number(single[1])); return ok(config, {}) }
+      const restore = /^\/files\/(\d+)\/restore$/.exec(config.url ?? '')
+      if (restore && config.method === 'post') { trashed.delete(Number(restore[1])); restored.push(config.url!); return ok(config, {}) }
+      throw new Error(`Unexpected request: ${config.method} ${config.url}`)
+    }
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'a.txt' })
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать a.txt' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать b.txt' }))
+    await user.click(screen.getByRole('button', { name: 'В корзину' }))
+    await user.click(screen.getByRole('button', { name: 'Переместить выбранное' }))
+    await screen.findByText('Перемещено в корзину: 2')
+    await user.click(screen.getByRole('button', { name: 'Отменить' }))
+    await waitFor(() => expect(restored.sort()).toEqual(['/files/11/restore', '/files/12/restore']))
+    expect(await screen.findByRole('button', { name: 'a.txt' })).toBeInTheDocument()
+  })
+
 })
 
 async function chooseAction(user: ReturnType<typeof userEvent.setup>, name: string, action: string) {

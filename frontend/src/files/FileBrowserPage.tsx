@@ -10,7 +10,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api/errors'
 import { apiRequest } from '../api/client'
 import type { FileItem, FolderContents, FolderItem } from '../types/files'
-import { copyFile, createFolder, getFolder, getFolderContents, moveFile, moveFolder, moveToTrash, renameFile, renameFolder } from './api'
+import { copyFile, createFolder, getFolder, getFolderContents, moveFile, moveFolder, moveToTrash, renameFile, renameFolder, restoreTrashItem } from './api'
 import { downloadOriginalFile, downloadSelectionArchive, type ArchiveSelection } from './download'
 import { droppedEntries, inputEntries, pickDirectory } from '../sharing/publicTree'
 import { enqueueTree } from './treeUpload'
@@ -23,6 +23,8 @@ import { PreviewModal } from './PreviewModal'
 import { FileThumbnail } from './FileThumbnail'
 import { safeOperationError } from './operationErrors'
 import { locatedTarget, searchReturn } from './searchNavigation'
+import { ToastProvider } from '../ui/toast'
+import { useToast } from '../ui/toastContext'
 import {
   fileTypeLabel,
   filterByName,
@@ -160,6 +162,7 @@ export function FileBrowserPage({ revision = 0 }: { revision?: number }) {
   }
 
   return (
+    <ToastProvider>
     <section aria-labelledby="files-heading" className={`files-page${dragging ? ' files-page--drop' : ''}`}
       onDragEnter={(event) => { if (!Array.from(event.dataTransfer.types).includes('Files')) return; event.preventDefault(); dragDepth.current += 1; setDragging(true) }}
       onDragOver={(event) => { if (!Array.from(event.dataTransfer.types).includes('Files')) return; event.preventDefault(); event.dataTransfer.dropEffect = readyPage ? 'copy' : 'none' }}
@@ -274,6 +277,7 @@ export function FileBrowserPage({ revision = 0 }: { revision?: number }) {
       ) : null}
       {!providedQueue ? <UploadManager queue={queue} /> : null}
     </section>
+    </ToastProvider>
   )
 }
 
@@ -558,9 +562,8 @@ function DirectoryTable({
   const [bulkError, setBulkError] = useState<string | null>(null)
   const [archivePending, setArchivePending] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
-  const [archiveHandedOff, setArchiveHandedOff] = useState(false)
-  const [fileHandedOff, setFileHandedOff] = useState(false)
   const archivePendingRef = useRef(false)
+  const toast = useToast()
   useEffect(() => {
     if (!locatedKey) return
     const exists = [...contents.files.map(item => `file:${item.id}`), ...contents.folders.map(item => `folder:${item.id}`)].includes(locatedKey)
@@ -573,7 +576,6 @@ function DirectoryTable({
   useEffect(() => {
     const valid = new Set([...contents.folders.map((item) => `folder:${item.id}`), ...contents.files.map((item) => `file:${item.id}`)])
     setSelection((previous) => new Set([...previous].filter((key) => valid.has(key))))
-    setFileHandedOff(false)
   }, [contents])
   const anchor = useRef<string>()
   const selectionDockRef = useRef<HTMLDivElement>(null)
@@ -665,14 +667,14 @@ function DirectoryTable({
     archivePendingRef.current = true
     setArchivePending(true)
     setArchiveError(null)
-    setArchiveHandedOff(false)
+    toast.dismissKey('archive-download')
     const items: ArchiveSelection[] = [...selection].map((key) => {
       const [kind, id] = key.split(':')
       return { kind: kind as ArchiveSelection['kind'], id: Number(id) }
     })
     try {
       await downloadSelectionArchive(items)
-      if (mounted.current) setArchiveHandedOff(true)
+      if (mounted.current) toast.notify({ kind: 'success', key: 'archive-download', message: 'ZIP передан браузеру. Состояние смотрите в его загрузках.' })
     } catch (cause) {
       if (mounted.current) setArchiveError(archiveDownloadErrorMessage(cause))
     } finally {
@@ -680,19 +682,38 @@ function DirectoryTable({
       if (mounted.current) setArchivePending(false)
     }
   }
+  async function restoreFromTrash(targets: Array<{ kind: 'file' | 'folder'; id: number }>) {
+    try {
+      for (const target of targets) {
+        await restoreTrashItem(target.kind, target.id)
+        if (!mounted.current) return
+      }
+      onChanged()
+    } catch {
+      if (mounted.current) toast.notify({ kind: 'error', message: 'Не удалось отменить перемещение в корзину. Проверьте корзину.' })
+    }
+  }
   async function trashSelection() {
     if (pendingRef.current) return
     pendingRef.current = true; setPending(true); setBulkError(null)
     const targets = [...selection]
+    const trashed: Array<{ kind: 'file' | 'folder'; id: number }> = []
     try {
       for (const key of targets) {
         const [kind, id] = key.split(':')
         await moveToTrash(kind as 'file' | 'folder', Number(id))
         if (!mounted.current) return
+        trashed.push({ kind: kind as 'file' | 'folder', id: Number(id) })
         setSelection((previous) => { const next = new Set(previous); next.delete(key); return next })
         onChanged({ kind: kind as 'file' | 'folder', id: Number(id) })
       }
       setBulkOpen(false)
+      toast.notify({
+        message: `Перемещено в корзину: ${trashed.length}`,
+        actionLabel: 'Отменить',
+        key: 'bulk-trash',
+        onAction: () => void restoreFromTrash(trashed),
+      })
     } catch (cause) { if (mounted.current) setBulkError(safeOperationError(cause, 'Не удалось переместить все объекты в корзину. Уже обработанные объекты сохранены.')) }
     finally { pendingRef.current = false; if (mounted.current) setPending(false) }
   }
@@ -717,6 +738,14 @@ function DirectoryTable({
       if (!mounted.current) return
       setAction(null)
       onChanged(operation === 'trash' ? { kind, id: item.id } : undefined)
+      if (operation === 'trash') {
+        toast.notify({
+          message: kind === 'folder' ? 'Папка перемещена в корзину' : 'Файл перемещён в корзину',
+          actionLabel: 'Отменить',
+          key: `trash-${kind}-${item.id}`,
+          onAction: () => void restoreFromTrash([{ kind, id: item.id }]),
+        })
+      }
     } catch (caught) {
       if (mounted.current) setError(safeOperationError(caught, 'Не удалось выполнить действие.'))
     } finally {
@@ -842,9 +871,8 @@ function DirectoryTable({
             Снять выделение
           </span>
         </button>
-      </div>{archiveError ? <p className="inline-alert" role="alert">{archiveError}</p> : null}{archiveHandedOff ? <p className="muted" role="status">ZIP передан браузеру. Состояние смотрите в его загрузках.</p> : null}</> : null}
+      </div>{archiveError ? <p className="inline-alert" role="alert">{archiveError}</p> : null}</> : null}
       {bulkOpen ? <SmallDialog title="Переместить выбранное в корзину?" onClose={() => { if (!pending) setBulkOpen(false) }}><p>Объектов: {selection.size}. Их можно будет восстановить.</p>{bulkError ? <p role="alert">{bulkError}</p> : null}<div className="dialog-actions"><button className="button button--ghost" disabled={pending} onClick={() => setBulkOpen(false)} type="button">Отмена</button><button className="button button--danger" disabled={pending} onClick={() => void trashSelection()} type="button">{pending ? 'Выполняется…' : 'Переместить выбранное'}</button></div></SmallDialog> : null}
-      {fileHandedOff ? <p className="muted" role="status">Скачивание передано браузеру. Состояние смотрите в его загрузках.</p> : null}
       {trulyEmpty ? <div className="empty-state"><Icon name="folder" /><h3>В этой папке пока пусто</h3><p>Перетащите файлы сюда или воспользуйтесь кнопкой «Добавить».</p></div> : empty ? (
         <div className="empty-state" role="status"><Icon name="search" /><h3>По фильтру ничего не найдено</h3><p>В этой папке нет имён, содержащих «{filter.trim()}».</p><button className="text-link" onClick={() => setFilter('')} type="button">Сбросить фильтр</button></div>
       ) : (
@@ -874,7 +902,7 @@ function DirectoryTable({
                 { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'folder', item: folder, action: 'trash' }) },
               ]} /></td>
             </tr>)}
-            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} disabled={pending} file={file} key={`file-${file.id}`} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => setFileHandedOff(false)} onDownloadHandedOff={() => setFileHandedOff(true)} onShare={() => setShareTarget({
+            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} disabled={pending} file={file} key={`file-${file.id}`} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => toast.dismissKey('file-download')} onDownloadHandedOff={() => toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })} onShare={() => setShareTarget({
       fileId: file.id,
       name: file.name,
       isFolder: false,
