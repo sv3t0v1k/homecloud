@@ -127,6 +127,8 @@ class Tests(unittest.TestCase):
         for path, permitted in (
             ('scripts/ci/stage-cache-proof.py', True),
             ('scripts/ci/test-update-host-verify.py', True),
+            ('scripts/ci/test-recovery-native-workflow.cjs', True),
+            ('scripts/ci/test-recovery-workflow.cjs', True),
             ('scripts/ci/provenance.py', False),
             ('scripts/ci/test-channel.py', False),
             ('scripts/backup.sh', False),
