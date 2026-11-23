@@ -16,6 +16,8 @@ import { InitialsAvatar } from './ui/InitialsAvatar'
 import { PublicSharePage } from './sharing/PublicSharePage'
 import { GlobalSearchPage } from './files/GlobalSearchPage'
 import { SearchSessionProvider } from './files/useGlobalSearch'
+import { HolidayDecorAuto } from './holidays/HolidayDecor'
+import { HolidayPreviewPage } from './holidays/HolidayPreviewPage'
 
 function App() {
   return (
@@ -29,6 +31,7 @@ function App() {
             <Route path="folders/:folderId" element={<DirectoryRoute />} />
             <Route path="trash" element={<DirectoryRoute />} />
             <Route path="search" element={<GlobalSearchPage />} />
+            <Route path="preview/holidays" element={<HolidayPreviewPage />} />
           </Route>
         </Route>
         <Route path="/" element={<Navigate to="/files" replace />} />
@@ -99,6 +102,7 @@ function FileBrowserLayout() {
       </div>
       {trashOpen ? <TrashDialog background={backgroundRef.current} onClose={closeTrash} /> : null}
       {accountOpen ? <AccountDialog onClose={() => setAccountOpen(false)} /> : null}
+      <HolidayDecorAuto />
     </div>
   </UploadQueueProvider></SearchSessionProvider>
 }
