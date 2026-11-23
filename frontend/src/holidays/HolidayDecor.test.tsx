@@ -2,8 +2,8 @@ import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { HolidayDecor, HolidayDecorAuto } from './HolidayDecor'
-import { holidayById } from './holidayTheme'
+import { HolidayDecorAuto, HolidayLogoDecor, HolidayLogoDecorAuto } from './HolidayDecor'
+import { holidayById, HOLIDAY_THEMES } from './holidayTheme'
 
 describe('HolidayDecorAuto', () => {
   beforeEach(() => {
@@ -21,11 +21,20 @@ describe('HolidayDecorAuto', () => {
     expect(container.querySelector('.holiday-decor')).toBeNull()
   })
 
-  it('включает тему по ?holiday=<id> независимо от даты', () => {
-    const { container } = render(<MemoryRouter initialEntries={['/files?holiday=victory']}><HolidayDecorAuto /></MemoryRouter>)
+  it('полноэкранный слой есть только у Нового года', () => {
+    const { container, unmount } = render(<MemoryRouter initialEntries={['/files?holiday=new-year']}><HolidayDecorAuto /></MemoryRouter>)
     const decor = container.querySelector('.holiday-decor')
-    expect(decor?.getAttribute('data-holiday')).toBe('victory')
+    expect(decor?.getAttribute('data-holiday')).toBe('new-year')
     expect(decor?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelectorAll('.holiday-particle').length).toBeGreaterThan(0)
+    unmount()
+
+    // Остальные темы не создают полноэкранного слоя — только бейдж логотипа.
+    for (const theme of HOLIDAY_THEMES.filter((item) => item.id !== 'new-year')) {
+      const probe = render(<MemoryRouter initialEntries={[`/files?holiday=${theme.id}`]}><HolidayDecorAuto /></MemoryRouter>)
+      expect(probe.container.querySelector('.holiday-decor'), theme.id).toBeNull()
+      probe.unmount()
+    }
   })
 
   it('holiday=off выключает оформление даже в праздник', () => {
@@ -35,26 +44,40 @@ describe('HolidayDecorAuto', () => {
   })
 })
 
-describe('HolidayDecor', () => {
-  it('рисует статичные акценты только предусмотренных тем', () => {
-    const { container, rerender } = render(<HolidayDecor theme={holidayById('new-year')!} />)
-    expect(container.querySelector('.holiday-garland')).not.toBeNull()
-    expect(container.querySelector('.holiday-ribbon')).toBeNull()
-
-    rerender(<HolidayDecor theme={holidayById('victory')!} />)
-    expect(container.querySelector('.holiday-ribbon')).not.toBeNull()
-    expect(container.querySelector('.holiday-garland')).toBeNull()
-
-    rerender(<HolidayDecor theme={holidayById('russia-day')!} />)
-    expect(container.querySelector('.holiday-flagbar')).not.toBeNull()
-
-    rerender(<HolidayDecor theme={holidayById('unity-day')!} />)
-    expect(container.querySelector('.holiday-flagcorner')).not.toBeNull()
+describe('HolidayLogoDecor', () => {
+  it('рисует бейдж с маркером темы для каждого праздника', () => {
+    for (const theme of HOLIDAY_THEMES) {
+      const { container, unmount } = render(<HolidayLogoDecor theme={theme} />)
+      const badge = container.querySelector('.holiday-logo-decor')
+      expect(badge?.getAttribute('data-holiday'), theme.id).toBe(theme.id)
+      expect(badge?.getAttribute('aria-hidden')).toBe('true')
+      unmount()
+    }
   })
 
-  it('в inline-режиме добавляет модификатор для сцены галереи', () => {
-    const { container } = render(<HolidayDecor inline theme={holidayById('valentine')!} />)
-    expect(container.querySelector('.holiday-decor--inline')).not.toBeNull()
-    expect(container.querySelectorAll('.holiday-particle').length).toBeGreaterThan(0)
+  it('на Новый год добавляет мини-гирлянду на логотип', () => {
+    const { container } = render(<HolidayLogoDecor theme={holidayById('new-year')!} />)
+    expect(container.querySelector('.holiday-mini-garland')).not.toBeNull()
+    expect(container.querySelectorAll('.holiday-garland-bulb').length).toBeGreaterThan(0)
+
+    const { container: other } = render(<HolidayLogoDecor theme={holidayById('valentine')!} />)
+    expect(other.querySelector('.holiday-mini-garland')).toBeNull()
+  })
+})
+
+describe('HolidayLogoDecorAuto', () => {
+  it('включает бейдж по ?holiday=<id> и молчит в обычный день', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-20T12:00:00'))
+    try {
+      const themed = render(<MemoryRouter initialEntries={['/files?holiday=victory']}><HolidayLogoDecorAuto /></MemoryRouter>)
+      expect(themed.container.querySelector('.holiday-logo-decor')?.getAttribute('data-holiday')).toBe('victory')
+      themed.unmount()
+
+      const plain = render(<MemoryRouter initialEntries={['/files']}><HolidayLogoDecorAuto /></MemoryRouter>)
+      expect(plain.container.querySelector('.holiday-logo-decor')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

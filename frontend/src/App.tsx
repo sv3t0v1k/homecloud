@@ -16,7 +16,7 @@ import { InitialsAvatar } from './ui/InitialsAvatar'
 import { PublicSharePage } from './sharing/PublicSharePage'
 import { GlobalSearchPage } from './files/GlobalSearchPage'
 import { SearchSessionProvider } from './files/useGlobalSearch'
-import { HolidayDecorAuto } from './holidays/HolidayDecor'
+import { HolidayDecorAuto, HolidayLogoDecorAuto } from './holidays/HolidayDecor'
 import { HolidayPreviewPage } from './holidays/HolidayPreviewPage'
 
 function App() {
@@ -223,7 +223,7 @@ function Navbar({ onOpenAccount }: { onOpenAccount(): void }) {
   return (
     <>
     <header className="topbar">
-      <Link className="brand" to="/files"><span className="brand-mark"><Icon name="cloud" /></span><span>HomeCloud</span></Link>
+      <Link className="brand" to="/files"><span className="brand-mark"><Icon name="cloud" /><HolidayLogoDecorAuto /></span><span>HomeCloud</span></Link>
       <div className="spotlight-launcher-slot">
         <button
           className="global-search-launcher button button--ghost"

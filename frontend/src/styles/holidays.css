@@ -1,4 +1,6 @@
-/* Праздничные оформления интерфейса. Слой поверх контента, событий не перехватывает. */
+/* Праздничные оформления интерфейса.
+   Концепция: полноэкранный эффект только на Новый год (снег), остальные
+   праздники выражены стилизацией логотипа (бейдж в углу .brand-mark). */
 
 .holiday-decor {
   position: fixed;
@@ -6,8 +8,8 @@
   z-index: 20;
   overflow: hidden;
   pointer-events: none;
-  /* Траектории частиц в cqh — относительно слоя, а не viewport: в мини-сценах
-     галереи плотность частиц такая же, как на весь экран. */
+  /* Траектории снежинок в cqh — относительно слоя, а не viewport: в мини-сценах
+     галереи плотность такая же, как на весь экран. */
   container-type: size;
 }
 
@@ -24,15 +26,7 @@
   animation-direction: normal, alternate;
 }
 
-/* Статичные акценты позиционируются от слоя (fixed) или от сцены галереи (inline). */
-.holiday-garland,
-.holiday-ribbon,
-.holiday-flagbar,
-.holiday-flagcorner {
-  position: absolute;
-}
-
-/* ---------- Новый год: снег и гирлянда ---------- */
+/* ---------- Новый год: снег ---------- */
 
 .holiday-decor[data-holiday='new-year'] .holiday-particle {
   top: -24px;
@@ -44,40 +38,70 @@
   content: '❄';
 }
 
-.holiday-garland {
-  top: 2px;
-  left: 0;
-  right: 0;
-  display: flex;
-  justify-content: space-evenly;
+/* ---------- Бейджи у логотипа ---------- */
+
+.brand-mark {
+  position: relative;
 }
 
+.holiday-logo-decor {
+  position: absolute;
+  top: -7px;
+  right: -9px;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+/* Новый год: мини-гирлянда дугой над логотипом */
+.holiday-logo-decor[data-holiday='new-year'] {
+  top: -10px;
+  right: -6px;
+  left: -6px;
+  width: auto;
+  height: 12px;
+}
+
+.holiday-mini-garland {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.holiday-mini-garland .holiday-garland-bulb {
+  width: 5px;
+  height: 5px;
+  margin-top: 0;
+}
+
+/* Лампочки по дуге: крайние выше, центральные ниже */
+.holiday-mini-garland .holiday-garland-bulb:nth-child(1) { margin-top: 1px; }
+.holiday-mini-garland .holiday-garland-bulb:nth-child(2) { margin-top: 5px; }
+.holiday-mini-garland .holiday-garland-bulb:nth-child(3) { margin-top: 7px; }
+.holiday-mini-garland .holiday-garland-bulb:nth-child(4) { margin-top: 5px; }
+.holiday-mini-garland .holiday-garland-bulb:nth-child(5) { margin-top: 1px; }
+
 .holiday-garland-bulb {
-  width: 8px;
-  height: 8px;
-  margin-top: 6px;
+  display: block;
   border-radius: 50%;
   background: #ffd166;
-  box-shadow: 0 0 8px 2px rgba(255, 209, 102, 0.55);
+  box-shadow: 0 0 6px 2px rgba(255, 209, 102, 0.55);
   animation: holiday-bulb 2.4s ease-in-out infinite alternate;
 }
 
-.holiday-garland-bulb:nth-child(4n + 1) { background: #ef476f; box-shadow: 0 0 8px 2px rgba(239, 71, 111, 0.55); animation-delay: -0.6s; }
-.holiday-garland-bulb:nth-child(4n + 2) { background: #06d6a0; box-shadow: 0 0 8px 2px rgba(6, 214, 160, 0.55); animation-delay: -1.2s; }
-.holiday-garland-bulb:nth-child(4n + 3) { background: #4cc9f0; box-shadow: 0 0 8px 2px rgba(76, 201, 240, 0.55); animation-delay: -1.8s; }
+.holiday-garland-bulb:nth-child(4n + 1) { background: #ef476f; box-shadow: 0 0 6px 2px rgba(239, 71, 111, 0.55); animation-delay: -0.6s; }
+.holiday-garland-bulb:nth-child(4n + 2) { background: #06d6a0; box-shadow: 0 0 6px 2px rgba(6, 214, 160, 0.55); animation-delay: -1.2s; }
+.holiday-garland-bulb:nth-child(4n + 3) { background: #4cc9f0; box-shadow: 0 0 6px 2px rgba(76, 201, 240, 0.55); animation-delay: -1.8s; }
 
-/* ---------- 14 февраля: всплывающие сердечки ---------- */
-
-.holiday-decor[data-holiday='valentine'] .holiday-particle {
-  bottom: -24px;
-  top: auto;
+/* 14 февраля: сердечко */
+.holiday-logo-decor[data-holiday='valentine'] {
   background: #ff5b7f;
-  transform: rotate(45deg);
-  animation-name: holiday-rise, holiday-sway;
+  transform: rotate(45deg) scale(0.8);
+  border-radius: 2px;
 }
 
-.holiday-decor[data-holiday='valentine'] .holiday-particle::before,
-.holiday-decor[data-holiday='valentine'] .holiday-particle::after {
+.holiday-logo-decor[data-holiday='valentine']::before,
+.holiday-logo-decor[data-holiday='valentine']::after {
   content: '';
   position: absolute;
   width: 100%;
@@ -86,106 +110,99 @@
   background: #ff5b7f;
 }
 
-.holiday-decor[data-holiday='valentine'] .holiday-particle::before { left: -50%; }
-.holiday-decor[data-holiday='valentine'] .holiday-particle::after { top: -50%; }
+.holiday-logo-decor[data-holiday='valentine']::before { left: -50%; }
+.holiday-logo-decor[data-holiday='valentine']::after { top: -50%; }
 
-/* ---------- 23 февраля: мерцающие звёзды ---------- */
-
-.holiday-decor[data-holiday='defender'] .holiday-particle {
-  top: 12%;
+/* 23 февраля: красная звезда */
+.holiday-logo-decor[data-holiday='defender'] {
   color: #ef4444;
-  text-shadow: 0 0 8px rgba(255, 196, 0, 0.7);
-  animation-name: holiday-twinkle;
+  font-size: 15px;
+  line-height: 14px;
+  text-shadow: 0 0 6px rgba(255, 196, 0, 0.7);
+  animation: holiday-twinkle 3s ease-in-out infinite;
 }
 
-.holiday-decor[data-holiday='defender'] .holiday-particle::before {
+.holiday-logo-decor[data-holiday='defender']::before {
   content: '★';
 }
 
-.holiday-decor[data-holiday='defender'] .holiday-particle:nth-child(2n) {
-  top: 42%;
-}
-
-/* ---------- 8 марта: лепестки тюльпанов ---------- */
-
-.holiday-decor[data-holiday='women-day'] .holiday-particle {
-  top: -24px;
+/* 8 марта: тюльпан */
+.holiday-logo-decor[data-holiday='women-day']::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  width: 9px;
+  height: 9px;
   border-radius: 62% 38% 60% 40%;
   background: linear-gradient(135deg, #ff8fb3, #ff5b8f);
-  opacity: 0.9;
 }
 
-/* ---------- 1 мая: весенние листья ---------- */
+.holiday-logo-decor[data-holiday='women-day']::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 8px;
+  width: 2px;
+  height: 7px;
+  border-radius: 1px;
+  background: #2f9e5f;
+}
 
-.holiday-decor[data-holiday='spring-labour'] .holiday-particle {
-  top: -24px;
+/* 1 мая: зелёный листок */
+.holiday-logo-decor[data-holiday='spring-labour']::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
   border-radius: 70% 30% 70% 30%;
   background: linear-gradient(135deg, #7bd88a, #2f9e5f);
-  opacity: 0.85;
+  transform: rotate(20deg);
 }
 
-/* ---------- 9 мая: георгиевская ленточка и салют ---------- */
-
-.holiday-ribbon {
-  top: 0;
-  right: 28px;
-  width: 14px;
-  height: 64px;
-  border-radius: 0 0 4px 4px;
-  background: repeating-linear-gradient(
-    180deg,
-    #f08c00 0 8px,
-    #1a1a1a 8px 16px
-  );
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+/* 9 мая: георгиевская ленточка под логотипом */
+.holiday-logo-decor[data-holiday='victory'] {
+  top: auto;
+  bottom: -8px;
+  right: -4px;
+  width: 9px;
+  height: 14px;
+  border-radius: 0 0 2px 2px;
+  background: repeating-linear-gradient(180deg, #f08c00 0 3px, #1a1a1a 3px 6px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
 }
 
-.holiday-decor[data-holiday='victory'] .holiday-particle {
-  border: 2px solid #ffd166;
-  border-radius: 50%;
-  animation-name: holiday-burst;
-  animation-timing-function: ease-out;
-}
-
-.holiday-decor[data-holiday='victory'] .holiday-particle:nth-child(3n) { border-color: #ef4444; }
-.holiday-decor[data-holiday='victory'] .holiday-particle:nth-child(3n + 1) { border-color: #4cc9f0; }
-
-/* ---------- День России: триколор-полоса ---------- */
-
-.holiday-flagbar {
-  top: 0;
+/* День России: триколор-подчёркивание логотипа */
+.holiday-logo-decor[data-holiday='russia-day'] {
+  top: auto;
+  bottom: -6px;
   left: 0;
   right: 0;
-  height: 4px;
-  background: linear-gradient(180deg, #ffffff 0 33.4%, #0039a6 33.4% 66.7%, #d52b1e 66.7% 100%);
+  width: auto;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #ffffff 0 33.4%, #0039a6 33.4% 66.7%, #d52b1e 66.7% 100%);
 }
 
-/* ---------- День народного единства: флажок в углу ---------- */
+/* 1 сентября: осенний лист */
+.holiday-logo-decor[data-holiday='knowledge-day']::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: 60% 40% 55% 45%;
+  background: linear-gradient(135deg, #e9c46a, #e76f51);
+  transform: rotate(-15deg);
+}
 
-.holiday-flagcorner {
-  left: 24px;
-  bottom: 24px;
-  width: 34px;
-  height: 22px;
+/* 4 ноября: флажок */
+.holiday-logo-decor[data-holiday='unity-day'] {
+  width: 16px;
+  height: 11px;
   border-left: 2px solid rgba(200, 200, 200, 0.6);
   background: linear-gradient(180deg, #ffffff 0 33.4%, #0039a6 33.4% 66.7%, #d52b1e 66.7% 100%);
   background-origin: content-box;
   padding-left: 2px;
-  border-radius: 2px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
-}
-
-/* ---------- 1 сентября: осенние листья ---------- */
-
-.holiday-decor[data-holiday='knowledge-day'] .holiday-particle {
-  top: -24px;
-  border-radius: 60% 40% 55% 45%;
-  background: linear-gradient(135deg, #f4a261, #e76f51);
-  opacity: 0.9;
-}
-
-.holiday-decor[data-holiday='knowledge-day'] .holiday-particle:nth-child(2n) {
-  background: linear-gradient(135deg, #e9c46a, #d4a017);
+  border-radius: 1px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 /* ---------- Анимации ---------- */
@@ -195,25 +212,14 @@
   to { transform: translateY(112cqh) rotate(320deg); }
 }
 
-@keyframes holiday-rise {
-  from { transform: translateY(0) rotate(45deg); }
-  to { transform: translateY(-118cqh) rotate(45deg); }
-}
-
 @keyframes holiday-sway {
   from { margin-left: -14px; }
   to { margin-left: 14px; }
 }
 
 @keyframes holiday-twinkle {
-  0%, 100% { opacity: 0.25; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.15); }
-}
-
-@keyframes holiday-burst {
-  0% { transform: scale(0.1); opacity: 1; }
-  60% { opacity: 0.9; }
-  100% { transform: scale(3.5); opacity: 0; }
+  0%, 100% { opacity: 0.55; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
 }
 
 @keyframes holiday-bulb {
@@ -228,9 +234,9 @@
     display: none;
   }
 
-  .holiday-garland-bulb {
+  .holiday-garland-bulb,
+  .holiday-logo-decor[data-holiday='defender'] {
     animation: none;
-    opacity: 0.9;
   }
 }
 
@@ -262,9 +268,19 @@
 
 .holiday-preview-stage {
   position: relative;
-  height: 220px;
+  display: grid;
+  place-items: center;
+  height: 160px;
   overflow: hidden;
   background: var(--surface-secondary, #0e1116);
+}
+
+.holiday-preview-brand {
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  font-size: 30px;
 }
 
 .holiday-preview-card h3 {

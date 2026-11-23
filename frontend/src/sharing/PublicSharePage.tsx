@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { PublicUploadPanel } from './PublicUploadPanel'
 import { Icon } from '../ui/Icon'
+import { HolidayDecorAuto, HolidayLogoDecorAuto } from '../holidays/HolidayDecor'
 import { formatBytes } from '../ui/formatBytes'
 import { ApiError } from '../api/errors'
 import { downloadPublicShare, getPublicShare, getSharedChildren, verifyPublicShare, type PublicShare, type SharedChildren } from './publicShareApi'
@@ -99,8 +100,9 @@ function PublicShareContent({ token }: { token: string }) {
   const protectedResource = share?.requiresPassword && verifiedPassword === null
   const title = share?.resource?.name || (protectedResource ? 'Доступ защищён паролем' : share?.isFolder ? 'Общая папка' : !share && !loading ? 'Ссылка недоступна' : 'Файл по ссылке')
   return <main className="public-share-page">
+    <HolidayDecorAuto />
     <div className="public-share-layout">
-      <header className="public-share-brand"><Icon name="cloud" width="28" height="28" /><span>HomeCloud</span></header>
+      <header className="public-share-brand"><span className="brand-mark"><Icon name="cloud" width="28" height="28" /><HolidayLogoDecorAuto /></span><span>HomeCloud</span></header>
       <section className="public-share-card" aria-labelledby="share-title" aria-busy={loading || busy}>
         <div className="public-share-symbol"><Icon name={protectedResource ? 'lock' : share?.isFolder ? 'folder' : 'file'} width="32" height="32" /></div>
         <p className="public-share-kicker">{protectedResource ? 'Защищённая ссылка' : share?.isFolder ? 'Общая папка' : 'Общий доступ'}</p>
