@@ -116,3 +116,65 @@ UI-путь не использовался нарочно (операторск
 - До установки: якоря из `/root/anchor-backup-20261122T114906Z/` +
   `git reset --hard a25ab63`.
 - После установки: только через backup_id из квитанции `47a5ac66…` (recovery-inspect).
+
+## Дополнение: установка test-650264c — отказ BACKUP после смены LOCKED_FILES, сведение и успех (02:40–03:45 VLAT 23.11)
+
+Кандидат `test-650264c` (PR #82, лимиты загрузки 100 GiB) меняет
+`docker-compose.project-test.yml` — файл из `LOCKED_FILES`. Установка потребовала
+ручной квалификации и выявила неочевидный порядок действий.
+
+1. **Первая заявка — отказ на precheck.** `precheck_source` отказал по
+   `LOCKED_FILES`: «operational/Compose Git entry changed; manual qualification
+   required» — побайтовое тождество operational/Compose-файлов между текущим и
+   целевым коммитами обязательно. Квитанция: `phase=INSTALLER`,
+   `MANUAL_RECOVERY_REQUIRED` (16:47:35 UTC) → заархивирована как
+   `status/archive/20261122T1647Z-MANUAL_RECOVERY-locked-compose.json`.
+   `pending.json` не создавался (отказ до начала транзакции).
+2. **Ручная квалификация.** Checkout ff-мержнут на `650264c`, байты
+   compose-файлов сверены с Git-блобами (`git show 650264c:<path>`).
+3. **Вторая заявка — отказ на BACKUP.** `precheck_source` прошёл
+   (current == target), транзакция дошла до фазы BACKUP, но
+   `recovery_storage.resolve_storage()` отказал: «backend container does not
+   match current Compose configuration». Причина: контейнеры были созданы из
+   compose-конфигурации 6235418, а после ff-merge файлы на диске — 650264c;
+   config-hash backend разошёлся, и storage fence сработал fail-closed — как и
+   задумано. Автоматический откат (`recover_before_start`) корректно отказал из-за
+   живого maintenance-маркера → `MANUAL_RECOVERY_REQUIRED`, `backup_id=null`
+   (backup.sh пал на `recovery_storage_resolve`, до lock/staging — артефактов нет).
+   Квитанция: `phase=BACKUP` (17:08:31 UTC).
+4. **Операторское сведение** (прецедент `manual-reconciled-*`):
+   - evidence сведено в `.runtime/test-channel/manual-reconciled-20261122T1734Z-53466f4f/`
+     (pending.json, last-status.json, bridge-receipt.json);
+   - идентичность маркера сверена с `pending.json.backup_maintenance`
+     (st_dev/st_ino 64512/843747, root:root 0600) и маркер удалён;
+   - `pending.json` удалён; `last-status.json` восстановлен в засвидетельствованное
+     INSTALLED 13:28 (commit 6235418, backup_id `20261122_132752_01befae0`,
+     manifest `ee25078c…`; поле `at` взято из bridge-квитанции — исходное значение
+     установщика было перезаписано отказом);
+   - bridge-квитанция заархивирована как
+     `status/archive/20261122T1734Z-MANUAL_RECOVERY-backup-storage-drift.json` → `NO_JOB`;
+   - `homecloud-test-launcher start`: compose пересоздал backend/frontend/ingress
+     под конфигурацию 650264c (образы — прежние закреплённые из runtime.env),
+     config-hash сошёлся, `resolve_storage` → OK, 4 контейнера healthy, HTTPS 200.
+5. **Третья заявка — успех.** `POST /updates/installations`
+   (`manifestSha256=53466f4f…`) → QUEUED → фазы VERIFY_TRUST → FETCH_MANIFEST →
+   VERIFY_IMAGES → BACKUP → START_SERVICES → SMOKE → COMMIT_STATE → COMPLETE.
+   Квитанция: `status/archive/53466f4f….json` — INSTALLED (17:40:17 UTC),
+   backup_id `20261122_173933_4bb641e5`. Окно admission закрыто.
+6. **Пост-проверки:** `installed.json = 650264c`, `state.json.active = 650264c`;
+   `GET /updates` → `current`, `available: null`; 4 контейнера healthy; HTTPS 200;
+   `GET /api/v1/uploads/limits` → `maxFileBytes = maxActiveBytes =
+   107374182400` (100 GiB), `effectiveMaxFileBytes = 107374182400`.
+
+**Правило на будущее (LOCKED_FILES):** при изменении operational/Compose-файлов
+автоматическая установка штатно отказывает на precheck. Ручная квалификация =
+ff-merge checkout **и немедленное пересоздание контейнеров** из новой
+конфигурации (`homecloud-test-launcher start`), иначе backup-фаза следующей
+установки откажет по config-hash (storage fence требует тождества
+закреплённого контейнера и текущего Compose-конфига). Сведение отказа на BACKUP
+с `backup_id=null` допустимо только после проверки: отказ произошёл до создания
+артефактов (нет `.staging`/`.backup.lock`), идентичность маркера сошлась с
+`pending.json`, данные и state.json соответствуют прежнему checkpoints.
+
+**Напоминание по ёмкости:** честная загрузка 100 ГБ требует расширения диска sdc
+в Proxmox — на момент установки свободно ~90 GiB из 96 GiB.
