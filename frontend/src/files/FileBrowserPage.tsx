@@ -1,5 +1,5 @@
 import { formatBytes } from '../ui/formatBytes'
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { Icon } from '../ui/Icon'
 import { LiquidCloseButton } from '../ui/LiquidCloseButton'
@@ -10,11 +10,12 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api/errors'
 import { apiRequest } from '../api/client'
 import type { FileItem, FolderContents, FolderItem } from '../types/files'
-import { copyFile, createFolder, getFolder, getFolderContents, moveFile, moveFolder, moveToTrash, renameFile, renameFolder } from './api'
+import { copyFile, createFolder, getFolder, getFolderContents, moveFile, moveFolder, moveToTrash, renameFile, renameFolder, restoreTrashItem } from './api'
 import { downloadOriginalFile, downloadSelectionArchive, type ArchiveSelection } from './download'
 import { droppedEntries, inputEntries, pickDirectory } from '../sharing/publicTree'
 import { enqueueTree } from './treeUpload'
-import { UploadQueue, type UploadQueueItem } from './uploadQueue'
+import { localFileReadError, UploadQueue, type UploadQueueItem } from './uploadQueue'
+import { formatEta, UploadSpeedTracker } from './uploadSpeed'
 import {
   ShareDialog,
   type ShareDialogTarget,
@@ -23,6 +24,22 @@ import { PreviewModal } from './PreviewModal'
 import { FileThumbnail } from './FileThumbnail'
 import { safeOperationError } from './operationErrors'
 import { locatedTarget, searchReturn } from './searchNavigation'
+import { ToastProvider } from '../ui/toast'
+import { useToast } from '../ui/toastContext'
+import { DIRECTORY_SHORTCUTS } from './shortcuts'
+import { clearActiveDrag, encodeDragItems, setActiveDrag, useItemsDrop } from './dragItems'
+import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
+import {
+  fileTypeLabel,
+  filterByName,
+  readSavedSort,
+  saveSort,
+  sortFiles,
+  sortFolders,
+  toggleSort,
+  type DirectorySort,
+  type SortKey,
+} from './directorySort'
 
 interface Crumb { id: number; name: string }
 
@@ -149,6 +166,7 @@ export function FileBrowserPage({ revision = 0 }: { revision?: number }) {
   }
 
   return (
+    <ToastProvider>
     <section aria-labelledby="files-heading" className={`files-page${dragging ? ' files-page--drop' : ''}`}
       onDragEnter={(event) => { if (!Array.from(event.dataTransfer.types).includes('Files')) return; event.preventDefault(); dragDepth.current += 1; setDragging(true) }}
       onDragOver={(event) => { if (!Array.from(event.dataTransfer.types).includes('Files')) return; event.preventDefault(); event.dataTransfer.dropEffect = readyPage ? 'copy' : 'none' }}
@@ -161,7 +179,7 @@ export function FileBrowserPage({ revision = 0 }: { revision?: number }) {
         const target = folderId ?? undefined
         void droppedEntries(event.dataTransfer.items ?? [] as unknown as DataTransferItemList, event.dataTransfer.files)
           .then((entries) => enqueueTree(entries, queue, target, () => alive.current, () => { if (alive.current) setReloadKey((key) => key + 1) }))
-          .catch((cause: unknown) => { if (alive.current) setDropError(cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'Не удалось добавить дерево папки. Уже добавленные объекты сохранены. Проверьте папку перед повтором.') })
+          .catch((cause: unknown) => { if (alive.current) setDropError(localFileReadError(cause) ?? (cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'Не удалось добавить дерево папки. Уже добавленные объекты сохранены. Проверьте папку перед повтором.')) })
           .finally(() => { collectionLock.current = false; if (alive.current) setCollecting(false) })
       }}>
       {dragging ? (
@@ -222,7 +240,7 @@ export function FileBrowserPage({ revision = 0 }: { revision?: number }) {
       ) : null}
       {dropError ? <p className="inline-alert" role="alert">{dropError}</p> : null}
       {collecting ? <p role="status">Добавляем папки и файлы…</p> : null}
-      <Breadcrumbs crumbs={crumbs} />
+      <Breadcrumbs crumbs={crumbs} onChanged={refresh} />
       {searchBack ? <div className="located-object-note"><Link className="text-link" to={searchBack}><Icon name="arrow-left" />Вернуться к результатам поиска</Link>{readyPage && target ? <span role="status">{(target.kind === 'file' ? readyPage.contents.files : readyPage.contents.folders).some(item => item.id === target.id) ? 'Найденный объект выделен в папке.' : 'Расположение изменилось или объект больше недоступен. Повторите поиск.'}</span> : null}</div> : null}
       <div className="files-page-header">
       <div className="page-heading"><h2 id="files-heading">{title}</h2></div>
@@ -263,6 +281,7 @@ export function FileBrowserPage({ revision = 0 }: { revision?: number }) {
       ) : null}
       {!providedQueue ? <UploadManager queue={queue} /> : null}
     </section>
+    </ToastProvider>
   )
 }
 
@@ -311,15 +330,29 @@ async function loadAncestors(folderId: number, signal: AbortSignal): Promise<Cru
   return reversed.reverse()
 }
 
-function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
+function Breadcrumbs({ crumbs, onChanged }: { crumbs: Crumb[]; onChanged(): void }) {
+  // Middle crumbs collapse into an ellipsis on narrow screens.
+  const collapsible = crumbs.length > 2
+  const itemsDrop = useItemsDrop(onChanged)
+  const rootKey = 'folder:root'
   return (
-    <nav aria-label="Путь к папке" className="breadcrumbs">
+    <nav aria-label="Путь к папке" className={`breadcrumbs${collapsible ? ' breadcrumbs--collapsible' : ''}`}>
       <ol className="breadcrumb-list">
-        <li>{crumbs.length === 0 ? <span aria-current="page">Мои файлы</span> : <Link className="text-link" to="/files">Мои файлы</Link>}</li>
+        <li
+          className={itemsDrop.dropKey === rootKey ? 'is-drop-target' : undefined}
+          {...(crumbs.length > 0 ? itemsDrop.targetHandlers(rootKey, null) : {})}
+        >{crumbs.length === 0 ? <span aria-current="page">Мои файлы</span> : <Link className="text-link" to="/files">Мои файлы</Link>}</li>
+        {collapsible ? <li aria-hidden="true" className="breadcrumb-ellipsis">…</li> : null}
         {crumbs.map((crumb, index) => {
           const current = index === crumbs.length - 1
+          const middle = collapsible && index < crumbs.length - 1
+          const targetKey = `folder:${crumb.id}`
           return (
-            <li className="breadcrumb-item" key={crumb.id}>
+            <li
+              className={`breadcrumb-item${middle ? ' breadcrumb-item--middle' : ''}${itemsDrop.dropKey === targetKey ? ' is-drop-target' : ''}`}
+              key={crumb.id}
+              {...(!current ? itemsDrop.targetHandlers(targetKey, crumb.id) : {})}
+            >
               <span aria-hidden="true">/</span>
               {current ? <span aria-current="page">{crumb.name}</span> : (
                 <Link className="text-link" state={{ crumbs: crumbs.slice(0, index + 1) }} to={`/files/folders/${crumb.id}`}>{crumb.name}</Link>
@@ -333,6 +366,23 @@ function Breadcrumbs({ crumbs }: { crumbs: Crumb[] }) {
 }
 
 type ItemAction = { kind: 'file' | 'folder'; item: FileItem | FolderItem; action: 'rename' | 'move' | 'copy' | 'trash' }
+
+function SortableTh({ column, label, sort, onSort }: { column: SortKey; label: string; sort: DirectorySort; onSort(key: SortKey): void }) {
+  const active = sort.key === column
+  return (
+    <th aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined} scope="col">
+      <button
+        aria-label={`Сортировать: ${label}`}
+        className={`column-sort${active ? ' is-active' : ''}`}
+        onClick={() => onSort(column)}
+        type="button"
+      >
+        <span>{label}</span>
+        <Icon name={active ? (sort.direction === 'asc' ? 'sort-asc' : 'sort-desc') : 'sort'} />
+      </button>
+    </th>
+  )
+}
 
 function DirectoryTable({
   contents, currentFolderId, onChanged, onOpenFolder,
@@ -383,6 +433,7 @@ function DirectoryTable({
   }, [motionHistory, motionPath])
 
   const [shareTarget, setShareTarget] = useState<ShareDialogTarget | null>(null)
+  const [previewFile, setPreviewFile] = useState<FileItem | null>(null)
   const [action, setAction] = useState<ItemAction | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -523,12 +574,12 @@ function DirectoryTable({
   }
   const [selection, setSelection] = useState<Set<string>>(new Set())
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [bulkError, setBulkError] = useState<string | null>(null)
   const [archivePending, setArchivePending] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
-  const [archiveHandedOff, setArchiveHandedOff] = useState(false)
-  const [fileHandedOff, setFileHandedOff] = useState(false)
   const archivePendingRef = useRef(false)
+  const toast = useToast()
   useEffect(() => {
     if (!locatedKey) return
     const exists = [...contents.files.map(item => `file:${item.id}`), ...contents.folders.map(item => `folder:${item.id}`)].includes(locatedKey)
@@ -541,7 +592,6 @@ function DirectoryTable({
   useEffect(() => {
     const valid = new Set([...contents.folders.map((item) => `folder:${item.id}`), ...contents.files.map((item) => `file:${item.id}`)])
     setSelection((previous) => new Set([...previous].filter((key) => valid.has(key))))
-    setFileHandedOff(false)
   }, [contents])
   const anchor = useRef<string>()
   const selectionDockRef = useRef<HTMLDivElement>(null)
@@ -592,8 +642,24 @@ function DirectoryTable({
       'click', clearSelectionOnBackground, true,
     )
   }, [selection.size])
-  const folders = contents.folders
-  const files = contents.files
+  const [sort, setSort] = useState<DirectorySort>(() => readSavedSort(typeof sessionStorage === 'undefined' ? undefined : sessionStorage))
+  const [filter, setFilter] = useState('')
+  function changeSort(key: SortKey) {
+    setSort((current) => {
+      const next = toggleSort(current, key)
+      saveSort(next, typeof sessionStorage === 'undefined' ? undefined : sessionStorage)
+      return next
+    })
+  }
+  const folders = useMemo(
+    () => sortFolders(filterByName(contents.folders, filter), sort),
+    [contents.folders, filter, sort],
+  )
+  const files = useMemo(
+    () => sortFiles(filterByName(contents.files, filter), sort),
+    [contents.files, filter, sort],
+  )
+  const filtering = filter.trim().length > 0
   const visibleKeys = [...folders.map((item) => `folder:${item.id}`), ...files.map((item) => `file:${item.id}`)]
   function select(key: string, event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }, toggle = false) {
     setSelection((previous) => {
@@ -606,25 +672,136 @@ function DirectoryTable({
       return new Set([key])
     })
   }
+  const [menuState, setMenuState] = useState<{ x: number; y: number; key: string } | null>(null)
+  const menuReturnFocus = useRef<HTMLElement | null>(null)
   function contextMenu(event: React.MouseEvent<HTMLTableRowElement>, key: string) {
     if ((event.target as HTMLElement).closest('.file-actions, input, label')) return
     event.preventDefault()
-    if (!selection.has(key)) setSelection(new Set([key]))
-    event.currentTarget.querySelector<HTMLButtonElement>('.action-menu > button')?.click()
+    if (!selection.has(key)) {
+      anchor.current = key
+      setSelection(new Set([key]))
+    }
+    menuReturnFocus.current = event.currentTarget.querySelector<HTMLElement>('.file-name')
+    setMenuState({ x: event.clientX, y: event.clientY, key })
+  }
+  function closeContextMenu() {
+    setMenuState(null)
+    menuReturnFocus.current?.focus({ preventScroll: true })
+    menuReturnFocus.current = null
+  }
+  function contextMenuItems(key: string): ContextMenuItem[] {
+    const [kind, id] = key.split(':')
+    const numericId = Number(id)
+    if (kind === 'folder') {
+      const folder = contents.folders.find((item) => item.id === numericId)
+      if (!folder) return []
+      return [
+        { label: 'Открыть', icon: 'folder', onSelect: () => onOpenFolder(folder) },
+        { label: 'Поделиться', icon: 'link', onSelect: () => setShareTarget({ fileId: folder.shareFileId, name: folder.name, isFolder: true }) },
+        { label: 'Переименовать', icon: 'edit', onSelect: () => openAction({ kind: 'folder', item: folder, action: 'rename' }) },
+        { label: 'Переместить', icon: 'move', onSelect: () => openAction({ kind: 'folder', item: folder, action: 'move' }) },
+        { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'folder', item: folder, action: 'trash' }) },
+      ]
+    }
+    const file = contents.files.find((item) => item.id === numericId)
+    if (!file) return []
+    return [
+      { label: 'Просмотр', icon: 'file', onSelect: () => setPreviewFile(file) },
+      { label: 'Скачать', icon: 'download', onSelect: () => void downloadFromMenu(file) },
+      { label: 'Поделиться', icon: 'link', onSelect: () => setShareTarget({ fileId: file.id, name: file.name, isFolder: false, mimeType: file.mimeType, updatedAt: file.updatedAt }) },
+      { label: 'Переименовать', icon: 'edit', onSelect: () => openAction({ kind: 'file', item: file, action: 'rename' }) },
+      { label: 'Переместить', icon: 'move', onSelect: () => openAction({ kind: 'file', item: file, action: 'move' }) },
+      { label: 'Копировать', icon: 'copy', onSelect: () => openAction({ kind: 'file', item: file, action: 'copy' }) },
+      { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'file', item: file, action: 'trash' }) },
+    ]
+  }
+  async function downloadFromMenu(file: FileItem) {
+    toast.dismissKey('file-download')
+    try {
+      await downloadOriginalFile(file)
+      toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })
+    } catch (cause) {
+      toast.notify({ kind: 'error', key: 'file-download', message: downloadErrorMessage(cause) })
+    }
+  }
+  // Горячие клавиши уровня страницы. Состояние читаем через ref, чтобы не
+  // перевешивать document-слушатель на каждый рендер.
+  const shortcutState = useRef({ selection, visibleKeys, folders, files, pending })
+  shortcutState.current = { selection, visibleKeys, folders, files, pending }
+  useEffect(() => {
+    function onShortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (document.querySelector('[aria-modal="true"], [role="menu"]')) return
+      const state = shortcutState.current
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        anchor.current = state.visibleKeys[0]
+        setSelection(new Set(state.visibleKeys))
+        return
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.key === 'Escape' && state.selection.size) {
+        anchor.current = undefined
+        setSelection(new Set())
+        return
+      }
+      if (event.key === '?' ) {
+        event.preventDefault()
+        setShortcutsOpen(true)
+        return
+      }
+      if (!state.selection.size || state.pending) return
+      if (event.key === 'Delete') {
+        event.preventDefault()
+        setBulkError(null)
+        setBulkOpen(true)
+        return
+      }
+      if (event.key === 'F2' && state.selection.size === 1) {
+        event.preventDefault()
+        const [key] = state.selection
+        const [kind, id] = key.split(':')
+        const numericId = Number(id)
+        const item = kind === 'folder'
+          ? state.folders.find((folder) => folder.id === numericId)
+          : state.files.find((file) => file.id === numericId)
+        if (item) openAction({ kind: kind as 'file' | 'folder', item, action: 'rename' })
+      }
+    }
+    document.addEventListener('keydown', onShortcut)
+    return () => document.removeEventListener('keydown', onShortcut)
+  }, [])
+  function onTableKeyDown(event: React.KeyboardEvent<HTMLTableElement>) {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    // Стрелки/Home/End внутри открытого меню действий принадлежат меню.
+    if ((event.target as HTMLElement).closest('[role="menu"], [role="menuitem"], .action-menu')) return
+    const names = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('.file-name'))
+    if (!names.length) return
+    event.preventDefault()
+    const active = document.activeElement as HTMLElement | null
+    const currentIndex = names.findIndex((element) => element === active || element.contains(active))
+    let nextIndex: number
+    if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = names.length - 1
+    else if (currentIndex === -1) nextIndex = event.key === 'ArrowDown' ? 0 : names.length - 1
+    else nextIndex = Math.min(names.length - 1, Math.max(0, currentIndex + (event.key === 'ArrowDown' ? 1 : -1)))
+    names[nextIndex]?.focus()
   }
   async function downloadArchive() {
     if (archivePendingRef.current || selection.size < 2) return
     archivePendingRef.current = true
     setArchivePending(true)
     setArchiveError(null)
-    setArchiveHandedOff(false)
+    toast.dismissKey('archive-download')
     const items: ArchiveSelection[] = [...selection].map((key) => {
       const [kind, id] = key.split(':')
       return { kind: kind as ArchiveSelection['kind'], id: Number(id) }
     })
     try {
       await downloadSelectionArchive(items)
-      if (mounted.current) setArchiveHandedOff(true)
+      if (mounted.current) toast.notify({ kind: 'success', key: 'archive-download', message: 'ZIP передан браузеру. Состояние смотрите в его загрузках.' })
     } catch (cause) {
       if (mounted.current) setArchiveError(archiveDownloadErrorMessage(cause))
     } finally {
@@ -632,19 +809,38 @@ function DirectoryTable({
       if (mounted.current) setArchivePending(false)
     }
   }
+  async function restoreFromTrash(targets: Array<{ kind: 'file' | 'folder'; id: number }>) {
+    try {
+      for (const target of targets) {
+        await restoreTrashItem(target.kind, target.id)
+        if (!mounted.current) return
+      }
+      onChanged()
+    } catch {
+      if (mounted.current) toast.notify({ kind: 'error', message: 'Не удалось отменить перемещение в корзину. Проверьте корзину.' })
+    }
+  }
   async function trashSelection() {
     if (pendingRef.current) return
     pendingRef.current = true; setPending(true); setBulkError(null)
     const targets = [...selection]
+    const trashed: Array<{ kind: 'file' | 'folder'; id: number }> = []
     try {
       for (const key of targets) {
         const [kind, id] = key.split(':')
         await moveToTrash(kind as 'file' | 'folder', Number(id))
         if (!mounted.current) return
+        trashed.push({ kind: kind as 'file' | 'folder', id: Number(id) })
         setSelection((previous) => { const next = new Set(previous); next.delete(key); return next })
         onChanged({ kind: kind as 'file' | 'folder', id: Number(id) })
       }
       setBulkOpen(false)
+      toast.notify({
+        message: `Перемещено в корзину: ${trashed.length}`,
+        actionLabel: 'Отменить',
+        key: 'bulk-trash',
+        onAction: () => void restoreFromTrash(trashed),
+      })
     } catch (cause) { if (mounted.current) setBulkError(safeOperationError(cause, 'Не удалось переместить все объекты в корзину. Уже обработанные объекты сохранены.')) }
     finally { pendingRef.current = false; if (mounted.current) setPending(false) }
   }
@@ -669,6 +865,14 @@ function DirectoryTable({
       if (!mounted.current) return
       setAction(null)
       onChanged(operation === 'trash' ? { kind, id: item.id } : undefined)
+      if (operation === 'trash') {
+        toast.notify({
+          message: kind === 'folder' ? 'Папка перемещена в корзину' : 'Файл перемещён в корзину',
+          actionLabel: 'Отменить',
+          key: `trash-${kind}-${item.id}`,
+          onAction: () => void restoreFromTrash([{ kind, id: item.id }]),
+        })
+      }
     } catch (caught) {
       if (mounted.current) setError(safeOperationError(caught, 'Не удалось выполнить действие.'))
     } finally {
@@ -678,10 +882,24 @@ function DirectoryTable({
   }
 
   const empty = folders.length === 0 && files.length === 0
+  const trulyEmpty = contents.folders.length === 0 && contents.files.length === 0
+  const itemsDrop = useItemsDrop(() => onChanged())
+  function rowDragStart(event: React.DragEvent, key: string) {
+    const keys = selection.has(key) ? [...selection] : [key]
+    if (!selection.has(key)) {
+      anchor.current = key
+      setSelection(new Set([key]))
+    }
+    setActiveDrag(keys)
+    encodeDragItems(event.dataTransfer, keys)
+  }
+  function rowDragEnd() {
+    clearActiveDrag()
+  }
   return (
     <div ref={directoryRef}>
       <div className="directory-controls">
-        <div className="directory-toolbar"><p className="muted">Папок: {contents.folders.length} · Файлов: {contents.files.length}</p><div className="view-switch" aria-label="Вид файлов"><button aria-label="Список" aria-pressed={view === 'list'} className={view === 'list' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('list')} type="button"><Icon name="list" /></button><button aria-label="Плитка" aria-pressed={view === 'grid'} className={view === 'grid' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('grid')} type="button"><Icon name="grid" /></button></div></div>
+        <div className="directory-toolbar"><p className="muted">Папок: {contents.folders.length} · Файлов: {contents.files.length}{filtering ? ` · По фильтру: ${folders.length + files.length}` : ''}</p><div className="directory-tools"><label className="directory-filter"><Icon name="search" /><input aria-label="Фильтр по имени в этой папке" className="directory-filter-input" onChange={(event) => setFilter(event.target.value)} placeholder="Фильтр по имени" type="search" value={filter} />{filtering ? <button aria-label="Очистить фильтр" className="icon-button directory-filter-clear" onClick={() => setFilter('')} type="button"><Icon name="close" /></button> : null}</label><div className="view-switch" aria-label="Вид файлов"><button aria-label="Список" aria-pressed={view === 'list'} className={view === 'list' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('list')} type="button"><Icon name="list" /></button><button aria-label="Плитка" aria-pressed={view === 'grid'} className={view === 'grid' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('grid')} type="button"><Icon name="grid" /></button></div><button aria-label="Горячие клавиши" className="icon-button shortcuts-trigger" onClick={() => setShortcutsOpen(true)} title="Горячие клавиши (?)" type="button"><Icon name="keyboard" /></button></div></div>
       </div>
       {selection.size ? <><div
         className="selection-toolbar liquid-selection-dock"
@@ -793,20 +1011,29 @@ function DirectoryTable({
             Снять выделение
           </span>
         </button>
-      </div>{archiveError ? <p className="inline-alert" role="alert">{archiveError}</p> : null}{archiveHandedOff ? <p className="muted" role="status">ZIP передан браузеру. Состояние смотрите в его загрузках.</p> : null}</> : null}
+      </div>{archiveError ? <p className="inline-alert" role="alert">{archiveError}</p> : null}</> : null}
       {bulkOpen ? <SmallDialog title="Переместить выбранное в корзину?" onClose={() => { if (!pending) setBulkOpen(false) }}><p>Объектов: {selection.size}. Их можно будет восстановить.</p>{bulkError ? <p role="alert">{bulkError}</p> : null}<div className="dialog-actions"><button className="button button--ghost" disabled={pending} onClick={() => setBulkOpen(false)} type="button">Отмена</button><button className="button button--danger" disabled={pending} onClick={() => void trashSelection()} type="button">{pending ? 'Выполняется…' : 'Переместить выбранное'}</button></div></SmallDialog> : null}
-      {fileHandedOff ? <p className="muted" role="status">Скачивание передано браузеру. Состояние смотрите в его загрузках.</p> : null}
-      {empty ? <div className="empty-state"><Icon name="folder" /><h3>В этой папке пока пусто</h3><p>Перетащите файлы сюда или воспользуйтесь кнопкой «Добавить».</p></div> : (
+      {shortcutsOpen ? <SmallDialog title="Горячие клавиши" onClose={() => setShortcutsOpen(false)}><ul className="shortcuts-list">{DIRECTORY_SHORTCUTS.map((hint) => <li key={hint.keys}><kbd>{hint.keys}</kbd><span>{hint.description}</span></li>)}</ul></SmallDialog> : null}
+      {trulyEmpty ? <div className="empty-state"><Icon name="folder" /><h3>В этой папке пока пусто</h3><p>Перетащите файлы сюда или воспользуйтесь кнопкой «Добавить».</p></div> : empty ? (
+        <div className="empty-state" role="status"><Icon name="search" /><h3>По фильтру ничего не найдено</h3><p>В этой папке нет имён, содержащих «{filter.trim()}».</p><button className="text-link" onClick={() => setFilter('')} type="button">Сбросить фильтр</button></div>
+      ) : (
         <table
           className={view === 'grid' ? 'directory-list directory-grid' : 'directory-list'}
           data-view-motion={viewMotion ?? undefined}
+          onKeyDown={onTableKeyDown}
           onPointerDownCapture={() => setViewMotion(null)}
           onFocusCapture={() => setViewMotion(null)}
         >
           <caption className="sr-only">Файлы и папки в текущем расположении</caption>
-          <thead className="directory-header"><tr><th scope="col">Название</th><th scope="col">Тип</th><th scope="col">Размер</th><th scope="col">Изменено</th><th scope="col"><span className="sr-only">Действия</span></th></tr></thead>
+          <thead className="directory-header"><tr>
+            <SortableTh column="name" label="Название" onSort={changeSort} sort={sort} />
+            <SortableTh column="type" label="Тип" onSort={changeSort} sort={sort} />
+            <SortableTh column="size" label="Размер" onSort={changeSort} sort={sort} />
+            <SortableTh column="updatedAt" label="Изменено" onSort={changeSort} sort={sort} />
+            <th scope="col"><span className="sr-only">Действия</span></th>
+          </tr></thead>
           <tbody>
-            {folders.map((folder) => <tr data-object-key={`folder:${folder.id}`} className={`directory-row${selection.has(`folder:${folder.id}`) ? ' is-selected' : ''}${locatedKey === `folder:${folder.id}` ? ' is-located' : ''}`} key={`folder-${folder.id}`} onContextMenu={(event) => contextMenu(event, `folder:${folder.id}`)} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) select(`folder:${folder.id}`, event) }}>
+            {folders.map((folder) => <tr data-object-key={`folder:${folder.id}`} className={`directory-row${selection.has(`folder:${folder.id}`) ? ' is-selected' : ''}${locatedKey === `folder:${folder.id}` ? ' is-located' : ''}${itemsDrop.dropKey === `folder:${folder.id}` ? ' is-drop-target' : ''}`} key={`folder-${folder.id}`} draggable onDragStart={(event) => rowDragStart(event, `folder:${folder.id}`)} onDragEnd={rowDragEnd} {...itemsDrop.targetHandlers(`folder:${folder.id}`, folder.id)} onContextMenu={(event) => contextMenu(event, `folder:${folder.id}`)} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) select(`folder:${folder.id}`, event) }}>
               <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${folder.name}`} type="checkbox" checked={selection.has(`folder:${folder.id}`)} onChange={() => {}} onClick={(event) => select(`folder:${folder.id}`, event, true)} /></label><span className="file-icon file-icon-folder"><Icon name="folder" /></span><button className="file-name" onDoubleClick={() => onOpenFolder(folder)} onKeyDown={(event) => { if (event.key === "Enter") onOpenFolder(folder) }} type="button">{folder.name}</button></td>
               <td className="file-meta"><span className="mobile-label">Тип: </span>Папка</td><td className="file-meta"><span className="mobile-label">Размер: </span>—</td><td className="file-meta"><span className="mobile-label">Изменено: </span>{formatDate(folder.updatedAt)}</td>
               <td className="file-actions"><ActionMenu label={`Действия: ${folder.name}`} disabled={pending} items={[
@@ -817,7 +1044,7 @@ function DirectoryTable({
                 { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'folder', item: folder, action: 'trash' }) },
               ]} /></td>
             </tr>)}
-            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} disabled={pending} file={file} key={`file-${file.id}`} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => setFileHandedOff(false)} onDownloadHandedOff={() => setFileHandedOff(true)} onShare={() => setShareTarget({
+            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} onDragStart={(event) => rowDragStart(event, `file:${file.id}`)} onDragEnd={rowDragEnd} disabled={pending} file={file} key={`file-${file.id}`} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => toast.dismissKey('file-download')} onDownloadHandedOff={() => toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })} onPreview={() => setPreviewFile(file)} onShare={() => setShareTarget({
       fileId: file.id,
       name: file.name,
       isFolder: false,
@@ -830,15 +1057,24 @@ function DirectoryTable({
       {!action && pending ? <p className="muted" role="status">Операция продолжается…</p> : null}
       {!action && error ? <p className="inline-alert" role="alert">{error}</p> : null}
       {shareTarget ? <ShareDialog onClose={() => setShareTarget(null)} target={shareTarget} /> : null}
+      {previewFile ? <PreviewModal file={previewFile} siblings={files} onClose={() => setPreviewFile(null)} /> : null}
+      {menuState ? (
+        <ContextMenu
+          items={contextMenuItems(menuState.key)}
+          label="Действия с объектом"
+          onClose={closeContextMenu}
+          x={menuState.x}
+          y={menuState.y}
+        />
+      ) : null}
       {action ? <OperationDialog action={action} busy={pending} currentFolderId={currentFolderId} error={error} onClose={() => { setAction(null); setError(null) }} onSubmit={mutate} /> : null}
     </div>
   )
 }
 
-function FileRow({ disabled, file, onAction, onDownloadStarted, onDownloadHandedOff, onShare, selected, onSelect, onContextMenu }: { selected: boolean; onSelect(event: React.MouseEvent, toggle?: boolean): void; onContextMenu(event: React.MouseEvent<HTMLTableRowElement>): void; disabled: boolean; file: FileItem; onAction(action: ItemAction['action']): void; onDownloadStarted(): void; onDownloadHandedOff(): void; onShare(): void }) {
+function FileRow({ disabled, file, onAction, onDownloadStarted, onDownloadHandedOff, onPreview, onShare, selected, onSelect, onContextMenu, onDragStart, onDragEnd }: { selected: boolean; onSelect(event: React.MouseEvent, toggle?: boolean): void; onContextMenu(event: React.MouseEvent<HTMLTableRowElement>): void; onDragStart(event: React.DragEvent<HTMLTableRowElement>): void; onDragEnd(event: React.DragEvent<HTMLTableRowElement>): void; disabled: boolean; file: FileItem; onAction(action: ItemAction['action']): void; onDownloadStarted(): void; onDownloadHandedOff(): void; onPreview(): void; onShare(): void }) {
   const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'handed-off'>('idle')
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const [showPreview, setShowPreview] = useState(false)
   const downloadPending = useRef(false)
   async function download() {
     if (downloadPending.current) return
@@ -851,13 +1087,13 @@ function FileRow({ disabled, file, onAction, onDownloadStarted, onDownloadHanded
     finally { downloadPending.current = false }
   }
   const fileType = file.mimeType?.startsWith('image/') ? 'image' : file.mimeType?.startsWith('text/') ? 'text' : 'file'
-  return <tr data-object-key={`file:${file.id}`} className={`directory-row${selected ? ' is-selected' : ''}`} onContextMenu={onContextMenu} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) onSelect(event) }}>
-    <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${file.name}`} type="checkbox" checked={selected} onChange={() => {}} onClick={(event) => onSelect(event, true)} /></label>{['image/jpeg', 'image/png', 'image/webp'].includes(file.mimeType ?? '') ? <FileThumbnail key={`${file.id}:${file.updatedAt}`} fileId={file.id} /> : <span className={`file-icon file-icon-${fileType}`}><Icon name={fileType} /></span>}<button className="file-name" onDoubleClick={(event) => { event.currentTarget.focus(); setShowPreview(true) }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); setShowPreview(true) } }} title={file.name} type="button">{file.name}</button></td>
-    <td className="file-meta"><span className="mobile-label">Тип: </span>{fileType === 'image' ? 'Изображение' : fileType === 'text' ? 'Текстовый документ' : file.mimeType === 'application/pdf' ? 'Документ PDF' : 'Файл'}</td>
+  return <tr data-object-key={`file:${file.id}`} className={`directory-row${selected ? ' is-selected' : ''}`} draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onContextMenu={onContextMenu} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) onSelect(event) }}>
+    <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${file.name}`} type="checkbox" checked={selected} onChange={() => {}} onClick={(event) => onSelect(event, true)} /></label>{['image/jpeg', 'image/png', 'image/webp'].includes(file.mimeType ?? '') ? <FileThumbnail key={`${file.id}:${file.updatedAt}`} fileId={file.id} /> : <span className={`file-icon file-icon-${fileType}`}><Icon name={fileType} /></span>}<button className="file-name" onDoubleClick={(event) => { event.currentTarget.focus(); onPreview() }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onPreview() } }} title={file.name} type="button">{file.name}</button></td>
+    <td className="file-meta"><span className="mobile-label">Тип: </span>{fileTypeLabel(file.mimeType)}</td>
     <td className="file-meta"><span className="mobile-label">Размер: </span>{formatBytes(file.size)}</td>
     <td className="file-meta"><span className="mobile-label">Изменено: </span>{formatDate(file.updatedAt)}</td>
     <td className="file-actions"><ActionMenu label={`Действия: ${file.name}`} disabled={disabled} items={[
-      { label: 'Просмотр', icon: 'file', onSelect: () => setShowPreview(true) },
+      { label: 'Просмотр', icon: 'file', onSelect: onPreview },
       { label: downloadState === 'downloading' ? 'Подготавливаем…' : 'Скачать', icon: 'download', disabled: downloadState === 'downloading', onSelect: () => void download() },
       { label: 'Поделиться', icon: 'link', onSelect: onShare },
       { label: 'Переименовать', icon: 'edit', onSelect: () => onAction('rename') },
@@ -865,13 +1101,7 @@ function FileRow({ disabled, file, onAction, onDownloadStarted, onDownloadHanded
       { label: 'Копировать', icon: 'copy', onSelect: () => onAction('copy') },
       { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => onAction('trash') },
     ]} />
-    {downloadError ? <p className="inline-alert" role="alert">{downloadError}</p> : null}
-    {showPreview ? (
-      <PreviewModal
-        file={file}
-        onClose={() => setShowPreview(false)}
-      />
-    ) : null}</td>
+    {downloadError ? <p className="inline-alert" role="alert">{downloadError}</p> : null}</td>
   </tr>
 }
 
@@ -904,7 +1134,8 @@ function OperationDialog({ action, busy, currentFolderId, error, onClose, onSubm
   const [name, setName] = useState(action.item.name)
   const [destination, setDestination] = useState(action.action === 'copy' ? String(currentFolderId ?? '') : '')
   const [validation, setValidation] = useState<string | null>(null)
-  const [destinations, setDestinations] = useState<Array<{ id: number; name: string }>>([])
+  const [destinations, setDestinations] = useState<Array<{ id: number; name: string; parentId: number | null; depth: number }>>([])
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const [destinationLoading, setDestinationLoading] = useState(true)
   const [destinationError, setDestinationError] = useState<string | null>(null)
   const [destinationReload, setDestinationReload] = useState(0)
@@ -914,21 +1145,20 @@ function OperationDialog({ action, busy, currentFolderId, error, onClose, onSubm
     setDestinationLoading(true)
     setDestinationError(null)
     async function load() {
-      const options: Array<{ id: number; name: string }> = []
+      const options: Array<{ id: number; name: string; parentId: number | null; depth: number }> = []
       const visited = new Set<number>()
-      async function walk(parentId?: number, prefix = '') {
+      async function walk(parentId: number | undefined, depth: number) {
         const folders = await apiRequest<FolderItem[]>({ method: 'GET', url: '/files/folders', params: parentId === undefined ? undefined : { parentId }, signal: controller.signal })
         for (const folder of folders) {
           if (visited.has(folder.id)) continue
           visited.add(folder.id)
           // Do not offer the moved folder or any part of its subtree.
           if (action.kind === 'folder' && folder.id === action.item.id) continue
-          const name = prefix ? `${prefix} / ${folder.name}` : folder.name
-          options.push({ id: folder.id, name })
-          await walk(folder.id, name)
+          options.push({ id: folder.id, name: folder.name, parentId: parentId ?? null, depth })
+          await walk(folder.id, depth + 1)
         }
       }
-      await walk()
+      await walk(undefined, 0)
       if (!controller.signal.aborted) setDestinations(options)
     }
     void load().catch((cause: unknown) => {
@@ -938,10 +1168,66 @@ function OperationDialog({ action, busy, currentFolderId, error, onClose, onSubm
   }, [action.action, action.kind, action.item.id, destinationReload])
   const titles = { rename: 'Переименовать', move: 'Переместить', copy: 'Копировать', trash: 'Переместить в корзину' }
   const selecting = action.action === 'move' || action.action === 'copy'
+  const childCounts = new Map<number, number>()
+  for (const node of destinations) {
+    if (node.parentId !== null) childCounts.set(node.parentId, (childCounts.get(node.parentId) ?? 0) + 1)
+  }
+  const visibleDestinations: typeof destinations = []
+  const hiddenBelow: number[] = []
+  for (const node of destinations) {
+    while (hiddenBelow.length > 0 && node.depth <= hiddenBelow[hiddenBelow.length - 1]) hiddenBelow.pop()
+    if (hiddenBelow.length > 0) continue
+    visibleDestinations.push(node)
+    if (collapsed.has(node.id)) hiddenBelow.push(node.depth)
+  }
+  const destinationControlsDisabled = busy || destinationLoading || destinationError !== null
+  function toggleCollapsed(id: number) {
+    setCollapsed((previous) => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
   return <SmallDialog title={titles[action.action]} onClose={onClose}><form onSubmit={(event) => { event.preventDefault(); if (busy || (selecting && (destinationLoading || destinationError))) return; if (action.action === 'rename' && (!name.trim() || name.trim().length > 255)) { setValidation('Введите название от 1 до 255 символов.'); return } setValidation(null); void onSubmit(name.trim(), destination) }}>
     <p className="muted dialog-item-name">{action.item.name}</p>
     {action.action === 'rename' ? <label className="field">Новое название<input className="input" disabled={busy} maxLength={255} onChange={(event) => { setName(event.target.value); setValidation(null) }} value={name} /></label> : null}
-    {selecting ? <label className="field">Папка назначения<select className="input" disabled={busy || destinationLoading || destinationError !== null} onChange={(event) => setDestination(event.target.value)} value={destination}><option value="">Мои файлы</option>{destinations.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label> : null}
+    {selecting ? <div className="field">
+      <span className="field-label" id="destination-tree-label">Папка назначения</span>
+      <div aria-busy={destinationLoading} aria-labelledby="destination-tree-label" className="folder-tree" role="group">
+        <button
+          aria-pressed={destination === ''}
+          className={`folder-tree-option folder-tree-root${destination === '' ? ' is-selected' : ''}`}
+          disabled={destinationControlsDisabled}
+          onClick={() => setDestination('')}
+          type="button"
+        >Мои файлы</button>
+        {visibleDestinations.map((node) => {
+          const hasChildren = (childCounts.get(node.id) ?? 0) > 0
+          const isCollapsed = collapsed.has(node.id)
+          const selected = destination === String(node.id)
+          return <div className="folder-tree-row" key={node.id} style={{ paddingLeft: `${node.depth * 18}px` }}>
+            {hasChildren
+              ? <button
+                  aria-expanded={!isCollapsed}
+                  aria-label={`${isCollapsed ? 'Развернуть' : 'Свернуть'}: ${node.name}`}
+                  className="folder-tree-toggle"
+                  disabled={destinationControlsDisabled}
+                  onClick={() => toggleCollapsed(node.id)}
+                  type="button"
+                ><Icon name="chevron" /></button>
+              : <span aria-hidden="true" className="folder-tree-spacer" />}
+            <button
+              aria-pressed={selected}
+              className={`folder-tree-option${selected ? ' is-selected' : ''}`}
+              disabled={destinationControlsDisabled}
+              onClick={() => setDestination(String(node.id))}
+              type="button"
+            >{node.name}</button>
+          </div>
+        })}
+      </div>
+    </div> : null}
     {selecting && destinationLoading ? <p role="status">Загружаем папки назначения…</p> : null}
     {selecting && destinationError ? <p className="inline-alert" role="alert">{destinationError} <button className="text-link" onClick={() => setDestinationReload((value) => value + 1)} type="button">Повторить</button></p> : null}
     {action.action === 'trash' ? <p>{action.kind === 'folder' ? 'Папка и её содержимое попадут в корзину.' : 'Файл попадёт в корзину.'} Вы сможете восстановить их позже.</p> : null}
@@ -1011,7 +1297,7 @@ function UploadControl({ enabled, parentId, onUploaded, queue }: { enabled: bool
     if (busy.current || !enabled) return
     busy.current = true; setCollecting(true); setTreeError(null)
     try { await enqueueTree(entries, queue, target, () => alive.current, onUploaded) }
-    catch (cause) { if (alive.current) setTreeError(cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'Не удалось добавить папку. Уже добавленные объекты сохранены. Проверьте результат перед повтором.') }
+    catch (cause) { if (alive.current) setTreeError(localFileReadError(cause) ?? (cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'Не удалось добавить папку. Уже добавленные объекты сохранены. Проверьте результат перед повтором.')) }
     finally { busy.current = false; if (alive.current) setCollecting(false) }
   }
   async function chooseFolder() {
@@ -1032,9 +1318,9 @@ function UploadControl({ enabled, parentId, onUploaded, queue }: { enabled: bool
       { label: 'Новая папка', icon: 'plus', disabled: createBusy, onSelect: () => setCreateOpen(true) },
     ]} />
     <input ref={inputRef} aria-label="Выбрать файл для загрузки" className="sr-only upload-input" disabled={!enabled || collecting} multiple type="file"
-      onChange={(event) => { try { void add(inputEntries(event.target.files ?? [])) } catch (cause) { setTreeError(cause instanceof Error ? cause.message : 'Не удалось прочитать файлы.') } event.target.value = '' }} />
+      onChange={(event) => { try { void add(inputEntries(event.target.files ?? [])) } catch (cause) { setTreeError(localFileReadError(cause) ?? (cause instanceof Error ? cause.message : 'Не удалось прочитать файлы.')) } event.target.value = '' }} />
     <input ref={folderRef} aria-label="Выбрать папку для загрузки" className="sr-only upload-input" disabled={!enabled || collecting} multiple type="file" {...{ webkitdirectory: '', directory: '' }}
-      onChange={(event) => { try { void add(inputEntries(event.target.files ?? [])) } catch (cause) { setTreeError(cause instanceof Error ? cause.message : 'Не удалось прочитать папку.') } event.target.value = '' }} />
+      onChange={(event) => { try { void add(inputEntries(event.target.files ?? [])) } catch (cause) { setTreeError(localFileReadError(cause) ?? (cause instanceof Error ? cause.message : 'Не удалось прочитать папку.')) } event.target.value = '' }} />
     <CreateFolderControl key={`create-${parentId}`} enabled={enabled} parentId={parentId} onCreated={onUploaded} open={createOpen} setOpen={setCreateOpen} onBusyChange={setCreateBusy} />
     {collecting ? <p role="status">Добавляем папки и файлы…</p> : null}
     {treeError ? <p className="inline-alert" role="alert">{treeError}</p> : null}
@@ -1120,6 +1406,14 @@ function UploadRow({ item, queue }: { item: UploadQueueItem; queue: UploadQueue 
   const canResume = ['paused', 'error'].includes(item.state) && !item.needsFile
   const canCancel = !['completed', 'cancelled', 'cancelling', 'completing'].includes(item.state)
   const [reselectionError, setReselectionError] = useState<string | null>(null)
+  const speedTrackerRef = useRef<UploadSpeedTracker | null>(null)
+  if (speedTrackerRef.current === null) speedTrackerRef.current = new UploadSpeedTracker()
+  const trackingSpeed = item.state === 'uploading'
+  useEffect(() => {
+    if (trackingSpeed) speedTrackerRef.current?.record(item.committedBytes, Date.now())
+  }, [trackingSpeed, item.committedBytes])
+  useEffect(() => () => speedTrackerRef.current?.reset(), [])
+  const speedReading = trackingSpeed ? speedTrackerRef.current.read(item.size) : null
 
   const completed = item.state === 'completed'
   const percent = item.state === 'hashing'
@@ -1177,6 +1471,8 @@ function UploadRow({ item, queue }: { item: UploadQueueItem; queue: UploadQueue 
         {item.state === 'hashing'
           ? `${formatBytes(item.hashedBytes ?? 0)} из ${formatBytes(item.size)} проверено`
           : `${formatBytes(item.committedBytes)} из ${formatBytes(item.size)}`}
+        {speedReading ? ` · ${formatBytes(Math.round(speedReading.bytesPerSecond))}/с` : ''}
+        {speedReading?.etaSeconds != null ? ` · осталось ${formatEta(speedReading.etaSeconds)}` : ''}
       </p>
     ) : null}
     {item.error ? <p className="inline-alert" role="alert">{item.error}</p> : null}
@@ -1184,7 +1480,7 @@ function UploadRow({ item, queue }: { item: UploadQueueItem; queue: UploadQueue 
     <div className="state-actions">
       {canPause ? <button aria-label={`Пауза: ${item.name}`} className="button button--ghost" onClick={() => queue.pause(item.id)} type="button">Пауза</button> : null}
       {canResume ? <button aria-label={`Продолжить: ${item.name}`} className="button button--ghost" onClick={() => queue.resume(item.id)} type="button">{item.state === 'error' && !item.uploadId ? 'Повторить загрузку' : 'Продолжить'}</button> : null}
-      {item.needsFile ? <label className="button button--ghost">Выбрать исходный файл<input aria-label={`Исходный файл: ${item.name}`} className="sr-only upload-input" type="file" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; setReselectionError(null); void queue.reselect(item.id, file).catch((error: unknown) => setReselectionError(error instanceof Error ? error.message : 'Не удалось проверить исходный файл.')) }} /></label> : null}
+      {item.needsFile ? <label className="button button--ghost">Выбрать исходный файл<input aria-label={`Исходный файл: ${item.name}`} className="sr-only upload-input" type="file" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; setReselectionError(null); void queue.reselect(item.id, file).catch((error: unknown) => setReselectionError(localFileReadError(error) ?? (error instanceof Error ? error.message : 'Не удалось проверить исходный файл.'))) }} /></label> : null}
       {canCancel ? <button aria-label={`Отменить загрузку: ${item.name}`} className="button button--ghost" onClick={() => queue.cancel(item.id)} type="button">Отменить загрузку</button> : null}
     </div>
   </li>

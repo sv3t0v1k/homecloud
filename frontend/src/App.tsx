@@ -11,6 +11,8 @@ import { ProtectedRoute } from './routing/ProtectedRoute'
 import { Icon } from './ui/Icon'
 import { LiquidCloseButton } from './ui/LiquidCloseButton'
 import { AccountDialog } from './account/AccountDialog'
+import { QuotaBadge } from './account/QuotaBadge'
+import { InitialsAvatar } from './ui/InitialsAvatar'
 import { PublicSharePage } from './sharing/PublicSharePage'
 import { GlobalSearchPage } from './files/GlobalSearchPage'
 import { SearchSessionProvider } from './files/useGlobalSearch'
@@ -30,8 +32,21 @@ function App() {
           </Route>
         </Route>
         <Route path="/" element={<Navigate to="/files" replace />} />
-        <Route path="*" element={<div className="empty-state"><h2>Страница не найдена</h2><Link to="/files">К моим файлам</Link></div>} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
+    </div>
+  )
+}
+
+function NotFoundPage() {
+  return (
+    <div className="not-found-page">
+      <div className="empty-state">
+        <Icon name="cloud" />
+        <h2>Страница не найдена</h2>
+        <p>Такого адреса в HomeCloud нет. Возможно, ссылка устарела.</p>
+        <Link className="text-link" to="/files">К моим файлам</Link>
+      </div>
     </div>
   )
 }
@@ -39,6 +54,21 @@ function App() {
 function DirectoryRoute() {
   const { revision } = useOutletContext<{ revision: number }>()
   return <FileBrowserPage revision={revision} />
+}
+
+function useOffline(): boolean {
+  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine)
+  useEffect(() => {
+    const goOffline = () => setOffline(true)
+    const goOnline = () => setOffline(false)
+    window.addEventListener('offline', goOffline)
+    window.addEventListener('online', goOnline)
+    return () => {
+      window.removeEventListener('offline', goOffline)
+      window.removeEventListener('online', goOnline)
+    }
+  }, [])
+  return offline
 }
 
 function FileBrowserLayout() {
@@ -50,10 +80,17 @@ function FileBrowserLayout() {
   const [trashOpen, setTrashOpen] = useState(trash)
   const [revision, setRevision] = useState(0)
   const backgroundRef = useRef<HTMLDivElement>(null)
+  const offline = useOffline()
   useEffect(() => { if (trash) setTrashOpen(true) }, [trash])
   function closeTrash() { setTrashOpen(false); setRevision((value) => value + 1); if (trash) navigate('/files', { replace: true }) }
   return <SearchSessionProvider key={session.user?.id ?? 0} ownerId={session.user?.id ?? 0}><UploadQueueProvider ownerId={session.user?.id ?? 0}>
     <div className="app-shell ux-v2">
+      {offline ? (
+        <div className="offline-banner" role="status">
+          <Icon name="warning" />
+          <span>Нет соединения. Новые действия могут завершиться ошибкой — проверьте сеть.</span>
+        </div>
+      ) : null}
       <div className="app-frame" ref={backgroundRef}>
         <a className="skip-link" href="#workspace">Перейти к содержимому</a>
         <Navbar onOpenAccount={() => setAccountOpen(true)} />
@@ -199,6 +236,7 @@ function Navbar({ onOpenAccount }: { onOpenAccount(): void }) {
         </button>
       </div>
       <div className="account-area">
+        {session.status === 'authenticated' ? <QuotaBadge /> : null}
         {session.status === 'authenticated' ? (
           <button
             aria-label={`Открыть аккаунт: ${session.user.name}`}
@@ -209,7 +247,7 @@ function Navbar({ onOpenAccount }: { onOpenAccount(): void }) {
             }}
             type="button"
           >
-            <Icon name="user" />
+            <InitialsAvatar name={session.user.name || session.user.email} />
             <span className="liquid-topbar-label">
               {session.user.name}
             </span>

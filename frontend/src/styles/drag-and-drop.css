@@ -262,3 +262,21 @@
     -webkit-backdrop-filter: none;
   }
 }
+
+/* U6: перетаскивание объектов внутри интерфейса */
+.directory-row[draggable="true"] {
+  cursor: grab;
+}
+
+.directory-row.is-drop-target {
+  outline: 2px dashed var(--accent, #88bda1);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent, #88bda1) 12%, transparent);
+}
+
+.breadcrumb-list li.is-drop-target {
+  border-radius: 8px;
+  outline: 2px dashed var(--accent, #88bda1);
+  outline-offset: 1px;
+  background: color-mix(in srgb, var(--accent, #88bda1) 14%, transparent);
+}

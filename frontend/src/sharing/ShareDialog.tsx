@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api/errors'
 import { Icon } from '../ui/Icon'
 import { LiquidCloseButton } from '../ui/LiquidCloseButton'
+import { QrCodeImage } from '../ui/QrCodeImage'
 import { FileThumbnail } from '../files/FileThumbnail'
 import { useDialogFocus } from '../accessibility/useDialogFocus'
 import { createShare, listShares, publicShareUrl, revokeShare, type OwnerShare, type ShareTarget } from './api'
@@ -25,6 +26,7 @@ export function ShareDialog({ target, onClose }: {
   const [password, setPassword] = useState('')
   const [expiresInDays, setExpiresInDays] = useState('7')
   const [maxDownloads, setMaxDownloads] = useState('')
+  const [qrShareId, setQrShareId] = useState<number | null>(null)
   const mutationLock = useRef(false)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useDialogFocus(onClose, closeButtonRef)
@@ -217,7 +219,13 @@ export function ShareDialog({ target, onClose }: {
                   <p className="share-status">{shareStatus(share)}</p><p className="muted">{share.allowUpload ? 'Загрузка разрешена' : 'Только просмотр и скачивание'}</p>
                   <input aria-label={`Публичная ссылка: ${target.name}`} className="input mono" readOnly value={url} />
                   <p className="muted mono">Скачиваний: {String(share.downloadCount)}{share.maxDownloads === null ? '' : ` из ${String(share.maxDownloads)}`}</p>
-                  <div className="share-actions"><button className="button button--ghost" onClick={() => void copy(share)} type="button">Копировать ссылку</button><button className="button button--ghost" onClick={() => open(share)} type="button">Открыть</button><button className="button button--danger" disabled={busy || !share.isActive} onClick={() => void revoke(share)} type="button">Закрыть доступ</button></div>
+                  <div className="share-actions"><button className="button button--ghost" onClick={() => void copy(share)} type="button">Копировать ссылку</button><button aria-expanded={qrShareId === share.id} className="button button--ghost" onClick={() => setQrShareId((current) => (current === share.id ? null : share.id))} type="button"><Icon name="qr" />QR-код</button><button className="button button--ghost" onClick={() => open(share)} type="button">Открыть</button><button className="button button--danger" disabled={busy || !share.isActive} onClick={() => void revoke(share)} type="button">Закрыть доступ</button></div>
+                  {qrShareId === share.id ? (
+                    <div className="share-qr">
+                      <QrCodeImage label={`QR-код со ссылкой: ${target.name}`} value={url} />
+                      <p className="muted">Наведите камеру телефона, чтобы открыть ссылку.</p>
+                    </div>
+                  ) : null}
                 </li>
               })}
             </ul>

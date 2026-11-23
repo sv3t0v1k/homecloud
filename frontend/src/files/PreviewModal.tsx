@@ -4,8 +4,12 @@ import { ApiError } from '../api/errors'
 import { useDialogFocus } from '../accessibility/useDialogFocus'
 import type { FileItem } from '../types/files'
 import { getFilePreview, previewImageBlob, previewVideoBlob, type PreviewPayload } from './preview'
+import { BinaryPreviewTooLargeError, fetchFileBlob } from './download'
 import { Icon } from '../ui/Icon'
 import { LiquidCloseButton } from '../ui/LiquidCloseButton'
+
+export type PreviewFile = Pick<FileItem, 'id' | 'name'> &
+  Partial<Pick<FileItem, 'mimeType' | 'size'>>
 
 type PreviewState =
   | { status: 'loading' }
@@ -15,19 +19,41 @@ type PreviewState =
       imageUrl?: string
       videoUrl?: string
       imageLoaded?: boolean
+      binaryUrl?: string
+      binaryKind?: 'pdf' | 'audio'
     }
   | { status: 'error'; message: string }
 
+const MIN_ZOOM = 0.2
+const MAX_ZOOM = 5
+const ZOOM_STEP = 1.25
+
 export function PreviewModal({
   file,
+  siblings,
   onClose,
 }: {
-  file: Pick<FileItem, 'id' | 'name'> &
-    Partial<Pick<FileItem, 'mimeType'>>
+  file: PreviewFile
+  /** Упорядоченный список файлов для листания стрелками (обычно содержимое папки). */
+  siblings?: PreviewFile[]
   onClose(): void
 }) {
   const [state, setState] = useState<PreviewState>({ status: 'loading' })
+  const [currentId, setCurrentId] = useState(file.id)
+  const [zoom, setZoom] = useState<number | null>(null)
+  const [naturalWidth, setNaturalWidth] = useState<number>()
   const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const zoomSurfaceRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setCurrentId(file.id)
+  }, [file.id])
+
+  const siblingMatch = siblings?.find((item) => item.id === currentId)
+  const current: PreviewFile = siblingMatch ?? (currentId === file.id ? file : { ...file, id: currentId })
+  const index = siblings ? siblings.findIndex((item) => item.id === currentId) : -1
+  const canNavigatePrev = index > 0
+  const canNavigateNext = siblings !== undefined && index >= 0 && index < siblings.length - 1
 
   const waitingForImage =
     state.status === 'ready' &&
@@ -47,7 +73,7 @@ export function PreviewModal({
       closingAnimation.current = null
       animation?.cancel()
     }
-  }, [file.id])
+  }, [currentId])
 
   function close() {
     if (closingAnimation.current) return
@@ -89,36 +115,122 @@ export function PreviewModal({
     }
   }
 
+  function navigate(step: number) {
+    if (!siblings || index < 0) return
+    const target = siblings[index + step]
+    if (target) setCurrentId(target.id)
+  }
+
+  function adjustZoom(direction: 1 | -1) {
+    setZoom((current) => {
+      const base = current ?? 1
+      const next = direction > 0 ? base * ZOOM_STEP : base / ZOOM_STEP
+      return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
+    })
+  }
+
+  const showZoomToolbar =
+    state.status === 'ready' &&
+    state.preview.type === 'image' &&
+    Boolean(state.imageUrl) &&
+    Boolean(state.imageLoaded)
+
+  // Листание стрелками ловим на документе: после навигации кнопка может стать
+  // disabled и потерять фокус, поэтому keydown на оверлее не сработает.
+  useEffect(() => {
+    if (!siblings || siblings.length < 2) return
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented) return
+      if (event.key === 'ArrowLeft' && canNavigatePrev) {
+        event.preventDefault()
+        navigate(-1)
+      } else if (event.key === 'ArrowRight' && canNavigateNext) {
+        event.preventDefault()
+        navigate(1)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siblings, index, canNavigatePrev, canNavigateNext])
+
+  // Ctrl+колесо масштабирует изображение, обычная прокрутка скроллит область.
+  useEffect(() => {
+    if (!showZoomToolbar) return
+    const surface = zoomSurfaceRef.current
+    if (!surface) return
+    function onWheel(event: WheelEvent) {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      adjustZoom(event.deltaY < 0 ? 1 : -1)
+    }
+    surface.addEventListener('wheel', onWheel, { passive: false })
+    return () => surface.removeEventListener('wheel', onWheel)
+  }, [showZoomToolbar])
+
   useEffect(() => {
     const controller = new AbortController()
     let objectUrl: string | undefined
     setState({ status: 'loading' })
+    setZoom(null)
+    setNaturalWidth(undefined)
 
-    getFilePreview(file.id, controller.signal)
-      .then((preview) => {
-        if (controller.signal.aborted) return
-        if (preview.type === 'image') {
-          objectUrl = URL.createObjectURL(previewImageBlob(preview))
-        } else if (preview.type === 'video') {
-          objectUrl = URL.createObjectURL(previewVideoBlob(preview))
-        }
-        setState({
-          status: 'ready',
-          preview,
-          imageUrl: preview.type === 'image' ? objectUrl : undefined,
-          videoUrl: preview.type === 'video' ? objectUrl : undefined,
+    const binaryKind = detectBinaryKind(current)
+    if (binaryKind) {
+      fetchFileBlob(
+        { id: current.id, name: current.name, size: current.size ?? 0 },
+        current.mimeType ?? 'application/octet-stream',
+        controller.signal,
+      )
+        .then((blob) => {
+          if (controller.signal.aborted) return
+          objectUrl = URL.createObjectURL(blob)
+          setState({
+            status: 'ready',
+            preview: { type: 'unsupported', content: '', mimeType: current.mimeType ?? '' },
+            binaryUrl: objectUrl,
+            binaryKind,
+          })
         })
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return
-        setState({ status: 'error', message: previewErrorMessage(error) })
-      })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return
+          setState({
+            status: 'error',
+            message:
+              error instanceof BinaryPreviewTooLargeError
+                ? 'Файл слишком большой для предпросмотра.'
+                : previewErrorMessage(error),
+          })
+        })
+    } else {
+      getFilePreview(current.id, controller.signal)
+        .then((preview) => {
+          if (controller.signal.aborted) return
+          if (preview.type === 'image') {
+            objectUrl = URL.createObjectURL(previewImageBlob(preview))
+          } else if (preview.type === 'video') {
+            objectUrl = URL.createObjectURL(previewVideoBlob(preview))
+          }
+          setState({
+            status: 'ready',
+            preview,
+            imageUrl: preview.type === 'image' ? objectUrl : undefined,
+            videoUrl: preview.type === 'video' ? objectUrl : undefined,
+          })
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return
+          setState({ status: 'error', message: previewErrorMessage(error) })
+        })
+    }
 
     return () => {
       controller.abort()
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [file.id])
+    // Зависимости — примитивные поля current: сам объект собирается заново каждый рендер.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.id, current.mimeType, current.name, current.size])
 
   return (
     <div
@@ -132,8 +244,8 @@ export function PreviewModal({
       <div
         className="dialog-surface preview-dialog"
         data-preview-image={
-          file.mimeType?.startsWith('image/') ||
-          file.mimeType?.startsWith('video/') ||
+          current.mimeType?.startsWith('image/') ||
+          current.mimeType?.startsWith('video/') ||
           (state.status === 'ready' &&
             (state.preview.type === 'image' ||
               state.preview.type === 'video'))
@@ -142,7 +254,36 @@ export function PreviewModal({
         }
       >
         <div className="dialog-header">
-          <h3 className="preview-title" id="preview-title">Просмотр: {file.name}</h3>
+          <div className="preview-heading">
+            <h3 className="preview-title" id="preview-title">Просмотр: {current.name}</h3>
+            {siblings && siblings.length > 1 && index >= 0 ? (
+              <span className="preview-counter">{index + 1} из {siblings.length}</span>
+            ) : null}
+          </div>
+          {siblings && siblings.length > 1 ? (
+            <div className="preview-nav" role="group" aria-label="Листание файлов">
+              <button
+                aria-label="Предыдущий файл"
+                className="icon-button"
+                disabled={!canNavigatePrev}
+                onClick={() => navigate(-1)}
+                title="Предыдущий файл (←)"
+                type="button"
+              >
+                <Icon name="chevron-left" />
+              </button>
+              <button
+                aria-label="Следующий файл"
+                className="icon-button"
+                disabled={!canNavigateNext}
+                onClick={() => navigate(1)}
+                title="Следующий файл (→)"
+                type="button"
+              >
+                <Icon name="chevron" />
+              </button>
+            </div>
+          ) : null}
           <LiquidCloseButton
             aria-label="Закрыть просмотр"
             onClick={close}
@@ -162,17 +303,51 @@ export function PreviewModal({
           </div>
         ) : null}
         {state.status === 'error' ? <p className="alert alert--danger" role="alert">{state.message}</p> : null}
+        {showZoomToolbar ? (
+          <div className="preview-zoom-toolbar" role="group" aria-label="Масштаб изображения">
+            <button
+              aria-label="Уменьшить"
+              className="icon-button"
+              disabled={zoom !== null && zoom <= MIN_ZOOM}
+              onClick={() => adjustZoom(-1)}
+              type="button"
+            >
+              <Icon name="zoom-out" />
+            </button>
+            <button
+              className="preview-zoom-reset"
+              disabled={zoom === null}
+              onClick={() => setZoom(null)}
+              title="Вписать в окно"
+              type="button"
+            >
+              {zoom === null ? 'По размеру' : `${Math.round(zoom * 100)}%`}
+            </button>
+            <button
+              aria-label="Увеличить"
+              className="icon-button"
+              disabled={zoom !== null && zoom >= MAX_ZOOM}
+              onClick={() => adjustZoom(1)}
+              type="button"
+            >
+              <Icon name="zoom-in" />
+            </button>
+          </div>
+        ) : null}
         {state.status === 'ready' && state.preview.type === 'text' ? (
           <pre className="preview-text mono">{state.preview.content}</pre>
         ) : null}
         {state.status === 'ready' && state.preview.type === 'image' && state.imageUrl ? (
+          <div className="preview-zoom-surface" ref={zoomSurfaceRef}>
           <img
-            alt={`Предпросмотр: ${file.name}`}
+            alt={`Предпросмотр: ${current.name}`}
             key={state.imageUrl}
             className="preview-image"
             src={state.imageUrl}
+            style={zoom !== null && naturalWidth ? { width: Math.round(naturalWidth * zoom), maxWidth: 'none' } : undefined}
             data-image-pending={waitingForImage ? 'true' : undefined}
-            onLoad={() => {
+            onLoad={(event) => {
+              setNaturalWidth(event.currentTarget.naturalWidth || undefined)
               setState(current =>
                 current.status === 'ready' &&
                 current.imageUrl === state.imageUrl
@@ -192,10 +367,11 @@ export function PreviewModal({
               )
             }}
           />
+          </div>
         ) : null}
         {state.status === 'ready' && state.preview.type === 'video' && state.videoUrl ? (
           <img
-            alt={`Предпросмотр: ${file.name}`}
+            alt={`Предпросмотр: ${current.name}`}
             key={state.videoUrl}
             className="preview-image"
             src={state.videoUrl}
@@ -221,7 +397,23 @@ export function PreviewModal({
             }}
           />
         ) : null}
-        {state.status === 'ready' && state.preview.type === 'unsupported' ? (
+        {state.status === 'ready' && state.binaryKind === 'pdf' && state.binaryUrl ? (
+          <iframe
+            className="preview-frame"
+            key={state.binaryUrl}
+            src={state.binaryUrl}
+            title={`Предпросмотр: ${current.name}`}
+          />
+        ) : null}
+        {state.status === 'ready' && state.binaryKind === 'audio' && state.binaryUrl ? (
+          <div className="preview-audio-wrap">
+            <Icon name="file" width={48} height={48} />
+            <audio className="preview-audio" controls key={state.binaryUrl} src={state.binaryUrl}>
+              Ваш браузер не поддерживает воспроизведение аудио.
+            </audio>
+          </div>
+        ) : null}
+        {state.status === 'ready' && state.preview.type === 'unsupported' && !state.binaryUrl ? (
           <p className="empty-state preview-unsupported" role="status">Предпросмотр недоступен для этого типа файлов.</p>
         ) : null}
         </div>
@@ -230,6 +422,12 @@ export function PreviewModal({
   )
 }
 
+function detectBinaryKind(file: PreviewFile): 'pdf' | 'audio' | null {
+  if (file.size === undefined) return null
+  if (file.mimeType === 'application/pdf') return 'pdf'
+  if (file.mimeType?.startsWith('audio/')) return 'audio'
+  return null
+}
 
 function previewErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return 'Не удалось загрузить предпросмотр. Попробуйте ещё раз.'

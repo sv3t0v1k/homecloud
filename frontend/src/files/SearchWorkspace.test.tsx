@@ -468,7 +468,7 @@ describe('global search in the shared authenticated workspace', () => {
       name: 'Поиск во всём облаке',
     })
 
-    expect(within(restored).getByRole('searchbox')).toHaveValue('report')
+    expect(within(restored).getByRole('searchbox', { name: 'Название файла или папки' })).toHaveValue('report')
 
     const restoredResult = await within(restored).findByRole(
       'button',
@@ -494,7 +494,7 @@ describe('global search in the shared authenticated workspace', () => {
       name: 'Поиск во всех файлах',
     }))
 
-    expect(screen.getByRole('searchbox')).toHaveValue('report')
+    expect(screen.getByRole('searchbox', { name: 'Название файла или папки' })).toHaveValue('report')
     expect(searchCalls()).toHaveLength(2)
   })
 
@@ -612,6 +612,7 @@ describe('global search in the shared authenticated workspace', () => {
 
       const restoredInput = within(restored).getByRole(
         'searchbox',
+        { name: 'Название файла или папки' },
       )
 
       expect(restoredInput).toHaveValue('report')
@@ -683,7 +684,7 @@ describe('global search in the shared authenticated workspace', () => {
       if (present) {
         expect(reopenedResult).toHaveFocus()
       } else {
-        expect(within(reopened).getByRole('searchbox'))
+        expect(within(reopened).getByRole('searchbox', { name: 'Название файла или папки' }))
           .toHaveFocus()
       }
     },
@@ -705,7 +706,7 @@ describe('global search in the shared authenticated workspace', () => {
         name: 'Поиск во всех файлах',
       }))
 
-      const input = screen.getByRole('searchbox')
+      const input = screen.getByRole('searchbox', { name: 'Название файла или папки' })
 
       await user.type(input, 'report{Enter}')
 
@@ -758,7 +759,7 @@ describe('global search in the shared authenticated workspace', () => {
         name: 'Поиск во всём облаке',
       })
 
-      const restoredInput = within(reopened).getByRole('searchbox')
+      const restoredInput = within(reopened).getByRole('searchbox', { name: 'Название файла или папки' })
 
       expect(restoredInput).toHaveValue('report')
 
@@ -781,7 +782,7 @@ describe('global search in the shared authenticated workspace', () => {
         name: 'Поиск во всех файлах',
       }))
 
-      expect(screen.getByRole('searchbox')).toHaveValue('')
+      expect(screen.getByRole('searchbox', { name: 'Название файла или папки' })).toHaveValue('')
       expect(searchCalls()).toHaveLength(1)
     },
   )
@@ -802,7 +803,7 @@ describe('global search in the shared authenticated workspace', () => {
     }))
 
     await user.type(
-      screen.getByRole('searchbox'),
+      screen.getByRole('searchbox', { name: 'Название файла или папки' }),
       'private-report{Enter}',
     )
 
@@ -848,7 +849,7 @@ describe('global search in the shared authenticated workspace', () => {
       name: 'Поиск во всех файлах',
     }))
 
-    expect(screen.getByRole('searchbox')).toHaveValue('')
+    expect(screen.getByRole('searchbox', { name: 'Название файла или папки' })).toHaveValue('')
 
     expect(screen.queryByRole('heading', {
       name: 'Результаты для «private-report»',
