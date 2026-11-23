@@ -36,6 +36,8 @@ CI_ONLY_SCRIPT_CHANGES = frozenset({
     'scripts/ci/test-stage-cache-proof.py',
     'scripts/ci/test-update-host-verify.py',
     'scripts/ci/test-test-channel.py',
+    'scripts/ci/test-recovery-native-workflow.cjs',
+    'scripts/ci/test-recovery-workflow.cjs',
 })
 
 DEPLOY_ONLY_CHANGES = frozenset({

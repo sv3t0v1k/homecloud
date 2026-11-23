@@ -218,20 +218,6 @@ jobs:
           docker run --rm --pull=never --platform linux/amd64 --network none --cap-drop ALL --security-opt no-new-privileges --entrypoint node "$IMAGE" -e "$(cat scripts/ci/native-boundary-preflight.cjs)" -- --strict
           bash scripts/ci/test-maintenance-supervisor.sh "$IMAGE" linux/amd64
           bash scripts/ci/test-copy-recovery-e2e.sh "$IMAGE" linux/amd64
-      - name: Real Backup Restore in an isolated nested Docker daemon
-        env:
-          HOMECLOUD_E2E_BACKEND_IMAGE: ${{ steps.image.outputs.image_id }}
-          HOMECLOUD_E2E_BACKEND_IMAGE_ID: ${{ steps.image.outputs.image_id }}
-        run: |
-          pg_image=$(python3 -c 'import json; print(json.load(open("scripts/ci/production-images.lock.json"))["postgres"])')
-          stub_image=$(python3 -c 'import json; print(json.load(open("scripts/ci/images.lock.json"))["node"])')
-          docker pull --platform linux/amd64 "$pg_image"
-          docker tag "$pg_image" postgres:16-alpine
-          docker pull --platform linux/amd64 "$stub_image"
-          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64
-          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 --encrypted-only
-          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 --historical-schema-only
-          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-fault-e2e-local.sh linux/amd64
       - name: Verify runtime image architecture
         env:
           IMAGE: ${{ steps.image.outputs.image_id }}
@@ -263,3 +249,200 @@ jobs:
             backend.loaded.binding.json
           if-no-files-found: error
           retention-days: 14
+      - name: Retain the exact verified OCI for parallel scenarios
+        id: candidate-archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-recovery-backend-oci-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend.oci.tar
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+  native-recovery-scenarios:
+    needs: native-recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - plain
+          - encrypted
+          - historical
+          - partial-stop
+          - staged
+          - db-restored
+          - reconciled
+          - ready-before-clear
+          - ready-after-clear
+          - foreign-writer
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact scenario checkout
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_SOURCE_SHA" = '${{ inputs.source_sha }}'
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+      - name: Download the exact qualified OCI candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: native-recovery-backend-oci-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-recovery-candidate
+      - name: Load the retained OCI for one isolated scenario
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          test "$(uname -s)/$(uname -m)" = Linux/x86_64
+          docker info --format '{"os":{{json .OSType}},"arch":{{json .Architecture}},"operating_system":{{json .OperatingSystem}},"version":{{json .ServerVersion}}}' > backend.native-host.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          host = json.loads(Path('backend.native-host.json').read_text())
+          assert host['os'] == 'linux' and host['arch'] in ('x86_64', 'amd64')
+          assert 'desktop' not in host['operating_system'].lower()
+          print('NATIVE_AMD64_HOST:', json.dumps(host, sort_keys=True))
+          PY
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+          skopeo copy --override-os linux --override-arch amd64 "oci-archive:$RUNNER_TEMP/native-recovery-candidate/backend.oci.tar" "docker-daemon:homecloud-ci-backend:${{ inputs.source_sha }}"
+          docker image inspect "homecloud-ci-backend:${{ inputs.source_sha }}" > backend.loaded.inspect.json
+          python3 scripts/ci/oci-scan-binding.py --archive "$RUNNER_TEMP/native-recovery-candidate/backend.oci.tar" --loaded-inspect backend.loaded.inspect.json --role backend --source "$(git rev-parse HEAD)" --output backend.loaded.binding.json
+      - name: Bind this scenario to the verified OCI image ID
+        id: image
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          proof = json.loads(
+              Path("backend.loaded.binding.json").read_bytes()
+          )
+          expected = os.environ["EXPECTED_SOURCE_SHA"]
+          image_id = proof.get("config_digest")
+
+          if (
+              proof.get("role") != "backend"
+              or proof.get("source_commit") != expected
+              or not re.fullmatch("[a-f0-9]{40}", expected)
+              or proof.get("binding") != "LOADED_EXACT_OCI_CONFIG_AND_FILESYSTEM"
+              or not isinstance(image_id, str)
+              or not re.fullmatch("sha256:[a-f0-9]{64}", image_id)
+          ):
+              raise SystemExit("BLOCKED: invalid OCI runtime binding")
+
+          observed = subprocess.check_output(
+              [
+                  "docker", "image", "inspect",
+                  "--format", "{{.Id}} {{.Os}}/{{.Architecture}}",
+                  image_id,
+              ],
+              text=True,
+              timeout=30,
+          ).strip()
+
+          if observed != image_id + " linux/amd64":
+              raise SystemExit("BLOCKED: loaded runtime identity mismatch")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("image_id=" + image_id + "\n")
+
+          print("PASS: runtime image bound to verified OCI config ID", image_id)
+          PY
+      - name: Run one fresh isolated Backup Restore scenario
+        id: scenario
+        shell: bash
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          HOMECLOUD_E2E_BACKEND_IMAGE: ${{ steps.image.outputs.image_id }}
+          HOMECLOUD_E2E_BACKEND_IMAGE_ID: ${{ steps.image.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          options=()
+          case "$SCENARIO" in
+            plain) ;;
+            encrypted) options=(--encrypted-only) ;;
+            historical) options=(--historical-schema-only) ;;
+            partial-stop|staged|db-restored|reconciled|ready-before-clear|ready-after-clear|foreign-writer)
+              options=("--fault-case=$SCENARIO")
+              ;;
+            *)
+              echo "BLOCKED: unknown Native Recovery scenario" >&2
+              exit 1
+              ;;
+          esac
+          pg_image=$(python3 -c 'import json; print(json.load(open("scripts/ci/production-images.lock.json"))["postgres"])')
+          stub_image=$(python3 -c 'import json; print(json.load(open("scripts/ci/images.lock.json"))["node"])')
+          docker pull --platform linux/amd64 "$pg_image"
+          docker tag "$pg_image" postgres:16-alpine
+          docker pull --platform linux/amd64 "$stub_image"
+          HOMECLOUD_E2E_STUB_IMAGE="$stub_image" bash scripts/ci/run-restore-e2e-local.sh linux/amd64 "${options[@]}"
+      - name: Record the completed scenario identity
+        shell: bash
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+          IMAGE_ID: ${{ steps.image.outputs.image_id }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          result = {
+              'scenario': os.environ['SCENARIO'],
+              'source_commit': os.environ['EXPECTED_SOURCE_SHA'],
+              'image_id': os.environ['IMAGE_ID'],
+              'status': 'passed',
+          }
+          Path('native-recovery-' + result['scenario'] + '.json').write_text(
+              json.dumps(result, sort_keys=True) + '\n'
+          )
+          PY
+      - name: Retain evidence for this exact scenario
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-recovery-scenario-${{ matrix.scenario }}-${{ github.run_attempt }}
+          path: |
+            native-recovery-${{ matrix.scenario }}.json
+            backend.native-host.json
+            backend.loaded.inspect.json
+            backend.loaded.binding.json
+          if-no-files-found: error
+          retention-days: 14
+
+  native-recovery-gate:
+    if: always()
+    needs: [native-recovery, native-recovery-scenarios]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require the shared candidate and every recovery scenario
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          results = json.loads(os.environ['RESULTS'])
+          expected = {'native-recovery', 'native-recovery-scenarios'}
+          assert set(results) == expected, results
+          for name, result in results.items():
+              assert result.get('result') == 'success', (name, result)
+          print('PASS: shared OCI candidate and all 10 Native Recovery scenarios')
+          PY
