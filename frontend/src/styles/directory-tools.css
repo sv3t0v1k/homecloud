@@ -111,3 +111,85 @@
 .context-menu-popover {
   z-index: 60;
 }
+
+/* U8: дерево папок назначения в диалоге операций */
+.folder-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.16));
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.folder-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.folder-tree-toggle,
+.folder-tree-spacer {
+  flex: none;
+  width: 22px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.folder-tree-toggle {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.folder-tree-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.folder-tree-toggle .icon {
+  transition: transform 0.15s ease;
+  transform: rotate(90deg);
+}
+
+.folder-tree-toggle[aria-expanded="false"] .icon {
+  transform: rotate(0deg);
+}
+
+.folder-tree-option {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.folder-tree-option:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.folder-tree-option.is-selected {
+  background: rgba(110, 168, 255, 0.22);
+  outline: 1px solid rgba(110, 168, 255, 0.55);
+}
+
+.folder-tree-option:disabled,
+.folder-tree-toggle:disabled {
+  cursor: default;
+  opacity: 0.55;
+}

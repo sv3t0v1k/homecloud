@@ -1133,7 +1133,8 @@ function OperationDialog({ action, busy, currentFolderId, error, onClose, onSubm
   const [name, setName] = useState(action.item.name)
   const [destination, setDestination] = useState(action.action === 'copy' ? String(currentFolderId ?? '') : '')
   const [validation, setValidation] = useState<string | null>(null)
-  const [destinations, setDestinations] = useState<Array<{ id: number; name: string }>>([])
+  const [destinations, setDestinations] = useState<Array<{ id: number; name: string; parentId: number | null; depth: number }>>([])
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
   const [destinationLoading, setDestinationLoading] = useState(true)
   const [destinationError, setDestinationError] = useState<string | null>(null)
   const [destinationReload, setDestinationReload] = useState(0)
@@ -1143,21 +1144,20 @@ function OperationDialog({ action, busy, currentFolderId, error, onClose, onSubm
     setDestinationLoading(true)
     setDestinationError(null)
     async function load() {
-      const options: Array<{ id: number; name: string }> = []
+      const options: Array<{ id: number; name: string; parentId: number | null; depth: number }> = []
       const visited = new Set<number>()
-      async function walk(parentId?: number, prefix = '') {
+      async function walk(parentId: number | undefined, depth: number) {
         const folders = await apiRequest<FolderItem[]>({ method: 'GET', url: '/files/folders', params: parentId === undefined ? undefined : { parentId }, signal: controller.signal })
         for (const folder of folders) {
           if (visited.has(folder.id)) continue
           visited.add(folder.id)
           // Do not offer the moved folder or any part of its subtree.
           if (action.kind === 'folder' && folder.id === action.item.id) continue
-          const name = prefix ? `${prefix} / ${folder.name}` : folder.name
-          options.push({ id: folder.id, name })
-          await walk(folder.id, name)
+          options.push({ id: folder.id, name: folder.name, parentId: parentId ?? null, depth })
+          await walk(folder.id, depth + 1)
         }
       }
-      await walk()
+      await walk(undefined, 0)
       if (!controller.signal.aborted) setDestinations(options)
     }
     void load().catch((cause: unknown) => {
@@ -1167,10 +1167,66 @@ function OperationDialog({ action, busy, currentFolderId, error, onClose, onSubm
   }, [action.action, action.kind, action.item.id, destinationReload])
   const titles = { rename: 'Переименовать', move: 'Переместить', copy: 'Копировать', trash: 'Переместить в корзину' }
   const selecting = action.action === 'move' || action.action === 'copy'
+  const childCounts = new Map<number, number>()
+  for (const node of destinations) {
+    if (node.parentId !== null) childCounts.set(node.parentId, (childCounts.get(node.parentId) ?? 0) + 1)
+  }
+  const visibleDestinations: typeof destinations = []
+  const hiddenBelow: number[] = []
+  for (const node of destinations) {
+    while (hiddenBelow.length > 0 && node.depth <= hiddenBelow[hiddenBelow.length - 1]) hiddenBelow.pop()
+    if (hiddenBelow.length > 0) continue
+    visibleDestinations.push(node)
+    if (collapsed.has(node.id)) hiddenBelow.push(node.depth)
+  }
+  const destinationControlsDisabled = busy || destinationLoading || destinationError !== null
+  function toggleCollapsed(id: number) {
+    setCollapsed((previous) => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
   return <SmallDialog title={titles[action.action]} onClose={onClose}><form onSubmit={(event) => { event.preventDefault(); if (busy || (selecting && (destinationLoading || destinationError))) return; if (action.action === 'rename' && (!name.trim() || name.trim().length > 255)) { setValidation('Введите название от 1 до 255 символов.'); return } setValidation(null); void onSubmit(name.trim(), destination) }}>
     <p className="muted dialog-item-name">{action.item.name}</p>
     {action.action === 'rename' ? <label className="field">Новое название<input className="input" disabled={busy} maxLength={255} onChange={(event) => { setName(event.target.value); setValidation(null) }} value={name} /></label> : null}
-    {selecting ? <label className="field">Папка назначения<select className="input" disabled={busy || destinationLoading || destinationError !== null} onChange={(event) => setDestination(event.target.value)} value={destination}><option value="">Мои файлы</option>{destinations.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></label> : null}
+    {selecting ? <div className="field">
+      <span className="field-label" id="destination-tree-label">Папка назначения</span>
+      <div aria-busy={destinationLoading} aria-labelledby="destination-tree-label" className="folder-tree" role="group">
+        <button
+          aria-pressed={destination === ''}
+          className={`folder-tree-option folder-tree-root${destination === '' ? ' is-selected' : ''}`}
+          disabled={destinationControlsDisabled}
+          onClick={() => setDestination('')}
+          type="button"
+        >Мои файлы</button>
+        {visibleDestinations.map((node) => {
+          const hasChildren = (childCounts.get(node.id) ?? 0) > 0
+          const isCollapsed = collapsed.has(node.id)
+          const selected = destination === String(node.id)
+          return <div className="folder-tree-row" key={node.id} style={{ paddingLeft: `${node.depth * 18}px` }}>
+            {hasChildren
+              ? <button
+                  aria-expanded={!isCollapsed}
+                  aria-label={`${isCollapsed ? 'Развернуть' : 'Свернуть'}: ${node.name}`}
+                  className="folder-tree-toggle"
+                  disabled={destinationControlsDisabled}
+                  onClick={() => toggleCollapsed(node.id)}
+                  type="button"
+                ><Icon name="chevron" /></button>
+              : <span aria-hidden="true" className="folder-tree-spacer" />}
+            <button
+              aria-pressed={selected}
+              className={`folder-tree-option${selected ? ' is-selected' : ''}`}
+              disabled={destinationControlsDisabled}
+              onClick={() => setDestination(String(node.id))}
+              type="button"
+            >{node.name}</button>
+          </div>
+        })}
+      </div>
+    </div> : null}
     {selecting && destinationLoading ? <p role="status">Загружаем папки назначения…</p> : null}
     {selecting && destinationError ? <p className="inline-alert" role="alert">{destinationError} <button className="text-link" onClick={() => setDestinationReload((value) => value + 1)} type="button">Повторить</button></p> : null}
     {action.action === 'trash' ? <p>{action.kind === 'folder' ? 'Папка и её содержимое попадут в корзину.' : 'Файл попадёт в корзину.'} Вы сможете восстановить их позже.</p> : null}
