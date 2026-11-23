@@ -72,3 +72,37 @@
   .directory-filter { flex: 1 1 100%; order: 2; }
   .directory-filter-input { width: 100%; flex: 1; }
 }
+
+/* U5: справка по горячим клавишам */
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shortcuts-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.shortcuts-list kbd {
+  flex: none;
+  min-width: 92px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.16));
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  font-family: inherit;
+  font-size: 0.78rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.shortcuts-trigger {
+  flex: none;
+}

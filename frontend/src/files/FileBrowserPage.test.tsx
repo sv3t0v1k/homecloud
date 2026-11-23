@@ -1169,6 +1169,96 @@ describe('FileBrowserPage', () => {
     expect(await screen.findByRole('button', { name: 'a.txt' })).toBeInTheDocument()
   })
 
+  it('selects all with Ctrl+A and clears the selection with Escape', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders'
+      ? [folder(7, 'Архив', null)]
+      : [file(11, 'a.txt', 1), file(12, 'b.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'a.txt' })
+
+    await user.keyboard('{Control>}a{/Control}')
+    expect(screen.getByText('Выбрано: 3')).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByText(/Выбрано:/)).not.toBeInTheDocument()
+  })
+
+  it('opens the bulk trash confirmation with Delete', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'a.txt' }))
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument()
+
+    await user.keyboard('{Delete}')
+    expect(screen.getByRole('dialog')).toHaveTextContent('Переместить выбранное в корзину?')
+  })
+
+  it('opens the rename dialog with F2 for a single selection', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'a.txt' }))
+
+    await user.keyboard('{F2}')
+    expect(await screen.findByLabelText('Новое название')).toBeInTheDocument()
+  })
+
+  it('shows the shortcuts reference with ? and from the toolbar button', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'a.txt' })
+
+    await user.keyboard('?')
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('Горячие клавиши')
+    expect(dialog).toHaveTextContent('Переименовать выбранный элемент')
+    await user.click(within(dialog).getByRole('button', { name: 'Закрыть' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Горячие клавиши' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Выбрать все видимые элементы')
+  })
+
+  it('moves focus across rows with arrows, Home and End', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders'
+      ? [folder(7, 'Архив', null)]
+      : [file(11, 'a.txt', 1), file(12, 'b.txt', 1)])
+    sessionStorage.clear()
+    renderPage('/files')
+    const first = await screen.findByRole('button', { name: 'Архив' })
+    first.focus()
+
+    fireEvent.keyDown(first, { key: 'ArrowDown' })
+    expect(screen.getByRole('button', { name: 'a.txt' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'a.txt' }), { key: 'End' })
+    expect(screen.getByRole('button', { name: 'b.txt' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'b.txt' }), { key: 'ArrowDown' })
+    expect(screen.getByRole('button', { name: 'b.txt' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'b.txt' }), { key: 'Home' })
+    expect(first).toHaveFocus()
+    fireEvent.keyDown(first, { key: 'ArrowUp' })
+    expect(first).toHaveFocus()
+  })
+
+  it('ignores page shortcuts while typing in the folder filter', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'a.txt' })
+
+    const filterInput = screen.getByRole('searchbox', { name: 'Фильтр по имени в этой папке' })
+    await user.click(filterInput)
+    await user.keyboard('{Control>}a{/Control}')
+    expect(screen.queryByText(/Выбрано:/)).not.toBeInTheDocument()
+    await user.keyboard('{Delete}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.keyboard('?')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
 })
 
 async function chooseAction(user: ReturnType<typeof userEvent.setup>, name: string, action: string) {

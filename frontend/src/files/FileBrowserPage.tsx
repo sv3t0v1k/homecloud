@@ -25,6 +25,7 @@ import { safeOperationError } from './operationErrors'
 import { locatedTarget, searchReturn } from './searchNavigation'
 import { ToastProvider } from '../ui/toast'
 import { useToast } from '../ui/toastContext'
+import { DIRECTORY_SHORTCUTS } from './shortcuts'
 import {
   fileTypeLabel,
   filterByName,
@@ -559,6 +560,7 @@ function DirectoryTable({
   }
   const [selection, setSelection] = useState<Set<string>>(new Set())
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [bulkError, setBulkError] = useState<string | null>(null)
   const [archivePending, setArchivePending] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -662,6 +664,71 @@ function DirectoryTable({
     if (!selection.has(key)) setSelection(new Set([key]))
     event.currentTarget.querySelector<HTMLButtonElement>('.action-menu > button')?.click()
   }
+  // Горячие клавиши уровня страницы. Состояние читаем через ref, чтобы не
+  // перевешивать document-слушатель на каждый рендер.
+  const shortcutState = useRef({ selection, visibleKeys, folders, files, pending })
+  shortcutState.current = { selection, visibleKeys, folders, files, pending }
+  useEffect(() => {
+    function onShortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      if (document.querySelector('[aria-modal="true"]')) return
+      const state = shortcutState.current
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        anchor.current = state.visibleKeys[0]
+        setSelection(new Set(state.visibleKeys))
+        return
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.key === 'Escape' && state.selection.size) {
+        anchor.current = undefined
+        setSelection(new Set())
+        return
+      }
+      if (event.key === '?' ) {
+        event.preventDefault()
+        setShortcutsOpen(true)
+        return
+      }
+      if (!state.selection.size || state.pending) return
+      if (event.key === 'Delete') {
+        event.preventDefault()
+        setBulkError(null)
+        setBulkOpen(true)
+        return
+      }
+      if (event.key === 'F2' && state.selection.size === 1) {
+        event.preventDefault()
+        const [key] = state.selection
+        const [kind, id] = key.split(':')
+        const numericId = Number(id)
+        const item = kind === 'folder'
+          ? state.folders.find((folder) => folder.id === numericId)
+          : state.files.find((file) => file.id === numericId)
+        if (item) openAction({ kind: kind as 'file' | 'folder', item, action: 'rename' })
+      }
+    }
+    document.addEventListener('keydown', onShortcut)
+    return () => document.removeEventListener('keydown', onShortcut)
+  }, [])
+  function onTableKeyDown(event: React.KeyboardEvent<HTMLTableElement>) {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    // Стрелки/Home/End внутри открытого меню действий принадлежат меню.
+    if ((event.target as HTMLElement).closest('[role="menu"], [role="menuitem"], .action-menu')) return
+    const names = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('.file-name'))
+    if (!names.length) return
+    event.preventDefault()
+    const active = document.activeElement as HTMLElement | null
+    const currentIndex = names.findIndex((element) => element === active || element.contains(active))
+    let nextIndex: number
+    if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = names.length - 1
+    else if (currentIndex === -1) nextIndex = event.key === 'ArrowDown' ? 0 : names.length - 1
+    else nextIndex = Math.min(names.length - 1, Math.max(0, currentIndex + (event.key === 'ArrowDown' ? 1 : -1)))
+    names[nextIndex]?.focus()
+  }
   async function downloadArchive() {
     if (archivePendingRef.current || selection.size < 2) return
     archivePendingRef.current = true
@@ -759,7 +826,7 @@ function DirectoryTable({
   return (
     <div ref={directoryRef}>
       <div className="directory-controls">
-        <div className="directory-toolbar"><p className="muted">Папок: {contents.folders.length} · Файлов: {contents.files.length}{filtering ? ` · По фильтру: ${folders.length + files.length}` : ''}</p><div className="directory-tools"><label className="directory-filter"><Icon name="search" /><input aria-label="Фильтр по имени в этой папке" className="directory-filter-input" onChange={(event) => setFilter(event.target.value)} placeholder="Фильтр по имени" type="search" value={filter} />{filtering ? <button aria-label="Очистить фильтр" className="icon-button directory-filter-clear" onClick={() => setFilter('')} type="button"><Icon name="close" /></button> : null}</label><div className="view-switch" aria-label="Вид файлов"><button aria-label="Список" aria-pressed={view === 'list'} className={view === 'list' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('list')} type="button"><Icon name="list" /></button><button aria-label="Плитка" aria-pressed={view === 'grid'} className={view === 'grid' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('grid')} type="button"><Icon name="grid" /></button></div></div></div>
+        <div className="directory-toolbar"><p className="muted">Папок: {contents.folders.length} · Файлов: {contents.files.length}{filtering ? ` · По фильтру: ${folders.length + files.length}` : ''}</p><div className="directory-tools"><label className="directory-filter"><Icon name="search" /><input aria-label="Фильтр по имени в этой папке" className="directory-filter-input" onChange={(event) => setFilter(event.target.value)} placeholder="Фильтр по имени" type="search" value={filter} />{filtering ? <button aria-label="Очистить фильтр" className="icon-button directory-filter-clear" onClick={() => setFilter('')} type="button"><Icon name="close" /></button> : null}</label><div className="view-switch" aria-label="Вид файлов"><button aria-label="Список" aria-pressed={view === 'list'} className={view === 'list' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('list')} type="button"><Icon name="list" /></button><button aria-label="Плитка" aria-pressed={view === 'grid'} className={view === 'grid' ? 'icon-button is-active' : 'icon-button'} onClick={() => changeView('grid')} type="button"><Icon name="grid" /></button></div><button aria-label="Горячие клавиши" className="icon-button shortcuts-trigger" onClick={() => setShortcutsOpen(true)} title="Горячие клавиши (?)" type="button"><Icon name="keyboard" /></button></div></div>
       </div>
       {selection.size ? <><div
         className="selection-toolbar liquid-selection-dock"
@@ -873,12 +940,14 @@ function DirectoryTable({
         </button>
       </div>{archiveError ? <p className="inline-alert" role="alert">{archiveError}</p> : null}</> : null}
       {bulkOpen ? <SmallDialog title="Переместить выбранное в корзину?" onClose={() => { if (!pending) setBulkOpen(false) }}><p>Объектов: {selection.size}. Их можно будет восстановить.</p>{bulkError ? <p role="alert">{bulkError}</p> : null}<div className="dialog-actions"><button className="button button--ghost" disabled={pending} onClick={() => setBulkOpen(false)} type="button">Отмена</button><button className="button button--danger" disabled={pending} onClick={() => void trashSelection()} type="button">{pending ? 'Выполняется…' : 'Переместить выбранное'}</button></div></SmallDialog> : null}
+      {shortcutsOpen ? <SmallDialog title="Горячие клавиши" onClose={() => setShortcutsOpen(false)}><ul className="shortcuts-list">{DIRECTORY_SHORTCUTS.map((hint) => <li key={hint.keys}><kbd>{hint.keys}</kbd><span>{hint.description}</span></li>)}</ul></SmallDialog> : null}
       {trulyEmpty ? <div className="empty-state"><Icon name="folder" /><h3>В этой папке пока пусто</h3><p>Перетащите файлы сюда или воспользуйтесь кнопкой «Добавить».</p></div> : empty ? (
         <div className="empty-state" role="status"><Icon name="search" /><h3>По фильтру ничего не найдено</h3><p>В этой папке нет имён, содержащих «{filter.trim()}».</p><button className="text-link" onClick={() => setFilter('')} type="button">Сбросить фильтр</button></div>
       ) : (
         <table
           className={view === 'grid' ? 'directory-list directory-grid' : 'directory-list'}
           data-view-motion={viewMotion ?? undefined}
+          onKeyDown={onTableKeyDown}
           onPointerDownCapture={() => setViewMotion(null)}
           onFocusCapture={() => setViewMotion(null)}
         >
