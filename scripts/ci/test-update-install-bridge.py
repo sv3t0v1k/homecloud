@@ -85,6 +85,13 @@ class BridgeState(unittest.TestCase):
         self.assertEqual(self.events[-1],
                          ('MANUAL_RECOVERY_REQUIRED', 'INSTALLER'))
 
+    def test_pretransaction_refusal_is_retryable_stop(self):
+        def refuse(*_):
+            raise bridge.PretransactionRefusal('image pull unavailable')
+        with self.assertRaises(bridge.PretransactionRefusal):
+            self.exercise(run_install=refuse)
+        self.assertEqual(self.events[-1], ('STOP', 'PREPARATION'))
+
     def test_pending_journal_blocks_before_install(self):
         count = 0
         def pending():
@@ -251,6 +258,18 @@ class RealBoundaryFunctions(unittest.TestCase):
         with patch.object(bridge.subprocess, 'Popen', return_value=failed):
             with self.assertRaises(bridge.Stop):
                 bridge.install({'commit': COMMIT}, IDENTITY, boundary)
+
+    def test_installer_exit_two_is_distinct_from_other_refusals(self):
+        boundary = SimpleNamespace(validate_checkout=lambda *_: None,
+                                   clean_environment=lambda: {})
+        refused = SimpleNamespace(returncode=2, poll=lambda: 2,
+                                  communicate=lambda **_kwargs: ('', ''))
+        with patch.object(bridge.subprocess, 'Popen', return_value=refused), \
+             patch.object(bridge, 'no_pending') as pending:
+            with self.assertRaises(bridge.PretransactionRefusal):
+                bridge.install({'commit': COMMIT}, IDENTITY, boundary)
+            self.assertEqual(pending.call_count, 2)
+            pending.assert_called_with()
 
 
 if __name__ == '__main__':

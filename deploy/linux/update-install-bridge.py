@@ -35,6 +35,10 @@ class Stop(Exception):
     pass
 
 
+class PretransactionRefusal(Exception):
+    """The trusted installer proved that no transaction or mutation started."""
+
+
 def require(ok, reason):
     if not ok:
         raise Stop(reason)
@@ -293,6 +297,12 @@ def install(manifest, identity, boundary):
         if process.poll() is None:
             process.kill()
             process.communicate()
+    if process.returncode == 2:
+        # Exit 2 is an explicit trusted-installer contract, not a guess based on
+        # missing files: no checkout, service, configuration or transaction write
+        # occurred. Any other refusal remains ambiguous and fail-closed.
+        no_pending()
+        raise PretransactionRefusal('installer preparation refused')
     require(process.returncode == 0 and
             output.strip() == 'INSTALLED: exact TEST pair and public HTTPS smoke passed',
             'installer refused or returned ambiguous result')
@@ -320,16 +330,19 @@ def execute(identity, write_status, verify, fetch, run_install, check_pending):
         installer_started = True
         run_install(manifest, identity)
         write_status(identity, 'INSTALLED', 'COMPLETE')
-    except Exception:
-        # Once the installer was invoked, even a lost acknowledgement is
-        # ambiguous. Its pending journal remains untouched for recovery.
+    except Exception as error:
+        # Only an explicit pretransaction refusal is retryable. Once checkout or
+        # another mutation may have started, preserve the manual recovery gate.
         phase = current_phase
-        if installer_started:
+        if installer_started and not isinstance(error, PretransactionRefusal):
             try:
                 phase = installer_phase(identity) or 'INSTALLER'
             except Exception:
                 phase = 'INSTALLER'
-        write_status(identity, 'MANUAL_RECOVERY_REQUIRED' if installer_started else 'STOP', phase)
+        if isinstance(error, PretransactionRefusal):
+            write_status(identity, 'STOP', 'PREPARATION')
+        else:
+            write_status(identity, 'MANUAL_RECOVERY_REQUIRED' if installer_started else 'STOP', phase)
         raise
 
 

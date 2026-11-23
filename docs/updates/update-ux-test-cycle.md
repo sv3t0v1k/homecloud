@@ -31,12 +31,18 @@ root-служба архивирует его в `status/archive/<manifestSha256
 3. После разрешённого перехода установить `update-status-archive.py` как
    `/usr/local/sbin/homecloud-update-archive` (root:root, 0700) и новые
    systemd unit-файлы; проверить пути, ownership и effective sandbox. Включить
-   timer восстановления. Отдельно проверить, что `COMPOSE_PROJECT_NAME` из
-   защищённого `.runtime/runtime.env` совпадает с реально работающим проектом.
-4. Проверить последовательные обновления через UI на TEST: `QUEUED` →
-   `RUNNING` → подтверждённый `INSTALLED/COMPLETE` → архив → `NO_JOB`.
-   Сверить контейнеры, данные, миграции, backup, HTTPS и отсутствие
-   `pending.json`/`request.json`. При любом несовпадении остановить сценарий,
-   сохранить файлы и журналы для оператора. `AUTO_UPDATE` остаётся `false`.
+   постоянный приём явных UI-заявок и timer восстановления:
+   `systemctl enable --now homecloud-update-admission.path homecloud-update-archive.timer`.
+   Path не запускает обновление по расписанию: он реагирует только на заявку,
+   опубликованную admin-only backend после проверки доступного кандидата.
+   Отдельно проверить, что `COMPOSE_PROJECT_NAME` из защищённого
+   `.runtime/runtime.env` совпадает с реально работающим проектом.
+4. Проверить последовательные обновления через UI на TEST без открытия
+   операторского окна по SSH: `QUEUED` → `RUNNING` → подтверждённый
+   `INSTALLED/COMPLETE` → архив → `NO_JOB`. Сверить контейнеры, данные,
+   миграции, backup, HTTPS и отсутствие `pending.json`/`request.json`.
+   При любом несовпадении остановить сценарий, сохранить файлы и журналы для
+   оператора. `AUTO_UPDATE` остаётся `false`: автоматического обновления по
+   расписанию нет, admission path и archive timer остаются включёнными.
 
 Тесты в PR синтетические; они не подтверждают хостовый E2E или переход доверия.

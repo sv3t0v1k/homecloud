@@ -18,6 +18,7 @@ type InstallStatus = {
 
 const phases: Record<string, string> = {
   VERIFY_TRUST: 'Проверка сборки', FETCH_MANIFEST: 'Получение манифеста',
+  PREPARATION: 'Подготовка установки',
   INSTALLER: 'Запуск установщика', CHECKOUT: 'Проверка исходного кода',
   VERIFY_IMAGES: 'Проверка образов', PREBACKUP: 'Проверка резервной копии',
   STOP_SERVICES: 'Остановка сервисов', BACKUP: 'Резервное копирование',
@@ -31,11 +32,13 @@ function statusText(job: InstallStatus): string {
   switch (job.status) {
     case 'DISABLED': return 'Установка через интерфейс на этом стенде выключена.'
     case 'NO_JOB': return 'Установка не запущена.'
-    case 'QUEUED': return 'Заявка передана хосту.'
+    case 'QUEUED': return 'Заявка передана хосту; обработка начнётся автоматически.'
     case 'VALIDATION_REQUIRED': return 'Заявка принята; ожидается проверка хостом.'
     case 'RUNNING': return `Выполняется: ${job.phase && phases[job.phase] ? phases[job.phase] : 'проверка состояния'}.`
     case 'INSTALLED': return 'Хост подтвердил успешную установку.'
-    case 'STOP': return `Хост отклонил заявку до установки. Нужна проверка оператором.${stage}`
+    case 'STOP': return job.phase === 'PREPARATION'
+      ? 'Подготовка остановлена до внесения изменений. После устранения причины установку можно повторить.'
+      : `Хост отклонил заявку до установки. Нужна проверка оператором.${stage}`
     case 'MANUAL_RECOVERY_REQUIRED': return `Результат установки не подтверждён. Нужна ручная проверка; повторный запуск запрещён.${stage}`
     case 'UNKNOWN_REQUIRES_REVIEW': return 'Статус хоста недостоверен. Нужна проверка оператором.'
   }
