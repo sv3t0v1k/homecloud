@@ -27,6 +27,7 @@ import { ToastProvider } from '../ui/toast'
 import { useToast } from '../ui/toastContext'
 import { DIRECTORY_SHORTCUTS } from './shortcuts'
 import { clearActiveDrag, encodeDragItems, setActiveDrag, useItemsDrop } from './dragItems'
+import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 import {
   fileTypeLabel,
   filterByName,
@@ -431,6 +432,7 @@ function DirectoryTable({
   }, [motionHistory, motionPath])
 
   const [shareTarget, setShareTarget] = useState<ShareDialogTarget | null>(null)
+  const [previewFile, setPreviewFile] = useState<FileItem | null>(null)
   const [action, setAction] = useState<ItemAction | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -669,11 +671,57 @@ function DirectoryTable({
       return new Set([key])
     })
   }
+  const [menuState, setMenuState] = useState<{ x: number; y: number; key: string } | null>(null)
+  const menuReturnFocus = useRef<HTMLElement | null>(null)
   function contextMenu(event: React.MouseEvent<HTMLTableRowElement>, key: string) {
     if ((event.target as HTMLElement).closest('.file-actions, input, label')) return
     event.preventDefault()
-    if (!selection.has(key)) setSelection(new Set([key]))
-    event.currentTarget.querySelector<HTMLButtonElement>('.action-menu > button')?.click()
+    if (!selection.has(key)) {
+      anchor.current = key
+      setSelection(new Set([key]))
+    }
+    menuReturnFocus.current = event.currentTarget.querySelector<HTMLElement>('.file-name')
+    setMenuState({ x: event.clientX, y: event.clientY, key })
+  }
+  function closeContextMenu() {
+    setMenuState(null)
+    menuReturnFocus.current?.focus({ preventScroll: true })
+    menuReturnFocus.current = null
+  }
+  function contextMenuItems(key: string): ContextMenuItem[] {
+    const [kind, id] = key.split(':')
+    const numericId = Number(id)
+    if (kind === 'folder') {
+      const folder = contents.folders.find((item) => item.id === numericId)
+      if (!folder) return []
+      return [
+        { label: 'Открыть', icon: 'folder', onSelect: () => onOpenFolder(folder) },
+        { label: 'Поделиться', icon: 'link', onSelect: () => setShareTarget({ fileId: folder.shareFileId, name: folder.name, isFolder: true }) },
+        { label: 'Переименовать', icon: 'edit', onSelect: () => openAction({ kind: 'folder', item: folder, action: 'rename' }) },
+        { label: 'Переместить', icon: 'move', onSelect: () => openAction({ kind: 'folder', item: folder, action: 'move' }) },
+        { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'folder', item: folder, action: 'trash' }) },
+      ]
+    }
+    const file = contents.files.find((item) => item.id === numericId)
+    if (!file) return []
+    return [
+      { label: 'Просмотр', icon: 'file', onSelect: () => setPreviewFile(file) },
+      { label: 'Скачать', icon: 'download', onSelect: () => void downloadFromMenu(file) },
+      { label: 'Поделиться', icon: 'link', onSelect: () => setShareTarget({ fileId: file.id, name: file.name, isFolder: false, mimeType: file.mimeType, updatedAt: file.updatedAt }) },
+      { label: 'Переименовать', icon: 'edit', onSelect: () => openAction({ kind: 'file', item: file, action: 'rename' }) },
+      { label: 'Переместить', icon: 'move', onSelect: () => openAction({ kind: 'file', item: file, action: 'move' }) },
+      { label: 'Копировать', icon: 'copy', onSelect: () => openAction({ kind: 'file', item: file, action: 'copy' }) },
+      { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'file', item: file, action: 'trash' }) },
+    ]
+  }
+  async function downloadFromMenu(file: FileItem) {
+    toast.dismissKey('file-download')
+    try {
+      await downloadOriginalFile(file)
+      toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })
+    } catch (cause) {
+      toast.notify({ kind: 'error', key: 'file-download', message: downloadErrorMessage(cause) })
+    }
   }
   // Горячие клавиши уровня страницы. Состояние читаем через ref, чтобы не
   // перевешивать document-слушатель на каждый рендер.
@@ -684,7 +732,7 @@ function DirectoryTable({
       if (event.defaultPrevented) return
       const target = event.target as HTMLElement | null
       if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
-      if (document.querySelector('[aria-modal="true"]')) return
+      if (document.querySelector('[aria-modal="true"], [role="menu"]')) return
       const state = shortcutState.current
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault()
@@ -995,7 +1043,7 @@ function DirectoryTable({
                 { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'folder', item: folder, action: 'trash' }) },
               ]} /></td>
             </tr>)}
-            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} onDragStart={(event) => rowDragStart(event, `file:${file.id}`)} onDragEnd={rowDragEnd} disabled={pending} file={file} key={`file-${file.id}`} siblings={files} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => toast.dismissKey('file-download')} onDownloadHandedOff={() => toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })} onShare={() => setShareTarget({
+            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} onDragStart={(event) => rowDragStart(event, `file:${file.id}`)} onDragEnd={rowDragEnd} disabled={pending} file={file} key={`file-${file.id}`} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => toast.dismissKey('file-download')} onDownloadHandedOff={() => toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })} onPreview={() => setPreviewFile(file)} onShare={() => setShareTarget({
       fileId: file.id,
       name: file.name,
       isFolder: false,
@@ -1008,15 +1056,24 @@ function DirectoryTable({
       {!action && pending ? <p className="muted" role="status">Операция продолжается…</p> : null}
       {!action && error ? <p className="inline-alert" role="alert">{error}</p> : null}
       {shareTarget ? <ShareDialog onClose={() => setShareTarget(null)} target={shareTarget} /> : null}
+      {previewFile ? <PreviewModal file={previewFile} siblings={files} onClose={() => setPreviewFile(null)} /> : null}
+      {menuState ? (
+        <ContextMenu
+          items={contextMenuItems(menuState.key)}
+          label="Действия с объектом"
+          onClose={closeContextMenu}
+          x={menuState.x}
+          y={menuState.y}
+        />
+      ) : null}
       {action ? <OperationDialog action={action} busy={pending} currentFolderId={currentFolderId} error={error} onClose={() => { setAction(null); setError(null) }} onSubmit={mutate} /> : null}
     </div>
   )
 }
 
-function FileRow({ disabled, file, siblings, onAction, onDownloadStarted, onDownloadHandedOff, onShare, selected, onSelect, onContextMenu, onDragStart, onDragEnd }: { selected: boolean; onSelect(event: React.MouseEvent, toggle?: boolean): void; onContextMenu(event: React.MouseEvent<HTMLTableRowElement>): void; onDragStart(event: React.DragEvent<HTMLTableRowElement>): void; onDragEnd(event: React.DragEvent<HTMLTableRowElement>): void; disabled: boolean; file: FileItem; siblings: FileItem[]; onAction(action: ItemAction['action']): void; onDownloadStarted(): void; onDownloadHandedOff(): void; onShare(): void }) {
+function FileRow({ disabled, file, onAction, onDownloadStarted, onDownloadHandedOff, onPreview, onShare, selected, onSelect, onContextMenu, onDragStart, onDragEnd }: { selected: boolean; onSelect(event: React.MouseEvent, toggle?: boolean): void; onContextMenu(event: React.MouseEvent<HTMLTableRowElement>): void; onDragStart(event: React.DragEvent<HTMLTableRowElement>): void; onDragEnd(event: React.DragEvent<HTMLTableRowElement>): void; disabled: boolean; file: FileItem; onAction(action: ItemAction['action']): void; onDownloadStarted(): void; onDownloadHandedOff(): void; onPreview(): void; onShare(): void }) {
   const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'handed-off'>('idle')
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const [showPreview, setShowPreview] = useState(false)
   const downloadPending = useRef(false)
   async function download() {
     if (downloadPending.current) return
@@ -1030,12 +1087,12 @@ function FileRow({ disabled, file, siblings, onAction, onDownloadStarted, onDown
   }
   const fileType = file.mimeType?.startsWith('image/') ? 'image' : file.mimeType?.startsWith('text/') ? 'text' : 'file'
   return <tr data-object-key={`file:${file.id}`} className={`directory-row${selected ? ' is-selected' : ''}`} draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onContextMenu={onContextMenu} onClick={(event) => { if (!(event.target as HTMLElement).closest('.file-actions, input, label')) onSelect(event) }}>
-    <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${file.name}`} type="checkbox" checked={selected} onChange={() => {}} onClick={(event) => onSelect(event, true)} /></label>{['image/jpeg', 'image/png', 'image/webp'].includes(file.mimeType ?? '') ? <FileThumbnail key={`${file.id}:${file.updatedAt}`} fileId={file.id} /> : <span className={`file-icon file-icon-${fileType}`}><Icon name={fileType} /></span>}<button className="file-name" onDoubleClick={(event) => { event.currentTarget.focus(); setShowPreview(true) }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); setShowPreview(true) } }} title={file.name} type="button">{file.name}</button></td>
+    <td className="file-name-cell"><label className="selection-hit"><input aria-label={`Выбрать ${file.name}`} type="checkbox" checked={selected} onChange={() => {}} onClick={(event) => onSelect(event, true)} /></label>{['image/jpeg', 'image/png', 'image/webp'].includes(file.mimeType ?? '') ? <FileThumbnail key={`${file.id}:${file.updatedAt}`} fileId={file.id} /> : <span className={`file-icon file-icon-${fileType}`}><Icon name={fileType} /></span>}<button className="file-name" onDoubleClick={(event) => { event.currentTarget.focus(); onPreview() }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onPreview() } }} title={file.name} type="button">{file.name}</button></td>
     <td className="file-meta"><span className="mobile-label">Тип: </span>{fileTypeLabel(file.mimeType)}</td>
     <td className="file-meta"><span className="mobile-label">Размер: </span>{formatBytes(file.size)}</td>
     <td className="file-meta"><span className="mobile-label">Изменено: </span>{formatDate(file.updatedAt)}</td>
     <td className="file-actions"><ActionMenu label={`Действия: ${file.name}`} disabled={disabled} items={[
-      { label: 'Просмотр', icon: 'file', onSelect: () => setShowPreview(true) },
+      { label: 'Просмотр', icon: 'file', onSelect: onPreview },
       { label: downloadState === 'downloading' ? 'Подготавливаем…' : 'Скачать', icon: 'download', disabled: downloadState === 'downloading', onSelect: () => void download() },
       { label: 'Поделиться', icon: 'link', onSelect: onShare },
       { label: 'Переименовать', icon: 'edit', onSelect: () => onAction('rename') },
@@ -1043,14 +1100,7 @@ function FileRow({ disabled, file, siblings, onAction, onDownloadStarted, onDown
       { label: 'Копировать', icon: 'copy', onSelect: () => onAction('copy') },
       { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => onAction('trash') },
     ]} />
-    {downloadError ? <p className="inline-alert" role="alert">{downloadError}</p> : null}
-    {showPreview ? (
-      <PreviewModal
-        file={file}
-        siblings={siblings}
-        onClose={() => setShowPreview(false)}
-      />
-    ) : null}</td>
+    {downloadError ? <p className="inline-alert" role="alert">{downloadError}</p> : null}</td>
   </tr>
 }
 

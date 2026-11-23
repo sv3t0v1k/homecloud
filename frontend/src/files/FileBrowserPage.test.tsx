@@ -1357,6 +1357,42 @@ describe('FileBrowserPage', () => {
     expect(mutations).toEqual([{ url: '/files/11/move', method: 'post', data: {} }])
   })
 
+  it('opens a context menu at the cursor and closes it with Escape returning focus', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    const name = await screen.findByRole('button', { name: 'a.txt' })
+
+    fireEvent.contextMenu(name.closest('tr')!, { clientX: 120, clientY: 240 })
+    const menu = screen.getByRole('menu', { name: 'Действия с объектом' })
+    expect(menu).toHaveClass('context-menu-popover')
+    expect(menu.style.position).toBe('fixed')
+    expect(menu.style.left).toBe('120px')
+    expect(menu.style.top).toBe('240px')
+    expect(within(menu).getByRole('menuitem', { name: 'Просмотр' })).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(name).toHaveFocus()
+  })
+
+  it('runs context menu actions and closes on outside pointer down', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    const row = (await screen.findByRole('button', { name: 'a.txt' })).closest('tr')!
+
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
+    await user.click(screen.getByRole('menuitem', { name: 'Переименовать' }))
+    expect(await screen.findByLabelText('Новое название')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
 })
 
 async function chooseAction(user: ReturnType<typeof userEvent.setup>, name: string, action: string) {

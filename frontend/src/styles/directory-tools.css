@@ -106,3 +106,8 @@
 .shortcuts-trigger {
   flex: none;
 }
+
+/* U7: контекстное меню у курсора поверх доков и уведомлений */
+.context-menu-popover {
+  z-index: 60;
+}
