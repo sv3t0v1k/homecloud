@@ -15,6 +15,7 @@ import { downloadOriginalFile, downloadSelectionArchive, type ArchiveSelection }
 import { droppedEntries, inputEntries, pickDirectory } from '../sharing/publicTree'
 import { enqueueTree } from './treeUpload'
 import { UploadQueue, type UploadQueueItem } from './uploadQueue'
+import { formatEta, UploadSpeedTracker } from './uploadSpeed'
 import {
   ShareDialog,
   type ShareDialogTarget,
@@ -1405,6 +1406,14 @@ function UploadRow({ item, queue }: { item: UploadQueueItem; queue: UploadQueue 
   const canResume = ['paused', 'error'].includes(item.state) && !item.needsFile
   const canCancel = !['completed', 'cancelled', 'cancelling', 'completing'].includes(item.state)
   const [reselectionError, setReselectionError] = useState<string | null>(null)
+  const speedTrackerRef = useRef<UploadSpeedTracker | null>(null)
+  if (speedTrackerRef.current === null) speedTrackerRef.current = new UploadSpeedTracker()
+  const trackingSpeed = item.state === 'uploading'
+  useEffect(() => {
+    if (trackingSpeed) speedTrackerRef.current?.record(item.committedBytes, Date.now())
+  }, [trackingSpeed, item.committedBytes])
+  useEffect(() => () => speedTrackerRef.current?.reset(), [])
+  const speedReading = trackingSpeed ? speedTrackerRef.current.read(item.size) : null
 
   const completed = item.state === 'completed'
   const percent = item.state === 'hashing'
@@ -1462,6 +1471,8 @@ function UploadRow({ item, queue }: { item: UploadQueueItem; queue: UploadQueue 
         {item.state === 'hashing'
           ? `${formatBytes(item.hashedBytes ?? 0)} из ${formatBytes(item.size)} проверено`
           : `${formatBytes(item.committedBytes)} из ${formatBytes(item.size)}`}
+        {speedReading ? ` · ${formatBytes(Math.round(speedReading.bytesPerSecond))}/с` : ''}
+        {speedReading?.etaSeconds != null ? ` · осталось ${formatEta(speedReading.etaSeconds)}` : ''}
       </p>
     ) : null}
     {item.error ? <p className="inline-alert" role="alert">{item.error}</p> : null}
