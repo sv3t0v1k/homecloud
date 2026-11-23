@@ -54,7 +54,11 @@ describe('PreviewModal', () => {
 
   beforeEach(() => {
     apiClient.defaults.adapter = undefined
-    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    // Конструктор URL должен остаться рабочим: nativeDownloadUrl создаёт new URL().
+    vi.stubGlobal('URL', class extends URL {
+      static override createObjectURL(blob: Blob | MediaSource) { return createObjectURL(blob) }
+      static override revokeObjectURL(url: string) { revokeObjectURL(url) }
+    })
   })
 
   afterEach(() => {
@@ -254,6 +258,106 @@ describe('PreviewModal', () => {
     render(<PreviewModal file={file(10, 'private.txt')} onClose={() => undefined} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Сеанс завершён')
+  })
+
+  it('navigates between siblings with buttons, arrow keys and a counter', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      const id = Number(config.url?.split('/').pop())
+      return ok(config, { type: 'text', content: `file ${id} body`, mimeType: 'text/plain' })
+    }
+    const siblings = [file(20, 'one.txt'), file(21, 'two.txt'), file(22, 'three.txt')]
+    const user = userEvent.setup()
+    render(<PreviewModal file={siblings[1]} siblings={siblings} onClose={() => undefined} />)
+
+    expect(await screen.findByText('file 21 body')).toBeInTheDocument()
+    expect(screen.getByText('2 из 3')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Предыдущий файл' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Следующий файл' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Следующий файл' }))
+    expect(await screen.findByText('file 22 body')).toBeInTheDocument()
+    expect(screen.getByText('3 из 3')).toBeInTheDocument()
+    expect(screen.getByRole('heading')).toHaveTextContent('three.txt')
+    expect(screen.getByRole('button', { name: 'Следующий файл' })).toBeDisabled()
+
+    await user.keyboard('{ArrowLeft}')
+    expect(await screen.findByText('file 21 body')).toBeInTheDocument()
+    await user.keyboard('{ArrowLeft}')
+    expect(await screen.findByText('file 20 body')).toBeInTheDocument()
+    expect(screen.getByText('1 из 3')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Предыдущий файл' })).toBeDisabled()
+  })
+
+  it('does not render navigation controls without siblings', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, {
+      type: 'text', content: 'solo', mimeType: 'text/plain',
+    })
+    render(<PreviewModal file={file(25, 'solo.txt')} onClose={() => undefined} />)
+
+    expect(await screen.findByText('solo')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Следующий файл' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/из \d+/)).not.toBeInTheDocument()
+  })
+
+  it('renders a PDF inside a frame loaded through the native download capability', async () => {
+    const fetchMock = vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/native-downloads/30/prepare') return ok(config, { downloadPath: '/native-downloads/30' })
+      throw new Error(`Unexpected request: ${config.url}`)
+    }
+    render(<PreviewModal file={file(30, 'doc.pdf', 'application/pdf')} onClose={() => undefined} />)
+
+    const frame = await screen.findByTitle('Предпросмотр: doc.pdf')
+    expect(frame.tagName).toBe('IFRAME')
+    expect(frame).toHaveAttribute('src', 'blob:preview')
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(screen.queryByText('Предпросмотр недоступен для этого типа файлов.')).not.toBeInTheDocument()
+  })
+
+  it('renders an audio player for audio files', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 })))
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/native-downloads/31/prepare') return ok(config, { downloadPath: '/native-downloads/31' })
+      throw new Error(`Unexpected request: ${config.url}`)
+    }
+    render(<PreviewModal file={file(31, 'song.mp3', 'audio/mpeg')} onClose={() => undefined} />)
+
+    await waitFor(() => expect(document.querySelector('audio')).toHaveAttribute('src', 'blob:preview'))
+  })
+
+  it('rejects oversized PDF files before fetching them', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    apiClient.defaults.adapter = async (config) => { throw new Error(`Unexpected request: ${config.url}`) }
+    const oversized = { ...file(32, 'huge.pdf', 'application/pdf'), size: 60 * 1024 * 1024 }
+    render(<PreviewModal file={oversized} onClose={() => undefined} />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Файл слишком большой для предпросмотра.')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('zooms an image with toolbar buttons and resets to fit', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, {
+      type: 'image', content: { type: 'Buffer', data: [137, 80, 78, 71] }, mimeType: 'image/png',
+    })
+    const user = userEvent.setup()
+    render(<PreviewModal file={file(33, 'photo.png', 'image/png')} onClose={() => undefined} />)
+
+    const image = await screen.findByRole('img', { name: 'Предпросмотр: photo.png' })
+    fireEvent.load(image)
+
+    const reset = screen.getByRole('button', { name: 'По размеру' })
+    expect(reset).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Увеличить' }))
+    expect(screen.getByRole('button', { name: '125%' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Уменьшить' }))
+    expect(screen.getByRole('button', { name: '100%' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: '100%' }))
+    expect(screen.getByRole('button', { name: 'По размеру' })).toBeDisabled()
   })
 })
 

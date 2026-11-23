@@ -20,6 +20,7 @@ import {
   Plus,
   X,
   ChevronRight,
+  ChevronLeft,
   Check,
   Link,
   Copy,
@@ -60,6 +61,7 @@ type IconName =
   | 'plus'
   | 'close'
   | 'chevron'
+  | 'chevron-left'
   | 'check'
   | 'link'
   | 'copy'
@@ -99,6 +101,7 @@ const iconMap: Record<IconName, React.ComponentType<SVGProps<SVGSVGElement>>> = 
   plus: Plus,
   close: X,
   chevron: ChevronRight,
+  'chevron-left': ChevronLeft,
   check: Check,
   link: Link,
   copy: Copy,

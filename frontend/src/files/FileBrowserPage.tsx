@@ -902,7 +902,7 @@ function DirectoryTable({
                 { label: 'В корзину', icon: 'trash', danger: true, onSelect: () => openAction({ kind: 'folder', item: folder, action: 'trash' }) },
               ]} /></td>
             </tr>)}
-            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} disabled={pending} file={file} key={`file-${file.id}`} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => toast.dismissKey('file-download')} onDownloadHandedOff={() => toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })} onShare={() => setShareTarget({
+            {files.map((file) => <FileRow selected={selection.has(`file:${file.id}`)} onSelect={(event, toggle) => select(`file:${file.id}`, event, toggle)} onContextMenu={(event) => contextMenu(event, `file:${file.id}`)} disabled={pending} file={file} key={`file-${file.id}`} siblings={files} onAction={(operation) => openAction({ kind: 'file', item: file, action: operation })} onDownloadStarted={() => toast.dismissKey('file-download')} onDownloadHandedOff={() => toast.notify({ kind: 'success', key: 'file-download', message: 'Скачивание передано браузеру. Состояние смотрите в его загрузках.' })} onShare={() => setShareTarget({
       fileId: file.id,
       name: file.name,
       isFolder: false,
@@ -920,7 +920,7 @@ function DirectoryTable({
   )
 }
 
-function FileRow({ disabled, file, onAction, onDownloadStarted, onDownloadHandedOff, onShare, selected, onSelect, onContextMenu }: { selected: boolean; onSelect(event: React.MouseEvent, toggle?: boolean): void; onContextMenu(event: React.MouseEvent<HTMLTableRowElement>): void; disabled: boolean; file: FileItem; onAction(action: ItemAction['action']): void; onDownloadStarted(): void; onDownloadHandedOff(): void; onShare(): void }) {
+function FileRow({ disabled, file, siblings, onAction, onDownloadStarted, onDownloadHandedOff, onShare, selected, onSelect, onContextMenu }: { selected: boolean; onSelect(event: React.MouseEvent, toggle?: boolean): void; onContextMenu(event: React.MouseEvent<HTMLTableRowElement>): void; disabled: boolean; file: FileItem; siblings: FileItem[]; onAction(action: ItemAction['action']): void; onDownloadStarted(): void; onDownloadHandedOff(): void; onShare(): void }) {
   const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'handed-off'>('idle')
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [showPreview, setShowPreview] = useState(false)
@@ -954,6 +954,7 @@ function FileRow({ disabled, file, onAction, onDownloadStarted, onDownloadHanded
     {showPreview ? (
       <PreviewModal
         file={file}
+        siblings={siblings}
         onClose={() => setShowPreview(false)}
       />
     ) : null}</td>
