@@ -76,7 +76,19 @@ test('every full-route PR reaches read-only exact-HEAD native recovery', () => {
   });
 
   assert.deepEqual(recovery.permissions, { contents: 'read' });
-  assert.deepEqual(Object.keys(recovery.jobs), ['native-recovery']);
+  assert.deepEqual(Object.keys(recovery.jobs), [
+    'native-recovery',
+    'native-recovery-scenarios',
+    'native-recovery-gate',
+  ]);
+  assert.equal(
+    recovery.jobs['native-recovery-scenarios'].needs,
+    'native-recovery'
+  );
+  assert.deepEqual(
+    recovery.jobs['native-recovery-gate'].needs,
+    ['native-recovery', 'native-recovery-scenarios']
+  );
 
   const job = recovery.jobs['native-recovery'];
 
