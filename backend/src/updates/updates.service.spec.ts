@@ -134,7 +134,8 @@ describe("updates discovery", () => {
     await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
     const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
       key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
-    const candidateText = JSON.stringify(lock(newSha, "v0.9.1-beta.1"));
+    const candidate = lock(newSha, "v0.9.1-beta.1");
+    const candidateText = JSON.stringify(candidate);
     global.fetch = jest.fn(async (url: string) => {
       if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [
         { name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` },
@@ -151,7 +152,7 @@ describe("updates discovery", () => {
     }) as typeof fetch;
     const result = await service.check();
     expect(result.status).toBe("available");
-    expect(result.available).toMatchObject({ version: "v0.9.1-beta.1", gitSha: newSha, backendDigest: digest, frontendDigest: digest, changes: "Исправлена загрузка." });
+    expect(result.available).toMatchObject({ version: "v0.9.1-beta.1", gitSha: newSha, manifestSha256: candidate.manifest_sha256, backendDigest: digest, frontendDigest: digest, changes: "Исправлена загрузка." });
   });
 
   it("accepts a signed final release without the prerelease flag", async () => {

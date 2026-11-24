@@ -1,7 +1,9 @@
 #!/bin/sh
 # HomeCloud user installer — bootstrap оркестратор.
 # Запуск из checkout репозитория root-ом. Фазы: probe -> вопросы -> generate ->
-# preflight -> start -> summary. Fail-closed: любая фаза падает — STOP.
+# pull -> preflight -> start -> bootstrap обновлений -> systemd -> summary.
+# Fail-closed: любая фаза падает — STOP (bootstrap/systemd — предупреждение,
+# сервер уже работает; команды повтора печатаются).
 set -eu
 
 fail() { echo "STOP install: $*" >&2; exit 1; }
@@ -87,8 +89,17 @@ port_free() { case ",$busy," in *,"$1",*) return 1;; *) return 0;; esac; }
 default_https=443; port_free 443 || default_https=8443
 default_http=80;  port_free 80  || default_http=8080
 
-# UUID/mount корневого раздела и подходящего раздела под хранилище.
+# UUID/mount/serial корневого раздела и подходящего раздела под хранилище.
 root_uuid=$(py -c 'import json,sys; m=json.load(open(sys.argv[1]))["mounts"]; print(next((r["uuid"] for r in m if r["target"]=="/" and r.get("uuid")), ""))' "$work/probe.json")
+mount_serial() {
+  py - "$1" <<'PY'
+import json, sys
+probe = json.load(open(sys.argv[2]))
+want = sys.argv[1]
+print(next((r.get('serial') or '' for r in probe['mounts'] if r['target'] == want), ''))
+PY
+"$work/probe.json"
+}
 default_storage_mount=$(py - "$INSTALL_ROOT" <<'PY'
 import json, sys
 probe = json.load(open(sys.argv[2]))
@@ -137,11 +148,14 @@ else
   if [ "$(ask 'База данных на отдельном диске? (y/N)' 'N')" = y ]; then
     db_mount=$(ask 'Mountpoint раздела базы' '')
     db_uuid=$(ask 'UUID раздела базы' '')
+    db_serial=$(mount_serial "$db_mount")
     layout_mode=two-disk
   else
     db_mount=''
+    db_serial=$(mount_serial "/")
     layout_mode=system-root
   fi
+  storage_serial=$(mount_serial "$storage_mount")
   if [ -z "$IMAGES" ]; then
     backend_image=$(ask 'Образ backend (registry/image:tag@digest)' '')
     frontend_image=$(ask 'Образ frontend (registry/image:tag@digest)' '')
@@ -155,24 +169,30 @@ else
   [ -n "$frontend_image" ] || fail 'образ frontend обязателен (RELEASE_FRONTEND_IMAGE)'
   [ -n "$storage_uuid" ] || fail 'не удалось определить UUID раздела с файлами; задайте явно'
   [ -n "$storage_mount" ] || fail 'не удалось определить mountpoint раздела; задайте явно'
+  [ -n "$storage_serial" ] || fail 'не удалось определить serial диска с файлами (probe)'
   [ -n "$db_uuid" ] || fail 'не удалось определить UUID раздела базы; задайте явно'
+  [ -n "$db_serial" ] || fail 'не удалось определить serial диска базы (probe)'
 
-  py - "$PROJECT_NAME" "$public_host" "$primary_ip" "$http_port" "$https_port" \
+  py - "$PROJECT_NAME" "$project_root" "$public_host" "$primary_ip" "$http_port" "$https_port" \
      "$db_dir" "$storage_dir" "$storage_uuid" "$storage_mount" \
      "$backend_image" "$frontend_image" "$INSTALL_ROOT" \
-     "$layout_mode" "$db_uuid" "$db_mount" "$CHANNEL" > "$work/answers.json" <<'PY'
+     "$layout_mode" "$db_uuid" "$db_mount" "$CHANNEL" \
+     "$db_serial" "$storage_serial" > "$work/answers.json" <<'PY'
 import json, sys
-(name, host, bind_ip, http, https, db_dir, storage_dir,
+(name, project_root, host, bind_ip, http, https, db_dir, storage_dir,
  storage_uuid, storage_mount, backend, frontend, root,
- layout_mode, db_uuid, db_mount, channel) = sys.argv[1:17]
+ layout_mode, db_uuid, db_mount, channel,
+ db_serial, storage_serial) = sys.argv[1:20]
 layout = {'mode': layout_mode,
           'db_dir': db_dir, 'storage_dir': storage_dir,
           'storage_uuid': storage_uuid, 'storage_mount': storage_mount,
-          'db_uuid': db_uuid}
+          'db_uuid': db_uuid,
+          'db_serial': db_serial, 'storage_serial': storage_serial}
 if layout_mode == 'two-disk':
     layout['db_mount'] = db_mount
 answers = {
-    'project_name': name, 'public_host': host, 'public_bind_ip': bind_ip,
+    'project_name': name, 'project_root': project_root,
+    'public_host': host, 'public_bind_ip': bind_ip,
     'http_port': int(http), 'https_port': int(https),
     'layout': layout,
     'backend_image': backend, 'frontend_image': frontend,
@@ -190,43 +210,87 @@ PY
 fi
 
 # --- Фаза 3: генерация -------------------------------------------------------
-say '==> Генерирую конфигурацию (секреты, gates, markers, TLS)'
+say '==> Генерирую конфигурацию (секреты, /etc/homecloud, worker обновлений, TLS)'
 py "$installer_dir/generate.py" --answers "$work/answers.json" --mode apply || fail 'генерация отклонена'
 
-# --- Фаза 4: preflight (тот же конвейер, что и в runbook) --------------------
-say '==> Выполняю preflight'
-py "$project_root/deploy/linux/preflight.py" \
-  --inventory "$INSTALL_ROOT/.runtime/host-disks.json" \
-  --env-file "$INSTALL_ROOT/.runtime/runtime.env" || fail 'preflight отказал'
+compose() {
+  env -i HOME=/root PATH="$clean_path" DOCKER_CONFIG=/etc/homecloud/docker \
+    docker compose --project-directory "$project_root" \
+    --env-file /etc/homecloud/runtime.env "$@"
+}
 
-# --- Фаза 5: старт -----------------------------------------------------------
-if [ "$START" = 1 ]; then
-  say '==> Скачиваю образы и запускаю'
-  env -i HOME=/root PATH="$clean_path" DOCKER_CONFIG="$INSTALL_ROOT/.runtime/docker" \
-    docker compose --project-directory "$project_root" \
-    --env-file "$INSTALL_ROOT/.runtime/runtime.env" \
-    -f "$project_root/docker-compose.yml" \
-    -f "$project_root/docker-compose.production.yml" \
-    pull || fail 'не удалось скачать образы'
-  env -i HOME=/root PATH="$clean_path" DOCKER_CONFIG="$INSTALL_ROOT/.runtime/docker" \
-    docker compose --project-directory "$project_root" \
-    --env-file "$INSTALL_ROOT/.runtime/runtime.env" \
-    -f "$project_root/docker-compose.yml" \
-    -f "$project_root/docker-compose.production.yml" \
-    up -d --wait --wait-timeout 180 || fail 'запуск отклонён'
+compose_release() {
+  if [ "$CHANNEL" = release ]; then
+    compose -f "$project_root/docker-compose.yml" \
+            -f "$project_root/docker-compose.production.yml" \
+            -f "$project_root/docker-compose.production-updates.yml" "$@"
+  else
+    compose -f "$project_root/docker-compose.yml" \
+            -f "$project_root/docker-compose.production.yml" "$@"
+  fi
+}
+
+# --- Фаза 4: образы (preflight требует локальные linux/amd64 образы) ----------
+say '==> Скачиваю образы'
+compose_release pull || fail 'не удалось скачать образы'
+
+# --- Фаза 5: preflight (тот же конвейер, что и в runbook) ---------------------
+say '==> Выполняю preflight'
+if [ "$CHANNEL" = release ]; then
+  (cd "$project_root" && py deploy/linux/preflight.py \
+    --inventory /etc/homecloud/host-disks.json \
+    --env-file /etc/homecloud/runtime.env \
+    --updates "$project_root/docker-compose.production-updates.yml") || fail 'preflight отказал'
+else
+  (cd "$project_root" && py deploy/linux/preflight.py \
+    --inventory /etc/homecloud/host-disks.json \
+    --env-file /etc/homecloud/runtime.env) || fail 'preflight отказал'
 fi
 
-# --- Фаза 6: сводка ----------------------------------------------------------
+# --- Фаза 6: старт ------------------------------------------------------------
+if [ "$START" = 1 ]; then
+  say '==> Запускаю'
+  compose_release up -d --wait --wait-timeout 180 || fail 'запуск отклонён'
+fi
+
+# --- Фаза 7: bootstrap обновлений и systemd (только release-канал) ------------
+if [ "$START" = 1 ] && [ "$CHANNEL" = release ]; then
+  say '==> Привязываю установленный релиз (bootstrap обновлений)'
+  if py /usr/local/sbin/homecloud-user-update bootstrap; then
+    say '    installed-lock привязан к текущему релизу'
+  else
+    say '    предупреждение: bootstrap не выполнен — сервер работает, но'
+    say '    кнопка обновления не активна. Повторите позже:'
+    say '    sudo /usr/local/sbin/homecloud-user-update bootstrap'
+  fi
+  say '==> Включаю службы обновлений'
+  if systemctl daemon-reload && \
+     systemctl enable --now homecloud-user-update.path && \
+     systemctl enable --now homecloud-user-update-archive.timer; then
+    say '    homecloud-user-update.path + archive.timer активны'
+  else
+    say '    предупреждение: systemd-юниты не включены — сервер работает, но'
+    say '    самообновление не активно. Включите вручную:'
+    say '    sudo systemctl enable --now homecloud-user-update.path homecloud-user-update-archive.timer'
+  fi
+fi
+
+# --- Фаза 8: сводка -----------------------------------------------------------
 https_port=$(py -c 'import json,sys; print(json.load(open(sys.argv[1]))["https_port"])' "$work/answers.json")
 host=$(py -c 'import json,sys; print(json.load(open(sys.argv[1]))["public_host"])' "$work/answers.json")
 say ''
 say 'Готово.'
 say "  Веб-интерфейс:  https://$host:$https_port"
 say '  Статус:         docker compose -f docker-compose.yml -f docker-compose.production.yml ps'
-say "  Секреты:        $INSTALL_ROOT/.runtime/runtime.env (root-only)"
+say '  Секреты:        /etc/homecloud/runtime.env (root-only)'
 if [ -z "$ANSWERS_OVERRIDE" ]; then
   say "  Канал обновлений: $CHANNEL"
 fi
 if [ "$START" = 1 ]; then
   say '  Первый вход:    зарегистрируйте первого пользователя — это будет владелец.'
+  if [ "$CHANNEL" = release ]; then
+    say '  Кнопка обновлений: после регистрации владельца добавьте его числовой id'
+    say '  в /etc/homecloud/runtime.env (UPDATE_ADMIN_USER_ID=1) и перезапустите:'
+    say '  docker compose --env-file /etc/homecloud/runtime.env -f docker-compose.yml -f docker-compose.production.yml -f docker-compose.production-updates.yml up -d'
+  fi
 fi

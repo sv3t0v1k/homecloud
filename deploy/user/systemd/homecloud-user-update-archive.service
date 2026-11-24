@@ -1,0 +1,13 @@
+[Unit]
+Description=Archive completed HomeCloud release update receipts
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I -S /usr/local/sbin/homecloud-user-update archive
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+ReadWritePaths=/var/lib/homecloud-update

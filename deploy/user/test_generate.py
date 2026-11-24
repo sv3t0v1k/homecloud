@@ -14,6 +14,7 @@ SPEC.loader.exec_module(generate)
 def answers(**over):
     base = {
         'project_name': 'mycloud',
+        'project_root': '/opt/mycloud',
         'public_host': '192.168.1.10',
         'public_bind_ip': '192.168.1.10',
         'http_port': 80,
@@ -24,6 +25,8 @@ def answers(**over):
             'storage_dir': '/srv/data/mycloud/storage',
             'db_uuid': 'ssd-uuid',
             'storage_uuid': 'hdd-uuid-1',
+            'db_serial': 'SSD123',
+            'storage_serial': 'HDD456',
             'db_mount': '/srv/ssd',
             'storage_mount': '/srv/data',
         },
@@ -48,15 +51,16 @@ class GenerateContractTests(unittest.TestCase):
 
     def test_env_has_all_compose_keys(self):
         plan = self.build()
-        env = plan['files']['.runtime/runtime.env']['content']
+        env = plan['files']['/etc/homecloud/runtime.env']['content']
         for key in generate.ENV_KEYS:
             self.assertIn(key + '=', env)
         self.assertNotIn('None', env)
         self.assertIn('PUBLIC_ORIGIN=https://192.168.1.10:443', env)
+        self.assertEqual(plan['files']['/etc/homecloud/runtime.env']['mode'], 0o600)
 
     def test_secrets_unique_and_hex(self):
         plan = self.build()
-        env = plan['files']['.runtime/runtime.env']['content']
+        env = plan['files']['/etc/homecloud/runtime.env']['content']
         values = {}
         for line in env.splitlines():
             key, _, value = line.partition('=')
@@ -68,7 +72,7 @@ class GenerateContractTests(unittest.TestCase):
 
     def test_gates_match_startup_gate_format(self):
         plan = self.build()
-        db_gate = plan['files']['.runtime/startup-db.gate']
+        db_gate = plan['files']['/etc/homecloud/startup-db.gate']
         self.assertEqual(db_gate['mode'], 0o644)
         self.assertEqual(db_gate['owner'], (0, 0))
         line = db_gate['content']
@@ -80,7 +84,7 @@ class GenerateContractTests(unittest.TestCase):
         self.assertEqual(fields[3], '/srv/ssd/mycloud/postgres')
         self.assertEqual(fields[4:6], ['70', '70'])
         self.assertEqual(len(fields), 6)
-        backend = plan['files']['.runtime/startup-backend.gate']['content'].split()
+        backend = plan['files']['/etc/homecloud/startup-backend.gate']['content'].split()
         self.assertEqual(backend[0], 'backend')
         self.assertEqual(backend[4:6], ['1001', '65533'])
         self.assertEqual(len(backend), 6)
@@ -92,8 +96,10 @@ class GenerateContractTests(unittest.TestCase):
             'storage_dir': '/srv/data/mycloud/storage',
             'db_uuid': 'root-uuid',
             'storage_uuid': 'hdd-uuid-1',
+            'db_serial': 'SSD123',
+            'storage_serial': 'HDD456',
             'storage_mount': '/srv/data'})
-        fields = plan['files']['.runtime/startup-db.gate']['content'].split()
+        fields = plan['files']['/etc/homecloud/startup-db.gate']['content'].split()
         self.assertEqual(fields[2], '/')
         self.assertEqual(fields[-1], 'system-root-lvm')
 
@@ -112,11 +118,22 @@ class GenerateContractTests(unittest.TestCase):
         self.assertEqual(plan['dirs']['/srv/data/mycloud/storage'], (0o700, (1001, 65533)))
         self.assertEqual(plan['dirs']['/opt/mycloud/.runtime'], (0o700, (0, 0)))
 
+    def test_etc_homecloud_layout(self):
+        plan = self.build()
+        self.assertEqual(plan['dirs']['/etc/homecloud'], (0o700, (0, 0)))
+        self.assertEqual(plan['dirs']['/etc/homecloud/maintenance'], (0o711, (0, 0)))
+        self.assertEqual(plan['dirs']['/etc/homecloud/docker'], (0o700, (0, 0)))
+        self.assertEqual(plan['dirs']['/var/lib/homecloud-update'], (0o750, (0, 0)))
+        self.assertEqual(plan['dirs']['/var/lib/homecloud-update/inbox'], (0o770, (0, 65533)))
+        self.assertEqual(plan['dirs']['/var/lib/homecloud-update/status'], (0o750, (0, 65533)))
+
     def test_inventory_matches_layout(self):
         plan = self.build()
-        inventory = json.loads(plan['files']['.runtime/host-disks.json']['content'])
+        inventory = json.loads(plan['files']['/etc/homecloud/host-disks.json']['content'])
         self.assertEqual(inventory['ssd']['data'], '/srv/ssd/mycloud/postgres')
+        self.assertEqual(inventory['ssd']['serial'], 'SSD123')
         self.assertEqual(inventory['hdd']['uuid'], 'hdd-uuid-1')
+        self.assertEqual(inventory['hdd']['serial'], 'HDD456')
         self.assertEqual(inventory['hdd']['mount'], '/srv/data')
         self.assertEqual(inventory['postgres_uid'], 70)
 
@@ -130,7 +147,7 @@ class GenerateContractTests(unittest.TestCase):
     def test_plan_redacts_secrets(self):
         plan = self.build()
         redacted = json.dumps(generate.redact_plan(plan))
-        env = plan['files']['.runtime/runtime.env']['content']
+        env = plan['files']['/etc/homecloud/runtime.env']['content']
         for line in env.splitlines():
             key, _, value = line.partition('=')
             if key in plan['generated_keys']:
@@ -138,12 +155,46 @@ class GenerateContractTests(unittest.TestCase):
         self.assertIn('<generated>', redacted)
 
     def test_update_channel_and_release_key(self):
-        env = self.build()['files']['.runtime/runtime.env']['content']
+        env = self.build()['files']['/etc/homecloud/runtime.env']['content']
         self.assertIn('UPDATE_CHANNEL=release\n', env)
         key = generate.load_release_public_key()
         self.assertIn('UPDATE_RELEASE_PUBLIC_KEY=' + key + '\n', env)
-        test_env = self.build(update_channel='test')['files']['.runtime/runtime.env']['content']
+        self.assertIn('UPDATE_INSTALL_BRIDGE_ENABLED=false\n', env)
+        test_env = self.build(update_channel='test')['files']['/etc/homecloud/runtime.env']['content']
         self.assertIn('UPDATE_CHANNEL=test\n', test_env)
+
+    def test_release_public_key_file(self):
+        plan = self.build()
+        entry = plan['files']['/etc/homecloud/release-public.b64']
+        self.assertEqual(entry['mode'], 0o644)
+        self.assertEqual(entry['owner'], (0, 0))
+        self.assertEqual(entry['content'].strip(), generate.load_release_public_key())
+
+    def test_worker_config_contract(self):
+        plan = self.build()
+        entry = plan['files']['/etc/homecloud/update-worker.json']
+        self.assertEqual(entry['mode'], 0o600)
+        self.assertEqual(entry['owner'], (0, 0))
+        config = json.loads(entry['content'])
+        self.assertEqual(config['format'], 'homecloud-user-update-worker-v1')
+        self.assertEqual(config['compose_project_dir'], '/opt/mycloud')
+        self.assertEqual(config['runtime_env'], '/etc/homecloud/runtime.env')
+        self.assertEqual(config['docker_config'], '/etc/homecloud/docker')
+        self.assertEqual(config['public_host'], '192.168.1.10')
+        self.assertEqual(config['https_port'], 443)
+        self.assertIn('sv3t0v1k/homecloud', config['repositories'])
+
+    def test_host_worker_and_systemd_provisioned(self):
+        plan = self.build()
+        worker = plan['files']['/usr/local/sbin/homecloud-user-update']
+        self.assertEqual(worker['mode'], 0o700)
+        self.assertEqual(worker['owner'], (0, 0))
+        self.assertIn('homecloud-user-update-worker-v1', worker['content'])
+        for unit in generate.SYSTEMD_UNITS:
+            entry = plan['files']['/etc/systemd/system/' + unit]
+            self.assertEqual(entry['mode'], 0o644)
+            self.assertEqual(entry['owner'], (0, 0))
+            self.assertTrue(entry['content'].endswith('\n'))
 
 
 class GenerateRefusalTests(unittest.TestCase):
@@ -157,6 +208,10 @@ class GenerateRefusalTests(unittest.TestCase):
     def test_bad_project_name(self):
         self.refuse(project_name='My Cloud!')
 
+    def test_bad_project_root(self):
+        self.refuse(project_root='relative/path')
+        self.refuse(project_root='/opt/../escape')
+
     def test_bad_port(self):
         self.refuse(https_port=70000)
 
@@ -164,19 +219,22 @@ class GenerateRefusalTests(unittest.TestCase):
         self.refuse(layout={'mode': 'system-root',
                             'db_dir': '/opt/x/data/postgres/',
                             'storage_dir': '/srv/data/storage',
-                            'storage_uuid': 'u', 'storage_mount': '/srv/data'})
+                            'storage_uuid': 'u', 'storage_mount': '/srv/data',
+                            'db_serial': 's1', 'storage_serial': 's2'})
 
     def test_dot_dot_dir(self):
         self.refuse(layout={'mode': 'system-root',
                             'db_dir': '/opt/x/../postgres',
                             'storage_dir': '/srv/data/storage',
-                            'storage_uuid': 'u', 'storage_mount': '/srv/data'})
+                            'storage_uuid': 'u', 'storage_mount': '/srv/data',
+                            'db_serial': 's1', 'storage_serial': 's2'})
 
     def test_same_dirs(self):
         self.refuse(layout={'mode': 'system-root',
                             'db_dir': '/srv/data/storage',
                             'storage_dir': '/srv/data/storage',
-                            'storage_uuid': 'u', 'storage_mount': '/srv/data'})
+                            'storage_uuid': 'u', 'storage_mount': '/srv/data',
+                            'db_serial': 's1', 'storage_serial': 's2'})
 
     def test_empty_image(self):
         self.refuse(backend_image='')
@@ -184,11 +242,25 @@ class GenerateRefusalTests(unittest.TestCase):
     def test_zero_uid(self):
         self.refuse(postgres_uid=0)
 
+    def test_missing_serial(self):
+        layout = dict(answers()['layout'])
+        layout.pop('db_serial')
+        self.refuse(layout=layout)
+        layout = dict(answers()['layout'])
+        layout.pop('storage_serial')
+        self.refuse(layout=layout)
+
+    def test_serial_with_whitespace(self):
+        layout = dict(answers()['layout'])
+        layout['db_serial'] = 'SSD 123'
+        self.refuse(layout=layout)
+
     def test_two_disk_requires_uuids(self):
         self.refuse(layout={'mode': 'two-disk',
                             'db_dir': '/opt/x/db', 'storage_dir': '/srv/data/storage',
                             'db_uuid': 'ssd-uuid', 'storage_uuid': '',
-                            'db_mount': '/srv/ssd', 'storage_mount': '/srv/data'})
+                            'db_mount': '/srv/ssd', 'storage_mount': '/srv/data',
+                            'db_serial': 's1', 'storage_serial': 's2'})
 
     def test_same_ports(self):
         self.refuse(http_port=443, https_port=443)
@@ -196,19 +268,22 @@ class GenerateRefusalTests(unittest.TestCase):
     def test_storage_dir_outside_mount(self):
         self.refuse(layout={'mode': 'system-root',
                             'db_dir': '/opt/x/db', 'storage_dir': '/srv/other/storage',
-                            'storage_uuid': 'u', 'storage_mount': '/srv/data'})
+                            'storage_uuid': 'u', 'storage_mount': '/srv/data',
+                            'db_serial': 's1', 'storage_serial': 's2'})
 
     def test_db_dir_outside_mount(self):
         self.refuse(layout={'mode': 'two-disk',
                             'db_dir': '/opt/x/db', 'storage_dir': '/srv/data/storage',
                             'db_uuid': 'ssd-uuid', 'storage_uuid': 'u',
-                            'db_mount': '/srv/ssd', 'storage_mount': '/srv/data'})
+                            'db_mount': '/srv/ssd', 'storage_mount': '/srv/data',
+                            'db_serial': 's1', 'storage_serial': 's2'})
 
     def test_system_root_requires_db_uuid(self):
         self.refuse(layout={'mode': 'system-root',
                             'db_dir': '/opt/x/db', 'storage_dir': '/srv/data/storage',
                             'db_uuid': '', 'storage_uuid': 'u',
-                            'storage_mount': '/srv/data'})
+                            'storage_mount': '/srv/data',
+                            'db_serial': 's1', 'storage_serial': 's2'})
 
     def test_unknown_update_channel(self):
         self.refuse(update_channel='nightly')

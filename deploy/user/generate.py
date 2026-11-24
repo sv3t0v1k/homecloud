@@ -28,6 +28,14 @@ IPV4 = re.compile(r'(?:\d{1,3}\.){3}\d{1,3}\Z')
 HEX_SECRET = 32
 CHANNELS = ('release', 'test')
 RELEASE_PUBLIC_KEY_PATH = Path(__file__).with_name('release-public.b64')
+ETC = '/etc/homecloud'
+UPDATE_BASE = '/var/lib/homecloud-update'
+WORKER_TARGET = '/usr/local/sbin/homecloud-user-update'
+SYSTEMD_TARGET = '/etc/systemd/system'
+SYSTEMD_UNITS = ('homecloud-user-update.path', 'homecloud-user-update.service',
+                 'homecloud-user-update-archive.service', 'homecloud-user-update-archive.timer')
+# Те же репозитории, что REPOSITORIES в backend/src/updates/updates.service.ts.
+UPDATE_REPOSITORIES = ('sv3t0v1k/homecloud', 'sv3t0v1k/https---github.com-sv3t0v1k-homecloud')
 ENV_KEYS = (
     'COMPOSE_PROJECT_NAME', 'DB_PASSWORD', 'JWT_SECRET', 'JWT_REFRESH_SECRET',
     'REDIS_PASSWORD', 'PUBLIC_HOST', 'PUBLIC_BIND_IP', 'PUBLIC_HTTP_PORT',
@@ -35,7 +43,7 @@ ENV_KEYS = (
     'TLS_CERT_DIR', 'ACME_WEBROOT_DIR', 'RELEASE_BACKEND_IMAGE',
     'RELEASE_FRONTEND_IMAGE', 'INGRESS_SUBNET', 'INGRESS_PROXY_IP',
     'BACKEND_PROXY_SUBNET', 'FRONTEND_PROXY_IP',
-    'UPDATE_CHANNEL', 'UPDATE_RELEASE_PUBLIC_KEY',
+    'UPDATE_CHANNEL', 'UPDATE_RELEASE_PUBLIC_KEY', 'UPDATE_INSTALL_BRIDGE_ENABLED',
 )
 
 
@@ -57,6 +65,17 @@ def load_release_public_key():
     require(re.fullmatch(r'[A-Za-z0-9+/=]+\Z', text) is not None,
             'release-public.b64: неверный формат base64')
     return text
+
+
+def repo_file(*parts):
+    """Текстовое содержимое файла рядом с generate.py (worker, systemd units)."""
+    path = Path(__file__).with_name(parts[0])
+    for part in parts[1:]:
+        path = path / part
+    try:
+        return path.read_text(encoding='utf-8')
+    except OSError:
+        raise Refusal('не найден файл репозитория: ' + str(path))
 
 
 def canonical_dir(value, label):
@@ -96,8 +115,14 @@ def validate_answers(answers):
     mode = layout.get('mode')
     require(mode in ('system-root', 'two-disk'), 'layout.mode: system-root | two-disk')
     require(answers['http_port'] != answers['https_port'], 'http_port и https_port обязаны различаться')
+    canonical_dir(answers.get('project_root'), 'project_root')
+    canonical_dir(answers.get('install_root'), 'install_root')
     canonical_dir(layout.get('db_dir'), 'layout.db_dir')
     canonical_dir(layout.get('storage_dir'), 'layout.storage_dir')
+    for key in ('db_serial', 'storage_serial'):
+        value = layout.get(key)
+        require(isinstance(value, str) and value and value.strip() == value and
+                not any(c.isspace() for c in value), 'layout.' + key + ': serial диска обязателен')
     require(layout['db_dir'] != layout['storage_dir'], 'db_dir и storage_dir обязаны различаться')
     storage_mount = layout.get('storage_mount')
     require(isinstance(storage_mount, str) and storage_mount.startswith('/'),
@@ -126,6 +151,7 @@ def disk_inventory(answers):
         'ssd': {
             'mount': '/' if layout['mode'] == 'system-root' else layout['db_mount'],
             'uuid': layout.get('db_uuid') or 'ЗАПОЛНИТЬ-UUID-SSD',
+            'serial': layout['db_serial'],
             'data': db_dir,
             'min_free_bytes': 10 * 1024 ** 3,
             'min_free_inodes': 10000,
@@ -133,6 +159,7 @@ def disk_inventory(answers):
         'hdd': {
             'mount': layout['storage_mount'],
             'uuid': layout['storage_uuid'],
+            'serial': layout['storage_serial'],
             'data': storage_dir,
             'min_free_bytes': 20 * 1024 ** 3,
             'min_free_inodes': 10000,
@@ -158,8 +185,21 @@ def gate_lines(answers):
         mount=layout['storage_mount'],
         data=layout['storage_dir'],
         uid=answers['backend_uid'], gid=answers['backend_gid'])
-    return {'.runtime/startup-db.gate': db + '\n',
-            '.runtime/startup-backend.gate': backend + '\n'}
+    return {'startup-db.gate': db + '\n',
+            'startup-backend.gate': backend + '\n'}
+
+
+def worker_config(answers):
+    """Конфиг root-воркера обновлений (контракт deploy/user/update-worker.py)."""
+    return json.dumps({
+        'format': 'homecloud-user-update-worker-v1',
+        'compose_project_dir': answers['project_root'],
+        'runtime_env': ETC + '/runtime.env',
+        'docker_config': ETC + '/docker',
+        'public_host': answers['public_host'],
+        'https_port': answers['https_port'],
+        'repositories': list(UPDATE_REPOSITORIES),
+    }, indent=2, sort_keys=True) + '\n'
 
 
 def runtime_env(answers, generated, release_public_key):
@@ -188,6 +228,8 @@ def runtime_env(answers, generated, release_public_key):
         'FRONTEND_PROXY_IP': answers['frontend_proxy_ip'],
         'UPDATE_CHANNEL': answers['update_channel'],
         'UPDATE_RELEASE_PUBLIC_KEY': release_public_key,
+        # Fail-closed: bridge включает только docker-compose.production-updates.yml.
+        'UPDATE_INSTALL_BRIDGE_ENABLED': 'false',
     }
     return ''.join(key + '=' + values[key] + '\n' for key in ENV_KEYS)
 
@@ -205,15 +247,24 @@ def build(answers):
     be = (answers['backend_uid'], answers['backend_gid'])
 
     files = {}
-    files['.runtime/runtime.env'] = {
+    files[ETC + '/runtime.env'] = {
         'content': runtime_env(answers, generated, load_release_public_key()),
         'mode': 0o600, 'owner': (0, 0),
         'secret_keys': sorted(generated)}
-    files['.runtime/host-disks.json'] = {
+    files[ETC + '/host-disks.json'] = {
         'content': json.dumps(disk_inventory(answers), indent=2, ensure_ascii=False) + '\n',
         'mode': 0o600, 'owner': (0, 0)}
-    for path, content in gate_lines(answers).items():
-        files[path] = {'content': content, 'mode': 0o644, 'owner': (0, 0)}
+    for name, content in gate_lines(answers).items():
+        files[ETC + '/' + name] = {'content': content, 'mode': 0o644, 'owner': (0, 0)}
+    files[ETC + '/release-public.b64'] = {
+        'content': load_release_public_key() + '\n', 'mode': 0o644, 'owner': (0, 0)}
+    files[ETC + '/update-worker.json'] = {
+        'content': worker_config(answers), 'mode': 0o600, 'owner': (0, 0)}
+    for unit in SYSTEMD_UNITS:
+        files[SYSTEMD_TARGET + '/' + unit] = {
+            'content': repo_file('systemd', unit), 'mode': 0o644, 'owner': (0, 0)}
+    files[WORKER_TARGET] = {
+        'content': repo_file('update-worker.py'), 'mode': 0o700, 'owner': (0, 0)}
     files[str(db_dir.parent / '.homecloud-db')] = {
         'content': 'homecloud-v1 db {uuid}\n'.format(uuid=layout.get('db_uuid') or 'ROOT-UUID'),
         'mode': 0o400, 'owner': pg}
@@ -222,8 +273,13 @@ def build(answers):
         'mode': 0o400, 'owner': be}
 
     dirs = {
+        ETC: (0o700, (0, 0)),
+        ETC + '/maintenance': (0o711, (0, 0)),
+        ETC + '/docker': (0o700, (0, 0)),
+        UPDATE_BASE: (0o750, (0, 0)),
+        UPDATE_BASE + '/inbox': (0o770, (0, answers['backend_gid'])),
+        UPDATE_BASE + '/status': (0o750, (0, answers['backend_gid'])),
         str(root / '.runtime'): (0o700, (0, 0)),
-        str(root / '.runtime' / 'docker'): (0o700, (0, 0)),
         str(db_dir): (0o700, pg),
         str(storage_dir): (0o700, be),
         str(storage_dir / '.tmp'): (0o700, be),

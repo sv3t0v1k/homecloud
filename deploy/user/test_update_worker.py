@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+"""Тесты update-worker.py: контракт заявки и статуса, доверие по подписи Ed25519,
+откат после точки невозврата, протокол архивации с маркером.
+
+Подпись в happy path создаётся настоящим scripts/ci/release.py (байтовая
+совместимость с CI); чужая подпись — сырым openssl. Docker compose и HTTP
+подменяются через Deps; chown/geteuid подменяются, проверки владельца
+перенастраиваются на текущего пользователя через константы модуля.
+"""
+import base64
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+from datetime import datetime, timezone, timedelta
+
+SPEC = importlib.util.spec_from_file_location(
+    'update_worker', Path(__file__).with_name('update-worker.py'))
+worker = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(worker)
+
+OPENSSL = os.environ.get('HOMECLOUD_OPENSSL', 'openssl')
+RELEASE_PY = Path(__file__).resolve().parents[2] / 'scripts' / 'ci' / 'release.py'
+
+# RFC 8032 Test 2 — релизный ключ тестов (как в scripts/ci/test-release-sign.py).
+RFC_SEED = '4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb'
+RFC_PUBLIC = '3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c'
+# RFC 8032 Test 1 — чужой ключ.
+FOREIGN_SEED = '9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60'
+PKCS8_PREFIX = bytes.fromhex('302e020100300506032b657004220420')
+SPKI_PREFIX = bytes.fromhex('302a300506032b6570032100')
+PRIVATE_DER = PKCS8_PREFIX + bytes.fromhex(RFC_SEED)
+PUBLIC_B64 = base64.b64encode(SPKI_PREFIX + bytes.fromhex(RFC_PUBLIC)).decode()
+FOREIGN_PRIVATE_DER = PKCS8_PREFIX + bytes.fromhex(FOREIGN_SEED)
+
+REPO = 'acme/homecloud'
+NOW = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+OLD_BACKEND = 'ghcr.io/' + REPO + '/backend@sha256:' + '1' * 64
+OLD_FRONTEND = 'ghcr.io/' + REPO + '/frontend@sha256:' + '2' * 64
+
+
+def openssl_sign(payload, private_der=PRIVATE_DER):
+    with tempfile.TemporaryDirectory() as directory:
+        key = Path(directory) / 'private.der'
+        msg = Path(directory) / 'payload.bin'
+        sig = Path(directory) / 'signature.bin'
+        key.write_bytes(private_der)
+        msg.write_bytes(payload)
+        result = subprocess.run([OPENSSL, 'pkeyutl', '-sign', '-inkey', str(key),
+                                 '-keyform', 'DER', '-rawin', '-in', str(msg),
+                                 '-out', str(sig)], capture_output=True)
+        if result.returncode != 0:
+            raise AssertionError('openssl sign failed: ' + result.stderr.decode())
+        return base64.b64encode(sig.read_bytes()).decode()
+
+
+def release_py_sign(payload, directory):
+    """Подпись настоящим CI-подписантом: байтовая совместимость контракта."""
+    lock_path = Path(directory) / 'release-lock.json'
+    sig_path = Path(directory) / 'release-lock.json.sig'
+    public_path = Path(directory) / 'public.b64'
+    lock_path.write_bytes(payload)
+    public_path.write_text(PUBLIC_B64 + '\n')
+    env = dict(os.environ)
+    env['RELEASE_SIGNING_PRIVATE_KEY_B64'] = base64.b64encode(PRIVATE_DER).decode()
+    result = subprocess.run(
+        [sys.executable, str(RELEASE_PY), 'sign-lock', '--lock', str(lock_path),
+         '--signature', str(sig_path), '--public-key', str(public_path)],
+        capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        raise AssertionError('release.py sign-lock failed: ' + result.stderr)
+    return sig_path.read_text().strip()
+
+
+def make_lock(tag='v1.2.0', migrations=('20260101000000Init',), commit=None):
+    commit = commit or hashlib.sha256(('commit:' + tag).encode()).hexdigest()[:40]
+    lock = {
+        'format': 'homecloud-ci-candidate-v1',
+        'tag': tag,
+        'commit': commit,
+        'schema_migrations': list(migrations),
+        'images': {
+            role: {
+                'repository': 'ghcr.io/' + REPO + '/' + role,
+                'digest': 'sha256:' + hashlib.sha256((tag + ':' + role).encode()).hexdigest(),
+                'revision': commit,
+                'version': tag,
+            } for role in ('backend', 'frontend')
+        },
+    }
+    lock['manifest_sha256'] = hashlib.sha256(
+        worker.canonical(dict(lock)).encode()).hexdigest()
+    payload = (json.dumps(lock, indent=2, ensure_ascii=False) + '\n').encode()
+    return lock, payload
+
+
+def github_routes(payload, signature_b64, extra_releases=()):
+    releases = list(extra_releases) + [{
+        'draft': False,
+        'assets': [
+            {'name': 'release-lock.json',
+             'url': 'https://api.github.com/repos/' + REPO + '/releases/assets/111'},
+            {'name': 'release-lock.json.sig',
+             'url': 'https://api.github.com/repos/' + REPO + '/releases/assets/222'},
+        ],
+    }]
+    return {
+        'https://api.github.com/repos/' + REPO + '/releases?per_page=20':
+            (200, {}, json.dumps(releases).encode()),
+        'https://api.github.com/repos/' + REPO + '/releases/assets/111': (200, {}, payload),
+        'https://api.github.com/repos/' + REPO + '/releases/assets/222':
+            (200, {}, signature_b64.encode()),
+    }
+
+
+class FakeDeps:
+    """Подменённые побочные эффекты: openssl выполняется по-настоящему,
+    docker compose и HTTP — записью и сценарными ответами."""
+
+    def __init__(self, routes=None, compose_failures=None, smoke_statuses=(200,),
+                 moment=NOW, registry_digests=None):
+        self.routes = routes or {}
+        self.compose_failures = compose_failures or {}
+        self.smoke_statuses = list(smoke_statuses)
+        self.moment = moment
+        self.registry_digests = registry_digests or {}
+        self.compose_calls = []
+        self.smoke_calls = []
+        self.http_calls = []
+
+    def run(self, args, **kwargs):
+        args = list(args)
+        if 'pkeyutl' in args:
+            return subprocess.run(args, capture_output=True, timeout=60)
+        # docker compose --project-directory .. --env-file .. -f .. -f .. -f .. <sub> ...
+        index = max(i for i, item in enumerate(args) if item == '-f') + 2
+        sub = args[index:]
+        self.compose_calls.append(sub)
+        queue = self.compose_failures.get(sub[0], [])
+        code = queue.pop(0) if queue else 0
+        return subprocess.CompletedProcess(args, code)
+
+    def http_get(self, url, headers=None):
+        self.http_calls.append(url)
+        if url.startswith('https://ghcr.io/token?'):
+            return 200, {}, json.dumps({'token': 'registry-token'}).encode()
+        if url.startswith('https://ghcr.io/v2/'):
+            digest = url.rsplit('/', 1)[1]
+            return 200, {'Docker-Content-Digest': self.registry_digests.get(digest, digest)}, b''
+        if url in self.routes:
+            return self.routes[url]
+        raise AssertionError('unexpected URL: ' + url)
+
+    def now(self):
+        return self.moment
+
+    def smoke_get(self, url, host_header):
+        self.smoke_calls.append((url, host_header))
+        if len(self.smoke_statuses) > 1:
+            return self.smoke_statuses.pop(0)
+        return self.smoke_statuses[0]
+
+
+class WorkerCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            version = subprocess.check_output([OPENSSL, 'version'], text=True,
+                                              stderr=subprocess.PIPE).strip()
+        except OSError:
+            raise unittest.SkipTest('OpenSSL недоступен: ' + OPENSSL)
+        if not version.startswith('OpenSSL 3.'):
+            raise unittest.SkipTest('требуется OpenSSL 3.x, получен: ' + version)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.base = root / 'update'
+        (self.base / 'inbox').mkdir(parents=True)
+        (self.base / 'status').mkdir(parents=True)
+        self.project = root / 'project'
+        self.project.mkdir()
+        etc = root / 'etc'
+        etc.mkdir()
+        (etc / 'docker').mkdir()
+        self.env_path = etc / 'runtime.env'
+        self.config_path = etc / 'update-worker.json'
+        self.key_path = etc / 'release-public.b64'
+        self.token_path = etc / 'github-token'
+        self.key_path.write_text(PUBLIC_B64 + '\n')
+        self.config_path.write_text(json.dumps({
+            'format': 'homecloud-user-update-worker-v1',
+            'compose_project_dir': str(self.project),
+            'runtime_env': str(self.env_path),
+            'docker_config': str(etc / 'docker'),
+            'public_host': 'cloud.example.com',
+            'https_port': 443,
+            'repositories': [REPO],
+        }))
+        os.chmod(self.config_path, 0o600)
+        patches = [
+            mock.patch.object(worker, 'BASE_DIR', self.base),
+            mock.patch.object(worker, 'CONFIG_PATH', self.config_path),
+            mock.patch.object(worker, 'PUBLIC_KEY_PATH', self.key_path),
+            mock.patch.object(worker, 'TOKEN_PATH', self.token_path),
+            mock.patch.object(worker, 'ROOT_UID', os.getuid()),
+            mock.patch.object(worker, 'ROOT_GID', os.getgid()),
+            mock.patch.object(worker, 'BACKEND_UID', os.getuid()),
+            mock.patch.object(worker, 'GID', os.getgid()),
+            mock.patch('os.geteuid', return_value=0),
+            mock.patch('os.fchown', lambda *args: None),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write_env(self, backend_ref=OLD_BACKEND, frontend_ref=OLD_FRONTEND):
+        self.env_path.write_text('RELEASE_BACKEND_IMAGE=' + backend_ref + '\n'
+                                 'RELEASE_FRONTEND_IMAGE=' + frontend_ref + '\n'
+                                 'OTHER_KEY=keep\n')
+        os.chmod(self.env_path, 0o600)
+        return self.env_path
+
+    def read_env(self):
+        return self.env_path.read_text()
+
+    def write_installed_lock(self, tag='v1.1.0', migrations=('20260101000000Init',)):
+        _, payload = make_lock(tag=tag, migrations=migrations)
+        path = self.base / 'status' / 'installed-lock.json'
+        path.write_bytes(payload)
+        os.chmod(path, 0o640)
+
+    def write_request(self, identity):
+        path = self.base / 'inbox' / 'request.json'
+        path.write_text(json.dumps({'format': 'homecloud-update-request-v1',
+                                    'channel': 'release',
+                                    'manifestSha256': identity}) + '\n')
+        os.chmod(path, 0o600)
+
+    def write_receipt(self, status='INSTALLED', phase='COMPLETE', identity='a' * 64,
+                      updated='2026-11-25T11:00:00+00:00'):
+        receipt = {'format': 'homecloud-update-status-v1', 'status': status,
+                   'manifestSha256': identity, 'phase': phase, 'updatedAt': updated}
+        path = self.base / 'status' / 'current.json'
+        path.write_text(json.dumps(receipt) + '\n')
+        os.chmod(path, 0o640)
+        return receipt
+
+    def read_status(self):
+        return json.loads((self.base / 'status' / 'current.json').read_text())
+
+    def candidate_deps(self, tag='v1.2.0', signer=None, **kwargs):
+        """Заявка + маршруты GitHub для кандидата; возвращает (lock, payload, deps)."""
+        lock, payload = make_lock(tag=tag, migrations=kwargs.pop(
+            'migrations', ('20260101000000Init',)))
+        signature = signer(payload) if signer else openssl_sign(payload)
+        self.write_request(lock['manifest_sha256'])
+        deps = FakeDeps(github_routes(payload, signature), **kwargs)
+        return lock, payload, deps
+
+
+class InstallTests(WorkerCase):
+    def test_happy_path_installs_signed_release(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        with tempfile.TemporaryDirectory() as directory:
+            lock, payload = make_lock(tag='v1.2.0')
+            signature = release_py_sign(payload, directory)  # подпись настоящим CI
+            self.write_request(lock['manifest_sha256'])
+            deps = FakeDeps(github_routes(payload, signature))
+            worker.install(deps)
+        status = self.read_status()
+        self.assertEqual(status['status'], 'INSTALLED')
+        self.assertEqual(status['phase'], 'COMPLETE')
+        self.assertEqual(status['manifestSha256'], lock['manifest_sha256'])
+        env = self.read_env()
+        for role in ('backend', 'frontend'):
+            image = lock['images'][role]
+            self.assertIn('RELEASE_' + role.upper() + '_IMAGE=' +
+                          image['repository'] + '@' + image['digest'] + '\n', env)
+        self.assertIn('OTHER_KEY=keep\n', env)
+        self.assertEqual((self.base / 'status' / 'installed-lock.json').read_bytes(), payload)
+        self.assertFalse((self.base / 'inbox' / 'request.json').exists())
+        self.assertEqual([call[0] for call in deps.compose_calls], ['pull', 'up'])
+        self.assertEqual(deps.smoke_calls, [('https://127.0.0.1:443/', 'cloud.example.com')])
+
+    def test_no_request_is_noop(self):
+        worker.install(FakeDeps())
+        self.assertFalse((self.base / 'status' / 'current.json').exists())
+
+    def test_foreign_signature_rejected(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        lock, payload, deps = self.candidate_deps(
+            signer=lambda data: openssl_sign(data, FOREIGN_PRIVATE_DER))
+        with self.assertRaises(worker.Refusal):
+            worker.install(deps)
+        status = self.read_status()
+        self.assertEqual((status['status'], status['phase']), ('STOP', 'PREPARATION'))
+        self.assertIn(OLD_BACKEND + '\n', self.read_env())
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_unknown_identity_rejected(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        _, payload = make_lock(tag='v1.2.0')
+        self.write_request('f' * 64)  # релиз с такой идентичностью не публиковался
+        deps = FakeDeps(github_routes(payload, openssl_sign(payload)))
+        with self.assertRaises(worker.Refusal):
+            worker.install(deps)
+        status = self.read_status()
+        self.assertEqual((status['status'], status['phase']), ('STOP', 'PREPARATION'))
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_missing_installed_lock_rejected(self):
+        self.write_env()
+        _, _, deps = self.candidate_deps()
+        with self.assertRaises(worker.Refusal) as caught:
+            worker.install(deps)
+        self.assertIn('not bootstrapped', str(caught.exception))
+        self.assertEqual(self.read_status()['status'], 'STOP')
+
+    def test_different_migrations_rejected(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0', migrations=('20260101000000Init',))
+        _, _, deps = self.candidate_deps(
+            migrations=('20260101000000Init', '20260202000000Second'))
+        with self.assertRaises(worker.Refusal):
+            worker.install(deps)
+        self.assertEqual(self.read_status()['status'], 'STOP')
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_older_candidate_rejected(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.2.0')
+        _, _, deps = self.candidate_deps(tag='v1.1.0')
+        with self.assertRaises(worker.Refusal):
+            worker.install(deps)
+        self.assertEqual(self.read_status()['status'], 'STOP')
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_registry_digest_mismatch_rejected(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        lock, payload = make_lock(tag='v1.2.0')
+        self.write_request(lock['manifest_sha256'])
+        # Реестр отвечает другим дайджестом для backend-манифеста.
+        fake = 'sha256:' + '0' * 64
+        deps = FakeDeps(github_routes(payload, openssl_sign(payload)),
+                        registry_digests={lock['images']['backend']['digest']: fake})
+        with self.assertRaises(worker.Refusal):
+            worker.install(deps)
+        self.assertEqual(self.read_status()['status'], 'STOP')
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_compose_up_failure_rolls_back(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        _, _, deps = self.candidate_deps(compose_failures={'up': [1]})
+        with self.assertRaises(worker.RecoveryRequired):
+            worker.install(deps)
+        status = self.read_status()
+        self.assertEqual((status['status'], status['phase']), ('STOP', 'ROLLBACK'))
+        self.assertIn(OLD_BACKEND + '\n', self.read_env())
+        self.assertIn(OLD_FRONTEND + '\n', self.read_env())
+        self.assertEqual([call[0] for call in deps.compose_calls], ['pull', 'up', 'up'])
+
+    def test_pull_failure_rolls_back(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        _, _, deps = self.candidate_deps(compose_failures={'pull': [1]})
+        with self.assertRaises(worker.RecoveryRequired):
+            worker.install(deps)
+        status = self.read_status()
+        self.assertEqual((status['status'], status['phase']), ('STOP', 'ROLLBACK'))
+        self.assertIn(OLD_BACKEND + '\n', self.read_env())
+        self.assertEqual([call[0] for call in deps.compose_calls], ['pull', 'up'])
+
+    def test_rollback_failure_requires_manual_review(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        _, _, deps = self.candidate_deps(compose_failures={'up': [1, 1]})
+        with self.assertRaises(worker.RecoveryRequired):
+            worker.install(deps)
+        status = self.read_status()
+        self.assertEqual((status['status'], status['phase']),
+                         ('MANUAL_RECOVERY_REQUIRED', 'ROLLBACK'))
+
+    def test_smoke_failure_rolls_back(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        _, _, deps = self.candidate_deps(smoke_statuses=[503, 200])
+        with self.assertRaises(worker.RecoveryRequired):
+            worker.install(deps)
+        status = self.read_status()
+        self.assertEqual((status['status'], status['phase']), ('STOP', 'ROLLBACK'))
+        self.assertIn(OLD_BACKEND + '\n', self.read_env())
+        self.assertEqual(len(deps.smoke_calls), 2)
+
+    def test_stale_running_receipt_escalates(self):
+        old = (NOW - timedelta(minutes=45)).isoformat()
+        self.write_receipt(status='RUNNING', phase='SMOKE', updated=old)
+        self.write_request('b' * 64)
+        deps = FakeDeps()
+        worker.install(deps)
+        status = self.read_status()
+        self.assertEqual((status['status'], status['phase']),
+                         ('MANUAL_RECOVERY_REQUIRED', 'STALE_RUN'))
+        self.assertTrue((self.base / 'inbox' / 'request.json').exists())
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_active_receipt_blocks_install(self):
+        recent = (NOW - timedelta(minutes=5)).isoformat()
+        self.write_receipt(status='RUNNING', phase='SMOKE', updated=recent)
+        self.write_request('b' * 64)
+        worker.install(FakeDeps())
+        status = self.read_status()
+        self.assertEqual((status['status'], status['phase']), ('RUNNING', 'SMOKE'))
+        self.assertTrue((self.base / 'inbox' / 'request.json').exists())
+
+    def test_terminal_receipt_waits_for_archive(self):
+        self.write_receipt(status='INSTALLED', phase='COMPLETE')
+        self.write_request('b' * 64)
+        worker.install(FakeDeps())
+        self.assertEqual(self.read_status()['status'], 'INSTALLED')
+        self.assertTrue((self.base / 'inbox' / 'request.json').exists())
+
+    def test_invalid_config_rejected(self):
+        self.config_path.write_text(json.dumps({'format': 'other'}) + '\n')
+        os.chmod(self.config_path, 0o600)
+        with self.assertRaises(worker.Refusal):
+            worker.install(FakeDeps())
+        self.assertFalse((self.base / 'status' / 'current.json').exists())
+
+
+class BootstrapTests(WorkerCase):
+    def install_lock(self):
+        return self.base / 'status' / 'installed-lock.json'
+
+    def test_bootstrap_binds_installed_release(self):
+        lock, payload = make_lock(tag='v1.1.0')
+        backend_ref = lock['images']['backend']['repository'] + '@' + lock['images']['backend']['digest']
+        frontend_ref = lock['images']['frontend']['repository'] + '@' + lock['images']['frontend']['digest']
+        self.write_env(backend_ref, frontend_ref)
+        deps = FakeDeps(github_routes(payload, openssl_sign(payload)))
+        worker.bootstrap(deps)
+        self.assertEqual(self.install_lock().read_bytes(), payload)
+        self.assertEqual(deps.compose_calls, [])
+        self.assertFalse((self.base / 'status' / 'current.json').exists())
+
+    def test_bootstrap_refuses_existing_lock(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        with self.assertRaises(worker.Refusal):
+            worker.bootstrap(FakeDeps())
+
+    def test_bootstrap_refuses_when_no_release_matches(self):
+        _, payload = make_lock(tag='v1.1.0')
+        self.write_env()  # refs не из этого релиза
+        deps = FakeDeps(github_routes(payload, openssl_sign(payload)))
+        with self.assertRaises(worker.Refusal):
+            worker.bootstrap(deps)
+        self.assertFalse(self.install_lock().exists())
+
+    def test_bootstrap_refuses_foreign_signature(self):
+        lock, payload = make_lock(tag='v1.1.0')
+        backend_ref = lock['images']['backend']['repository'] + '@' + lock['images']['backend']['digest']
+        frontend_ref = lock['images']['frontend']['repository'] + '@' + lock['images']['frontend']['digest']
+        self.write_env(backend_ref, frontend_ref)
+        foreign = openssl_sign(payload, FOREIGN_PRIVATE_DER)
+        with self.assertRaises(worker.Refusal):
+            worker.bootstrap(FakeDeps(github_routes(payload, foreign)))
+        self.assertFalse(self.install_lock().exists())
+
+    def test_bootstrap_refuses_unpinned_refs(self):
+        self.write_env('ghcr.io/' + REPO + '/backend:latest',
+                       'ghcr.io/' + REPO + '/frontend:latest')
+        with self.assertRaises(worker.Refusal):
+            worker.bootstrap(FakeDeps())
+
+
+class ArchiveTests(WorkerCase):
+    def archive_dir(self):
+        return self.base / 'status' / 'archive'
+
+    def test_archive_rotates_installed_receipt(self):
+        self.write_receipt()
+        worker.archive(FakeDeps())
+        self.assertFalse((self.base / 'status' / 'current.json').exists())
+        self.assertFalse((self.base / 'status' / 'archiving.json').exists())
+        archived = list(self.archive_dir().iterdir())
+        self.assertEqual(len(archived), 1)
+        value = json.loads(archived[0].read_text())
+        self.assertEqual(value['status'], 'INSTALLED')
+
+    def test_archive_without_receipt_is_noop(self):
+        worker.archive(FakeDeps())
+        self.assertFalse(self.archive_dir().exists())
+
+    def test_archive_manual_recovery_refused(self):
+        self.write_receipt(status='MANUAL_RECOVERY_REQUIRED', phase='ROLLBACK')
+        with self.assertRaises(worker.Refusal):
+            worker.archive(FakeDeps())
+        self.assertTrue((self.base / 'status' / 'current.json').exists())
+
+    def test_archive_blocked_by_pending_request(self):
+        self.write_receipt()
+        self.write_request('b' * 64)
+        with self.assertRaises(worker.Refusal):
+            worker.archive(FakeDeps())
+        self.assertTrue((self.base / 'status' / 'current.json').exists())
+
+    def test_archive_resumes_after_crash_post_link(self):
+        # Крах после hardlink, до удаления current.json: marker + обе копии.
+        receipt = self.write_receipt()
+        name = worker.receipt_archive_name(receipt)
+        worker.create_marker(receipt['manifestSha256'], name)
+        self.archive_dir().mkdir()
+        os.link(self.base / 'status' / 'current.json', self.archive_dir() / name)
+        worker.archive(FakeDeps())
+        self.assertFalse((self.base / 'status' / 'current.json').exists())
+        self.assertFalse((self.base / 'status' / 'archiving.json').exists())
+        self.assertTrue((self.archive_dir() / name).exists())
+
+    def test_archive_resumes_marker_only(self):
+        # Крах после удаления current.json, до удаления marker.
+        receipt = self.write_receipt()
+        name = worker.receipt_archive_name(receipt)
+        worker.create_marker(receipt['manifestSha256'], name)
+        self.archive_dir().mkdir()
+        os.link(self.base / 'status' / 'current.json', self.archive_dir() / name)
+        os.unlink(self.base / 'status' / 'current.json')
+        worker.archive(FakeDeps())
+        self.assertFalse((self.base / 'status' / 'archiving.json').exists())
+
+    def test_conflicting_marker_refused(self):
+        receipt = self.write_receipt()
+        worker.create_marker('c' * 64, 'c' * 64 + '-' + '0' * 16 + '.json')
+        with self.assertRaises(worker.Refusal):
+            worker.archive(FakeDeps())
+        self.assertTrue((self.base / 'status' / 'current.json').exists())
+
+
+if __name__ == '__main__':
+    unittest.main()

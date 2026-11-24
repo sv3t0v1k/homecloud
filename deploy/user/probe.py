@@ -95,6 +95,33 @@ def disks(runner):
     return result
 
 
+def disk_serial(runner, source):
+    """Serial физического диска за блочным источником mount (part/lvm -> disk).
+    Мягкий опрос: неразрешённый serial — None, не отказ probe."""
+    raw = runner(['lsblk', '--json', '--inverse', '--paths',
+                  '-o', 'PATH,TYPE,SERIAL', source])
+    if raw is None:
+        return None
+    try:
+        nodes = json.loads(raw).get('blockdevices') or []
+    except ValueError:
+        return None
+    # Ответ обязан описывать цепочку именно запрошенного источника.
+    if not nodes or all(node.get('path') != source for node in nodes):
+        return None
+    serial = None
+
+    def visit(items):
+        nonlocal serial
+        for node in items:
+            if node.get('type') == 'disk':
+                serial = (node.get('serial') or '').strip() or None
+            visit(node.get('children') or [])
+
+    visit(nodes)
+    return serial
+
+
 def mounts(runner):
     raw = runner(['findmnt', '--json', '--list', '-o', 'TARGET,SOURCE,FSTYPE,UUID'])
     if raw is None:
@@ -104,8 +131,17 @@ def mounts(runner):
     except ValueError:
         return []
     rows = []
+    serials = {}
     for row in data.get('filesystems') or []:
-        rows.append({key: row.get(key) for key in ('target', 'source', 'fstype', 'uuid')})
+        item = {key: row.get(key) for key in ('target', 'source', 'fstype', 'uuid')}
+        source = item['source'] or ''
+        if source.startswith('/dev/'):
+            if source not in serials:
+                serials[source] = disk_serial(runner, source)
+            item['serial'] = serials[source]
+        else:
+            item['serial'] = None
+        rows.append(item)
     return rows
 
 

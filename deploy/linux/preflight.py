@@ -42,8 +42,9 @@ def ordinary_directory(value):
 
 def check_inventory_layout(inventory):
     config_dir = inventory.get('config_dir', '/etc/homecloud')
-    system_root = inventory['ssd'].get('identity_mode', 'dedicated') == 'system-root-lvm'
-    if 'project_root' in inventory or config_dir != '/etc/homecloud' or system_root:
+    # Project layout (self-contained checkout на паре дисков) включается только
+    # явным project_root/custom config_dir; system-root сам по себе — нет.
+    if 'project_root' in inventory or config_dir != '/etc/homecloud':
         project = ordinary_directory(inventory['project_root'])
         require(Path.cwd().resolve() == project, 'Запускать из canonical project_root')
         config = ordinary_directory(config_dir)
@@ -161,6 +162,21 @@ def check_maintenance_directory(value):
             'Неверный owner/mode maintenance directory')
 
 
+def check_update_directory(source, mode):
+    path = ordinary_directory(source)
+    for parent in reversed(path.parents):
+        parent_info = parent.lstat()
+        require(stat.S_ISDIR(parent_info.st_mode) and parent_info.st_uid == 0 and
+                not parent_info.st_mode & 0o022 and
+                not os.listxattr(parent, follow_symlinks=False),
+                'Небезопасный родитель update directory')
+    info = path.stat()
+    require(info.st_uid == 0 and info.st_gid == 65533 and
+            stat.S_IMODE(info.st_mode) == mode and
+            not os.listxattr(path, follow_symlinks=False),
+            'Неверный владелец или права update directory')
+
+
 def check_config(config, inventory):
     config_dir = check_inventory_layout(inventory)
     services = config['services']
@@ -180,7 +196,12 @@ def check_config(config, inventory):
             'Некорректный storage root/NODE_ENV')
     require(backend.get('user') == '1001:65533', 'Требуется backend UID/GID 1001:65533')
     test_channel = env.get('UPDATE_CHANNEL') == 'test'
-    test_updates = test_channel and env.get('UPDATE_INSTALL_BRIDGE_ENABLED') == 'true'
+    bridge = env.get('UPDATE_INSTALL_BRIDGE_ENABLED') == 'true'
+    test_updates = test_channel and bridge
+    release_updates = env.get('UPDATE_CHANNEL') == 'release' and bridge
+    if bridge:
+        require(env.get('UPDATE_CHANNEL') in ('release', 'test'),
+                'Update bridge требует явный канал release|test')
     if test_channel:
         require(env.get('UPDATE_INSTALL_BRIDGE_ENABLED') in ('true', 'false'),
                 'Неверный TEST update flag')
@@ -192,6 +213,13 @@ def check_config(config, inventory):
                 env.get('UPDATE_TEST_CANDIDATE_PATH') == '/run/homecloud-update/status/available.json' and
                 env.get('UPDATE_GITHUB_TOKEN') == '' and env.get('UPDATE_GITHUB_USER') == '',
                 'Неверная TEST update boundary')
+    if release_updates:
+        require(
+                env.get('UPDATE_REQUEST_INBOX') == '/run/homecloud-update/inbox' and
+                env.get('UPDATE_STATUS_FILE') == '/run/homecloud-update/status/current.json' and
+                env.get('UPDATE_INSTALLED_LOCK_PATH') == '/run/homecloud-update/status/installed-lock.json' and
+                bool(env.get('UPDATE_RELEASE_PUBLIC_KEY')),
+                'Неверная RELEASE update boundary')
     for name, target, source in (
         ('backend', '/storage', inventory['hdd']['data']),
         ('db', '/var/lib/postgresql/data', inventory['ssd']['data']),
@@ -201,7 +229,7 @@ def check_config(config, inventory):
         extra = {
             '/run/homecloud-update/inbox': ('/var/lib/homecloud-update/inbox', False, 0o770),
             '/run/homecloud-update/status': ('/var/lib/homecloud-update/status', True, 0o750),
-        } if name == 'backend' and test_updates else {}
+        } if name == 'backend' and (test_updates or release_updates) else {}
         require(len(mounts) == 6 + (1 if name == 'backend' else 0) + len(extra) and len(by_target) == len(mounts) and target in by_target,
                 'Неверное число уникальных mount targets')
         data_mount = by_target[target]
@@ -237,19 +265,8 @@ def check_config(config, inventory):
             require(mount['type'] == 'bind' and mount['source'] == source and
                     mount.get('read_only', False) is read_only and
                     mount.get('bind', {}).get('create_host_path') is False,
-                    'TEST update mount отличается от квалифицированного')
-            path = ordinary_directory(source)
-            for parent in reversed(path.parents):
-                parent_info = parent.lstat()
-                require(stat.S_ISDIR(parent_info.st_mode) and parent_info.st_uid == 0 and
-                        not parent_info.st_mode & 0o022 and
-                        not os.listxattr(parent, follow_symlinks=False),
-                        'Небезопасный родитель TEST update directory')
-            info = path.stat()
-            require(info.st_uid == 0 and info.st_gid == 65533 and
-                    stat.S_IMODE(info.st_mode) == mode and
-                    not os.listxattr(path, follow_symlinks=False),
-                    'Неверный владелец или права TEST update directory')
+                    'Update mount отличается от квалифицированного')
+            check_update_directory(source, mode)
         require(not services[name].get('privileged') and not services[name].get('cap_add') and
                 not services[name].get('devices'), 'Gate не требует privileged/devices/cap_add')
     for network in config.get('networks', {}).values():
@@ -305,6 +322,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--inventory', default='/etc/homecloud/host-disks.json')
     parser.add_argument('--env-file', default='/etc/homecloud/runtime.env')
+    parser.add_argument('--updates',
+                        help='release update bridge override (docker-compose.production-updates.yml)')
     args = parser.parse_args()
     require(platform.system() == 'Linux' and platform.machine() == 'x86_64',
             'D3 рассчитан на native Linux amd64; Desktop/эмуляция не подходят')
@@ -339,6 +358,11 @@ def main():
             'Требуются установленная RAM 8 GiB и >=2 GiB доступно перед стартом')
     compose_args = [*docker_prefix, 'compose', '--env-file', str(env_file),
                     '-f', 'docker-compose.yml', '-f', 'docker-compose.production.yml']
+    if args.updates:
+        updates = Path(args.updates)
+        require(updates.is_absolute() and updates.resolve() == updates and updates.is_file(),
+                'Update override обязан быть canonical file')
+        compose_args += ['-f', str(updates)]
     if 'project_root' in inventory:
         compose_args += ['-f', 'docker-compose.project-test.yml']
         spec = importlib.util.spec_from_file_location(

@@ -1,0 +1,9 @@
+[Unit]
+Description=HomeCloud release update request (install worker)
+
+[Path]
+PathExists=/var/lib/homecloud-update/inbox/request.json
+Unit=homecloud-user-update.service
+
+[Install]
+WantedBy=multi-user.target

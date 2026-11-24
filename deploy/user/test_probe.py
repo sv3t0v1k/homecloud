@@ -25,18 +25,23 @@ IP_ROUTE = json.dumps([{'prefsrc': '192.168.1.10', 'dev': 'eth0'}])
 
 def canned(mapping):
     def runner(command):
-        for prefix, output in mapping.items():
+        for prefix in sorted(mapping, key=len, reverse=True):
             if command[:len(prefix)] == list(prefix):
-                return output
+                return mapping[prefix]
         return None
     return runner
 
+
+INVERSE_SDB1 = json.dumps({'blockdevices': [
+    {'path': '/dev/sdb1', 'type': 'part', 'serial': None, 'children': [
+        {'path': '/dev/sdb', 'type': 'disk', 'serial': 'HDD456'}]}]})
 
 BASE = {
     ('uname', '-m'): 'x86_64\n',
     ('docker', 'version'): '29.0.0\n',
     ('docker', 'compose', 'version'): 'v5.6.0\n',
     ('lsblk',): LSBLK,
+    ('lsblk', '--json', '--inverse'): INVERSE_SDB1,
     ('findmnt',): json.dumps({'filesystems': [
         {'target': '/srv/data', 'source': '/dev/sdb1', 'fstype': 'ext4', 'uuid': 'hdd-uuid-1'}]}),
     ('ss',): SS,
@@ -61,6 +66,19 @@ class ProbeContractTests(unittest.TestCase):
         self.assertEqual(disks['/dev/sdb']['serial'], 'HDD456')
         self.assertEqual(facts['network']['primary_ip'], '192.168.1.10')
         self.assertEqual(facts['network']['listening_tcp_ports'], [22, 8443])
+        self.assertEqual(facts['warnings'], [])
+
+    def test_mount_serial_resolved_to_physical_disk(self):
+        facts = self.collect()
+        row = facts['mounts'][0]
+        self.assertEqual(row['source'], '/dev/sdb1')
+        self.assertEqual(row['serial'], 'HDD456')
+
+    def test_mount_serial_soft_failure(self):
+        mapping = dict(BASE)
+        mapping.pop(('lsblk', '--json', '--inverse'))
+        facts = probe.collect(runner=canned(mapping))
+        self.assertIsNone(facts['mounts'][0]['serial'])
         self.assertEqual(facts['warnings'], [])
 
     def test_optical_drive_excluded(self):

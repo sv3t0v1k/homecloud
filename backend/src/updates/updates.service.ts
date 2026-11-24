@@ -214,6 +214,7 @@ export class UpdatesService {
         if (!(await registryDigest(lock, "backend", token, user)) || !(await registryDigest(lock, "frontend", token, user))) continue;
         return { ...base, status: "available", available: {
           version: lock.tag, gitSha: lock.commit,
+          manifestSha256: lock.manifest_sha256,
           backendDigest: lock.images.backend.digest, frontendDigest: lock.images.frontend.digest,
           compatibility: "exact-migrations", changes,
         } };

@@ -1,0 +1,61 @@
+# Release-канал self-service обновлений: bridge backend -> host worker.
+# ТОЛЬКО override, третий -f после docker-compose.production.yml:
+# docker compose --env-file /etc/homecloud/runtime.env -f docker-compose.yml \
+#   -f docker-compose.production.yml -f docker-compose.production-updates.yml config --quiet
+# Backend лишь кладёт 64-hex заявку в inbox; root worker на хосте независимо
+# скачивает и проверяет подписанный релиз (Ed25519), переключает digest-refs,
+# откатывается при отказе. UPDATE_ADMIN_USER_ID пуст — кнопка скрыта (fail-closed).
+services:
+  backend:
+    environment:
+      UPDATE_INSTALL_BRIDGE_ENABLED: "true"
+      UPDATE_REQUEST_INBOX: /run/homecloud-update/inbox
+      UPDATE_STATUS_FILE: /run/homecloud-update/status/current.json
+      UPDATE_INSTALLED_LOCK_PATH: /run/homecloud-update/status/installed-lock.json
+      UPDATE_GITHUB_TOKEN: ${UPDATE_GITHUB_TOKEN:-}
+      UPDATE_GITHUB_USER: ${UPDATE_GITHUB_USER:-}
+      UPDATE_ADMIN_USER_ID: ${UPDATE_ADMIN_USER_ID:-}
+    volumes: !override
+      - type: bind
+        source: ${HDD_STORAGE_DIR:?Укажите существующий storage каталог на HDD}
+        target: /storage
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./deploy/linux/startup-gate.sh
+        target: /run/homecloud/startup-gate.sh
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /etc/homecloud/startup-backend.gate
+        target: /run/homecloud/startup.gate
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /proc/1/mountinfo
+        target: /run/homecloud/host-mountinfo
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /dev
+        target: /run/homecloud/dev
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${HDD_STORAGE_DIR}/../.homecloud-backend
+        target: /run/homecloud/volume-marker
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /etc/homecloud/maintenance
+        target: /run/homecloud/maintenance
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /var/lib/homecloud-update/inbox
+        target: /run/homecloud-update/inbox
+        bind: {create_host_path: false}
+      - type: bind
+        source: /var/lib/homecloud-update/status
+        target: /run/homecloud-update/status
+        read_only: true
+        bind: {create_host_path: false}

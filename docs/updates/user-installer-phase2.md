@@ -53,8 +53,8 @@ sudo ./deploy/user/install.sh --no-start
 | Файл | Роль |
 |---|---|
 | `deploy/user/probe.py` | Только чтение: архитектура, RAM, Docker/compose, диски (`lsblk`), mounts, занятые TCP-порты, основной IP. Строгий JSON-контракт, runner инъектируется для тестов. |
-| `deploy/user/install.sh` | Оркестратор: probe → вопросы с умолчаниями → generate → **preflight** → pull/up → сводка. POSIX sh, `set -eu`, чистый PATH. |
-| `deploy/user/generate.py` | Из ответов + плана генерирует артефакты, которые runbook готовил руками: `runtime.env` со свежими секретами, `host-disks.json`, startup-gates (формат `startup-gate.sh`), volume markers, дерево каталогов с точными UID/GID и правами, self-signed TLS с SAN. Режимы `plan` (JSON без секретов) и `apply`. |
+| `deploy/user/install.sh` | Оркестратор: probe → вопросы с умолчаниями → generate → **pull** (preflight требует локальные образы) → **preflight** → up → bootstrap обновлений и systemd (release-канал) → сводка. POSIX sh, `set -eu`, чистый PATH. |
+| `deploy/user/generate.py` | Из ответов + плана генерирует артефакты, которые runbook готовил руками: `/etc/homecloud/runtime.env` со свежими секретами, `/etc/homecloud/host-disks.json` (UUID + serial), startup-gates (формат `startup-gate.sh`), volume markers, дерево каталогов с точными UID/GID и правами, self-signed TLS с SAN. Для release-канала добавляет артефакты самообновления (Этап 3). Режимы `plan` (JSON без секретов) и `apply`. |
 
 Preflight — существующий `deploy/linux/preflight.py`, конвейер не ослаблен:
 установщик только производит входные данные для него.
@@ -72,7 +72,8 @@ Preflight — существующий `deploy/linux/preflight.py`, конвей
 - **Автовыбор дисков** — сейчас UUID/mount спрашиваются; автовыбор кандидата
   из probe возможен, но требует отдельной квалификации UX (ошибка выбора
   диска непоправима, поэтому по умолчанию спрашиваем).
-- **Обновление установленного сервера** — Этап 3 дизайна (кнопка в UI).
+- **Обновление установленного сервера** — реализовано в Этапе 3,
+  см. [`user-installer-phase3.md`](./user-installer-phase3.md).
 
 ## Проверки
 
