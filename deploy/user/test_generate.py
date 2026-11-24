@@ -36,6 +36,7 @@ def answers(**over):
         'acme_webroot_dir': '/opt/mycloud/.runtime/acme',
         'ingress_subnet': '172.29.0.0/24', 'ingress_proxy_ip': '172.29.0.10',
         'backend_proxy_subnet': '172.30.0.0/24', 'frontend_proxy_ip': '172.30.0.10',
+        'update_channel': 'release',
     }
     base.update(over)
     return base
@@ -136,6 +137,14 @@ class GenerateContractTests(unittest.TestCase):
                 self.assertNotIn(value, redacted)
         self.assertIn('<generated>', redacted)
 
+    def test_update_channel_and_release_key(self):
+        env = self.build()['files']['.runtime/runtime.env']['content']
+        self.assertIn('UPDATE_CHANNEL=release\n', env)
+        key = generate.load_release_public_key()
+        self.assertIn('UPDATE_RELEASE_PUBLIC_KEY=' + key + '\n', env)
+        test_env = self.build(update_channel='test')['files']['.runtime/runtime.env']['content']
+        self.assertIn('UPDATE_CHANNEL=test\n', test_env)
+
 
 class GenerateRefusalTests(unittest.TestCase):
     def refuse(self, **over):
@@ -200,6 +209,10 @@ class GenerateRefusalTests(unittest.TestCase):
                             'db_dir': '/opt/x/db', 'storage_dir': '/srv/data/storage',
                             'db_uuid': '', 'storage_uuid': 'u',
                             'storage_mount': '/srv/data'})
+
+    def test_unknown_update_channel(self):
+        self.refuse(update_channel='nightly')
+        self.refuse(update_channel='')
 
 
 if __name__ == '__main__':

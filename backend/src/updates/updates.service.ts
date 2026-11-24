@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { createHash } from "crypto";
+import { createHash, createPublicKey, verify as verifyEd25519 } from "crypto";
 import { readFile } from "fs/promises";
 import { discoverTestBuild } from "./test-build";
 import { readHostTestCandidate } from "./host-test-candidate";
@@ -62,7 +62,7 @@ export function verifiedLock(value: unknown): Lock | null {
   } catch { return null; }
 }
 
-async function githubJsonOnce(path: string, token: string, accept = "application/vnd.github+json"): Promise<unknown> {
+async function githubTextOnce(path: string, token: string, accept = "application/vnd.github+json"): Promise<string> {
   const urls = path.startsWith("https://") ? [path] : APIS.map((base) => base + path);
   let lastError: unknown = null;
   for (const url of urls) {
@@ -80,7 +80,7 @@ async function githubJsonOnce(path: string, token: string, accept = "application
       if (!response.ok || response.status >= 300 || Number(response.headers.get("content-length") || 0) > 2_000_000) throw new Error("GitHub unavailable");
       const body = await response.text();
       if (body.length > 2_000_000) throw new Error("GitHub response too large");
-      return JSON.parse(body);
+      return body;
     } catch (error) {
       lastError = error;
     }
@@ -88,9 +88,28 @@ async function githubJsonOnce(path: string, token: string, accept = "application
   throw lastError ?? new Error("GitHub unavailable");
 }
 
+async function githubJsonOnce(path: string, token: string, accept?: string): Promise<unknown> {
+  return JSON.parse(await githubTextOnce(path, token, accept));
+}
+
 // Медленный или прерывистый канал пользователя не должен сразу давать check_unavailable.
 async function githubJson(url: string, token: string, accept?: string): Promise<unknown> {
   return withRetry(() => accept === undefined ? githubJsonOnce(url, token) : githubJsonOnce(url, token, accept));
+}
+
+// Точные байты release-lock: подпись проверяется до JSON.parse и любого доверия.
+async function githubText(url: string, token: string, accept: string): Promise<string> {
+  return withRetry(() => githubTextOnce(url, token, accept));
+}
+
+// Ed25519: публичный ключ SPKI DER в base64, подпись 64 байта в base64.
+function verifyLockSignature(payload: string, signatureB64: string, publicKeyB64: string): boolean {
+  try {
+    const signature = Buffer.from(signatureB64.trim(), "base64");
+    if (signature.length !== 64) return false;
+    const key = createPublicKey({ key: Buffer.from(publicKeyB64.trim(), "base64"), format: "der", type: "spki" });
+    return verifyEd25519(null, Buffer.from(payload, "utf8"), key, signature);
+  } catch { return false; }
 }
 
 async function registryDigestOnce(lock: Lock, role: "backend" | "frontend", token: string, user: string): Promise<boolean> {
@@ -162,14 +181,22 @@ export class UpdatesService {
           : await discoverTestBuild(installed, token, this.config.get<string>("UPDATE_GITHUB_USER") || "");
         return { ...base, available, status: available ? "available" : "current" };
       }
+      const publicKey = this.config.get<string>("UPDATE_RELEASE_PUBLIC_KEY") || "";
+      // Без репозиторного ключа релизов подпись не проверить: fail-closed.
+      if (!publicKey) return { ...base, available: null, status: "check_unavailable" };
       const releases = await githubJson("/releases?per_page=20", token) as Release[];
       if (!Array.isArray(releases)) throw new Error("Invalid releases");
       for (const release of releases) {
-        if (release.draft || !release.prerelease || !isVersion(release.tag_name) ||
+        if (release.draft || !isVersion(release.tag_name) ||
             (isVersion(installed.version) && !newer(release.tag_name, installed.version))) continue;
-        const asset = release.assets?.find((item) => item.name === "release-lock.json" && APIS.some((base) => item.url.startsWith(`${base}/releases/assets/`) && /^\d+$/.test(item.url.slice(`${base}/releases/assets/`.length))));
-        if (!asset) continue;
-        const lock = verifiedLock(await githubJson(asset.url, token, "application/octet-stream"));
+        const assetUrl = (name: string) => release.assets?.find((item) => item.name === name && APIS.some((base) => item.url.startsWith(`${base}/releases/assets/`) && /^\d+$/.test(item.url.slice(`${base}/releases/assets/`.length))));
+        const asset = assetUrl("release-lock.json");
+        const signatureAsset = assetUrl("release-lock.json.sig");
+        if (!asset || !signatureAsset) continue;
+        const lockText = await githubText(asset.url, token, "application/octet-stream");
+        const signatureText = await githubText(signatureAsset.url, token, "application/octet-stream");
+        if (!verifyLockSignature(lockText, signatureText, publicKey)) continue;
+        const lock = verifiedLock(JSON.parse(lockText));
         if (!lock || lock.tag !== release.tag_name || lock.commit === installed.gitSha ||
             canonical([...lock.schema_migrations].sort()) !== canonical([...installed.schemaMigrations].sort())) continue;
         const comparison = await githubJson(`/compare/${installed.gitSha}...${lock.commit}`, token) as { status?: string };

@@ -16,6 +16,8 @@ installer_dir="$script_dir"
 MODE=interactive
 INSTALL_ROOT=/opt/homecloud
 PROJECT_NAME=homecloud
+CHANNEL=release
+CHANNEL_GIVEN=0
 START=1
 ANSWERS_OVERRIDE=''
 IMAGES=''
@@ -26,6 +28,7 @@ while [ "$#" -gt 0 ]; do
     --interactive) MODE=interactive;;
     --root) INSTALL_ROOT=${2:?}; shift;;
     --name) PROJECT_NAME=${2:?}; shift;;
+    --channel) CHANNEL=${2:?}; CHANNEL_GIVEN=1; shift;;
     --answers) ANSWERS_OVERRIDE=${2:?}; shift;;
     --images) IMAGES=${2:?}; shift;;
     --no-start) START=0;;
@@ -40,6 +43,10 @@ case "$INSTALL_ROOT" in
 esac
 case "$PROJECT_NAME" in
   *[!a-z0-9-]*|'') fail '--name: строчные латинские буквы, цифры и дефис';;
+esac
+case "$CHANNEL" in
+  release|test) ;;
+  *) fail '--channel: release или test';;
 esac
 
 work=$(mktemp -d /tmp/homecloud-install.XXXXXX) || fail
@@ -120,6 +127,13 @@ else
   storage_mount=$(ask 'Mountpoint раздела с файлами' "$default_storage_mount")
   storage_uuid=$(ask 'UUID раздела с файлами' "$default_storage_uuid")
   db_uuid="$root_uuid"
+  if [ "$CHANNEL_GIVEN" = 0 ]; then
+    CHANNEL=$(ask 'Канал обновлений (release — стабильные, test — тестовые)' 'release')
+    case "$CHANNEL" in
+      release|test) ;;
+      *) fail 'канал обновлений: release или test';;
+    esac
+  fi
   if [ "$(ask 'База данных на отдельном диске? (y/N)' 'N')" = y ]; then
     db_mount=$(ask 'Mountpoint раздела базы' '')
     db_uuid=$(ask 'UUID раздела базы' '')
@@ -146,11 +160,11 @@ else
   py - "$PROJECT_NAME" "$public_host" "$primary_ip" "$http_port" "$https_port" \
      "$db_dir" "$storage_dir" "$storage_uuid" "$storage_mount" \
      "$backend_image" "$frontend_image" "$INSTALL_ROOT" \
-     "$layout_mode" "$db_uuid" "$db_mount" > "$work/answers.json" <<'PY'
+     "$layout_mode" "$db_uuid" "$db_mount" "$CHANNEL" > "$work/answers.json" <<'PY'
 import json, sys
 (name, host, bind_ip, http, https, db_dir, storage_dir,
  storage_uuid, storage_mount, backend, frontend, root,
- layout_mode, db_uuid, db_mount) = sys.argv[1:16]
+ layout_mode, db_uuid, db_mount, channel) = sys.argv[1:17]
 layout = {'mode': layout_mode,
           'db_dir': db_dir, 'storage_dir': storage_dir,
           'storage_uuid': storage_uuid, 'storage_mount': storage_mount,
@@ -169,6 +183,7 @@ answers = {
     'acme_webroot_dir': root + '/.runtime/acme',
     'ingress_subnet': '172.29.0.0/24', 'ingress_proxy_ip': '172.29.0.10',
     'backend_proxy_subnet': '172.30.0.0/24', 'frontend_proxy_ip': '172.30.0.10',
+    'update_channel': channel,
 }
 json.dump(answers, sys.stdout, ensure_ascii=False, indent=2)
 PY
@@ -209,6 +224,9 @@ say 'Готово.'
 say "  Веб-интерфейс:  https://$host:$https_port"
 say '  Статус:         docker compose -f docker-compose.yml -f docker-compose.production.yml ps'
 say "  Секреты:        $INSTALL_ROOT/.runtime/runtime.env (root-only)"
+if [ -z "$ANSWERS_OVERRIDE" ]; then
+  say "  Канал обновлений: $CHANNEL"
+fi
 if [ "$START" = 1 ]; then
   say '  Первый вход:    зарегистрируйте первого пользователя — это будет владелец.'
 fi

@@ -26,6 +26,8 @@ FORBIDDEN_PROJECTS = {'homecloud-preview', 'homecloud', 'docker', 'test'}
 HOST = re.compile(r'[a-z0-9.-]{1,253}\Z')
 IPV4 = re.compile(r'(?:\d{1,3}\.){3}\d{1,3}\Z')
 HEX_SECRET = 32
+CHANNELS = ('release', 'test')
+RELEASE_PUBLIC_KEY_PATH = Path(__file__).with_name('release-public.b64')
 ENV_KEYS = (
     'COMPOSE_PROJECT_NAME', 'DB_PASSWORD', 'JWT_SECRET', 'JWT_REFRESH_SECRET',
     'REDIS_PASSWORD', 'PUBLIC_HOST', 'PUBLIC_BIND_IP', 'PUBLIC_HTTP_PORT',
@@ -33,6 +35,7 @@ ENV_KEYS = (
     'TLS_CERT_DIR', 'ACME_WEBROOT_DIR', 'RELEASE_BACKEND_IMAGE',
     'RELEASE_FRONTEND_IMAGE', 'INGRESS_SUBNET', 'INGRESS_PROXY_IP',
     'BACKEND_PROXY_SUBNET', 'FRONTEND_PROXY_IP',
+    'UPDATE_CHANNEL', 'UPDATE_RELEASE_PUBLIC_KEY',
 )
 
 
@@ -43,6 +46,17 @@ class Refusal(Exception):
 def require(condition, message):
     if not condition:
         raise Refusal(message)
+
+
+def load_release_public_key():
+    """Ключ подписи релизов из репозитория; без него установка не доверяет обновлениям."""
+    try:
+        text = RELEASE_PUBLIC_KEY_PATH.read_text().strip()
+    except OSError:
+        raise Refusal('не найден deploy/user/release-public.b64 — ключ подписи релизов')
+    require(re.fullmatch(r'[A-Za-z0-9+/=]+\Z', text) is not None,
+            'release-public.b64: неверный формат base64')
+    return text
 
 
 def canonical_dir(value, label):
@@ -61,6 +75,8 @@ def validate_answers(answers):
     require(name not in FORBIDDEN_PROJECTS, 'project_name: зарезервированное имя')
     host = answers.get('public_host')
     require(isinstance(host, str) and HOST.fullmatch(host), 'public_host: неверный формат')
+    channel = answers.get('update_channel')
+    require(channel in CHANNELS, 'update_channel: release | test')
     bind_ip = answers.get('public_bind_ip')
     require(isinstance(bind_ip, str) and IPV4.fullmatch(bind_ip), 'public_bind_ip: ожидается IPv4')
     for key in ('http_port', 'https_port'):
@@ -146,7 +162,7 @@ def gate_lines(answers):
             '.runtime/startup-backend.gate': backend + '\n'}
 
 
-def runtime_env(answers, generated):
+def runtime_env(answers, generated, release_public_key):
     origin = 'https://{host}:{port}'.format(host=answers['public_host'],
                                             port=answers['https_port'])
     values = {
@@ -170,6 +186,8 @@ def runtime_env(answers, generated):
         'INGRESS_PROXY_IP': answers['ingress_proxy_ip'],
         'BACKEND_PROXY_SUBNET': answers['backend_proxy_subnet'],
         'FRONTEND_PROXY_IP': answers['frontend_proxy_ip'],
+        'UPDATE_CHANNEL': answers['update_channel'],
+        'UPDATE_RELEASE_PUBLIC_KEY': release_public_key,
     }
     return ''.join(key + '=' + values[key] + '\n' for key in ENV_KEYS)
 
@@ -188,7 +206,8 @@ def build(answers):
 
     files = {}
     files['.runtime/runtime.env'] = {
-        'content': runtime_env(answers, generated), 'mode': 0o600, 'owner': (0, 0),
+        'content': runtime_env(answers, generated, load_release_public_key()),
+        'mode': 0o600, 'owner': (0, 0),
         'secret_keys': sorted(generated)}
     files['.runtime/host-disks.json'] = {
         'content': json.dumps(disk_inventory(answers), indent=2, ensure_ascii=False) + '\n',

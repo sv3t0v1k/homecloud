@@ -116,6 +116,9 @@ jobs:
       - run: sh native/build.sh
         working-directory: backend
       - run: python3 scripts/ci/test-release.py
+      - run: python3 scripts/ci/test-release-sign.py
+      - run: python3 deploy/user/test_probe.py
+      - run: python3 deploy/user/test_generate.py
       - run: python3 scripts/ci/test-provenance.py
       - run: python3 scripts/ci/test-scan-evidence.py
       - run: python3 scripts/ci/test-scan-policy.py

@@ -91,9 +91,15 @@ class ReleaseTests(unittest.TestCase):
             r.verify_tag('v0.9.1-beta.1', self.commit)
 
     def test_invalid_semver_and_shell_input_blocked(self):
-        for tag in ('v1.0.0', 'v0.09.1-beta.1', 'v0.9.1-beta.0', 'v0.9.1-beta.1;false'):
+        for tag in ('v0.09.1-beta.1', 'v0.9.1-beta.0', 'v0.9.1-beta.1;false'):
             with self.assertRaises(ValueError):
                 r.verify_tag(tag, self.commit)
+
+    def test_wellformed_unknown_tag_blocked(self):
+        # Финальный тег разрешён форматом (versions.ts принимает стабильные
+        # версии), но обязан существовать как annotated tag — git отказывает.
+        with self.assertRaises(subprocess.CalledProcessError):
+            r.verify_tag('v1.0.0', self.commit)
 
     def qualification(self):
         def image(role):
