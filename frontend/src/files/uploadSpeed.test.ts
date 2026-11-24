@@ -49,6 +49,16 @@ describe('UploadSpeedTracker', () => {
     expect(tracker.read(1000)).toBeNull()
   })
 
+  it('clears the measurement window on reset', () => {
+    const tracker = new UploadSpeedTracker()
+    tracker.record(0, 0)
+    tracker.record(100_000, 1000)
+    tracker.reset()
+    expect(tracker.read(1_000_000)).toBeNull()
+    tracker.record(200_000, 2000)
+    expect(tracker.read(1_000_000)).toBeNull()
+  })
+
   it('hides ETA when only a few seconds remain', () => {
     const tracker = new UploadSpeedTracker()
     tracker.record(0, 0)
