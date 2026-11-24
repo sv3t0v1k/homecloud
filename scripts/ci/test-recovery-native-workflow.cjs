@@ -594,6 +594,7 @@ test('Fast CI invokes Native Recovery directly and only for pull requests', () =
 
   assert.deepEqual(new Set(gate.needs), new Set([
     'recovery-scope',
+    'merge-reuse',
     'pr-fast-backend',
     'backend',
     'frontend',

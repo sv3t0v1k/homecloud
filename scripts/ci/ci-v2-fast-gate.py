@@ -6,12 +6,16 @@ import sys
 
 REQUIRED = {
     'recovery-scope',
+    'merge-reuse',
     'pr-fast-backend',
     'backend',
     'frontend',
     'configuration',
     'secrets',
     'recovery-qualification',
+}
+REUSED_JOBS = {
+    'pr-fast-backend', 'backend', 'frontend', 'configuration', 'secrets'
 }
 
 
@@ -42,12 +46,25 @@ def validate(results, event_name='pull_request'):
     if mode not in permitted:
         raise ValueError('Invalid recovery scope for event')
 
+    reuse_route = results['merge-reuse']
+    if not isinstance(reuse_route, dict) or reuse_route.get('result') != 'success':
+        raise ValueError('Merge reuse job failed or skipped')
+    reuse_outputs = reuse_route.get('outputs')
+    if not isinstance(reuse_outputs, dict):
+        raise ValueError('Missing merge reuse evidence')
+    reuse_mode = reuse_outputs.get('mode')
+    permitted_reuse = ('pr',) if event_name == 'pull_request' else ('full', 'reuse')
+    if reuse_mode not in permitted_reuse:
+        raise ValueError('Invalid merge reuse mode for event')
+
     for name, job in results.items():
         expected = 'success'
 
         if name == 'recovery-qualification':
             if mode in ('ui', 'push'):
                 expected = 'skipped'
+        if event_name == 'push' and reuse_mode == 'reuse' and name in REUSED_JOBS:
+            expected = 'skipped'
 
         status = job.get('result') if isinstance(job, dict) else None
 
@@ -57,6 +74,8 @@ def validate(results, event_name='pull_request'):
                 f'{name}={status}; expected={expected}'
             )
 
+    if event_name == 'push' and reuse_mode == 'reuse':
+        return 'push-reuse'
     return mode
 
 

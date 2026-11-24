@@ -123,6 +123,9 @@ class Tests(unittest.TestCase):
 
     def test_ci_only_script_changes_and_helpers(self):
         original = self.source.git
+        for path in ('scripts/ci/ci-v2-merge-reuse.py',
+                     'scripts/ci/test-ci-v2-merge-reuse.py'):
+            self.assertIn(path, host.CI_ONLY_SCRIPT_CHANGES)
 
         for path, permitted in (
             ('scripts/ci/stage-cache-proof.py', True),
