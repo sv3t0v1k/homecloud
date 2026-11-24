@@ -32,7 +32,7 @@ function statusText(job: InstallStatus): string {
   switch (job.status) {
     case 'DISABLED': return 'Установка через интерфейс на этом стенде выключена.'
     case 'NO_JOB': return 'Установка не запущена.'
-    case 'QUEUED': return 'Заявка передана хосту; обработка начнётся автоматически.'
+    case 'QUEUED': return 'Заявка передана хосту; установка начнётся автоматически.'
     case 'VALIDATION_REQUIRED': return 'Заявка принята; ожидается проверка хостом.'
     case 'RUNNING': return `Выполняется: ${job.phase && phases[job.phase] ? phases[job.phase] : 'проверка состояния'}.`
     case 'INSTALLED': return 'Хост подтвердил успешную установку.'
