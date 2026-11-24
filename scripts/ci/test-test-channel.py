@@ -121,6 +121,9 @@ class TestChannelTests(unittest.TestCase):
             installer.CI_ONLY_SCRIPT_CHANGES,
             host.CI_ONLY_SCRIPT_CHANGES
         )
+        for path in ('scripts/ci/ci-v2-merge-reuse.py',
+                     'scripts/ci/test-ci-v2-merge-reuse.py'):
+            self.assertIn(path, installer.CI_ONLY_SCRIPT_CHANGES)
 
         for path, permitted in (
             ('scripts/ci/stage-cache-proof.py', True),

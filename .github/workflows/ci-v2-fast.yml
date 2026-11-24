@@ -11,7 +11,63 @@ concurrency:
   group: ci-v2-fast-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  merge-reuse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      checks: read
+    outputs:
+      mode: ${{ steps.classify-reuse.outputs.mode }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Доказать reuse только для точного protected merge
+        id: classify-reuse
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/merge-reuse-evidence.json"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            printf '{"mode":"pr"}\n' > "$evidence"
+            echo 'mode=pr' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! base=$(git rev-parse HEAD^1); then
+            printf '{"mode":"full","reason":"missing protected parent"}\n' > "$evidence"
+            echo 'mode=full' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git show "$base:scripts/ci/ci-v2-merge-reuse.py" > "$RUNNER_TEMP/merge-reuse-policy.py"; then
+            printf '{"mode":"full","reason":"protected base policy unavailable"}\n' > "$evidence"
+            echo 'mode=full' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 -I -B "$RUNNER_TEMP/merge-reuse-policy.py" \
+            --event "$GITHUB_EVENT_PATH" --base "$base" \
+            --repository "$GITHUB_REPOSITORY" > "$evidence"
+          mode=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mode"])' "$evidence")
+          case "$mode" in
+            full|reuse) echo "mode=$mode" >> "$GITHUB_OUTPUT" ;;
+            *) echo 'Invalid merge reuse mode' >&2; exit 1 ;;
+          esac
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && github.event_name == 'push'
+        with:
+          name: merge-reuse-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/merge-reuse-evidence.json
+          if-no-files-found: error
+          retention-days: 30
   pr-fast-backend:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
@@ -34,6 +90,7 @@ jobs:
       - run: node --test scripts/ci/test-recovery-native-workflow.cjs
       - run: python3 -B scripts/ci/test-recovery-context.py
       - run: python3 scripts/ci/test-ci-v2-fast-gate.py
+      - run: python3 scripts/ci/test-ci-v2-merge-reuse.py
       - run: python3 -B scripts/ci/test-ci-v3-recovery-scope.py
       - run: python3 scripts/ci/test-ci-v2-candidate.py
       - run: python3 scripts/ci/test-test-channel.py
@@ -91,6 +148,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   backend:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
@@ -146,6 +205,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   frontend:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     steps:
@@ -178,6 +239,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   configuration:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
@@ -235,6 +298,8 @@ jobs:
           python3 scripts/tests/test-restore-cleanup.py
           python3 scripts/tests/test-restore-health.py
   secrets:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     steps:
@@ -368,13 +433,19 @@ jobs:
   fast-integration-gate:
     name: ci-v2-fast-terminal
     if: always()
-    needs: [recovery-scope, pr-fast-backend, backend, frontend, configuration, secrets, recovery-qualification]
+    needs: [recovery-scope, merge-reuse, pr-fast-backend, backend, frontend, configuration, secrets, recovery-qualification]
     runs-on: ubuntu-24.04
-    timeout-minutes: 2
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      checks: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Require all Fast and Integration jobs
         env:
@@ -395,6 +466,18 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/branches/test" > "$RUNNER_TEMP/current-test.json"
           python3 scripts/ci/ci-v2-candidate.py --event "$GITHUB_EVENT_PATH" --live "$RUNNER_TEMP/current-test.json" --checkout "$(git rev-parse HEAD)" --branch test
+      - name: Повторно доказать reuse перед публикацией
+        if: github.event_name == 'push' && needs.merge-reuse.outputs.mode == 'reuse'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base=$(git rev-parse HEAD^1)
+          cmp <(git show "$base:scripts/ci/ci-v2-merge-reuse.py") scripts/ci/ci-v2-merge-reuse.py
+          python3 -I -B scripts/ci/ci-v2-merge-reuse.py \
+            --event "$GITHUB_EVENT_PATH" --base "$base" \
+            --repository "$GITHUB_REPOSITORY" --require-reuse
   test-image:
     if: ${{ always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/test' && needs.fast-integration-gate.result == 'success' }}
     needs: fast-integration-gate
