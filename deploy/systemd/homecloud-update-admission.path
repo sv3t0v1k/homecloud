@@ -1,9 +1,7 @@
 [Unit]
-Description=HomeCloud TEST update request listener (single-slot)
+Description=HomeCloud TEST update request admission (no install)
 
 [Path]
-# The listener stays armed for explicit admin UI requests. A request opens one
-# admission/install job; completion and archival return the host to NO_JOB.
 PathExists=/var/lib/homecloud-update/inbox/request.json
 Unit=homecloud-update-admission.service
 
