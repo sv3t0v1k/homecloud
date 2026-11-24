@@ -68,7 +68,9 @@ class ArchiveTests(unittest.TestCase):
         with patch.object(archive.os, 'fstat', side_effect=self.fake_root_stat), \
              patch.object(archive, 'verify_complete', side_effect=lambda *_: (current_identity[0], self.current.stat())):
             self.assertTrue(archive.archive_complete())
-            self.current.write_text(json.dumps({'manifestSha256': second}))
+            self.current.write_text(json.dumps(dict(
+                format='homecloud-update-status-v1', status='INSTALLED',
+                manifestSha256=second, phase='COMPLETE', updatedAt='later')))
             self.current.chmod(0o640)
             current_identity[0] = second
             self.assertTrue(archive.archive_complete())
@@ -134,10 +136,12 @@ class ArchiveTests(unittest.TestCase):
              patch.object(archive, 'json_file', return_value=({'status': 'RUNNING'}, None)):
             with self.assertRaises(archive.Refusal):
                 archive.verify_complete()
-        (self.channel / 'pending.json').write_text('{}')
-        with patch.object(archive, 'trusted_parents'):
-            with self.assertRaises(archive.Refusal):
-                archive.verify_complete()
+        for blocked in (self.channel / 'pending.json', self.inbox / 'request.json'):
+            blocked.write_text('{}')
+            with self.subTest(blocked=blocked.name), patch.object(archive, 'trusted_parents'):
+                with self.assertRaises(archive.Refusal):
+                    archive.verify_complete()
+            blocked.unlink()
 
     def test_complete_requires_matching_install_evidence_and_live_images(self):
         image = {'ref': 'ghcr.io/account/project/backend@sha256:' + 'c' * 64,
@@ -190,6 +194,113 @@ class ArchiveTests(unittest.TestCase):
              patch.object(archive, 'project_name', return_value='homecloud-e2e-120'), \
              patch.object(archive, 'verify_images'):
             self.assertEqual(archive.verify_complete()[0], IDENTITY)
+
+    def test_preparation_refusal_uses_previous_installed_checkpoint(self):
+        candidate = 'c' * 64
+        image = {'ref': 'ghcr.io/account/project/backend@sha256:' + 'c' * 64,
+                 'id': 'sha256:' + 'd' * 64, 'sha': COMMIT}
+        records = {
+            'current.json': dict(format='homecloud-update-status-v1', status='STOP',
+                                 manifestSha256=candidate, phase='PREPARATION', updatedAt='now'),
+            'last-status.json': dict(status='INSTALLED', manifest_sha256=IDENTITY, commit=COMMIT),
+            'state.json': dict(format='homecloud-test-install-v1', history=[], active=dict(
+                manifest=dict(manifest_sha256=IDENTITY, commit=COMMIT),
+                images=dict(backend=image, frontend=image),
+                schema_migrations=[dict(name='MigrationOne')])),
+            'installed.json': dict(format='homecloud-installed-test-v1', version=COMMIT[:7],
+                                   gitSha=COMMIT, schemaMigrations=['MigrationOne']),
+        }
+        def read(path, *_args):
+            return records[path.name], self.current.stat()
+        with patch.object(archive, 'trusted_parents'), \
+             patch.object(archive, 'json_file', side_effect=read), \
+             patch.object(archive, 'project_name', return_value='homecloud-d4-test'), \
+             patch.object(archive, 'verify_images'):
+            self.assertEqual(archive.verify_complete()[0], candidate)
+            records['state.json']['active']['manifest']['manifest_sha256'] = candidate
+            with self.assertRaises(archive.Refusal):
+                archive.verify_complete()
+
+    def test_repeated_preparation_refusals_archive_independently(self):
+        self.original_fstat = os.fstat
+        with patch.object(archive.os, 'fstat', side_effect=self.fake_root_stat), \
+             patch.object(archive, 'verify_complete',
+                          side_effect=lambda *_: (IDENTITY, self.current.stat())):
+            for updated_at in ('first-attempt', 'second-attempt'):
+                self.current.write_text(json.dumps(dict(
+                    format='homecloud-update-status-v1', status='STOP',
+                    manifestSha256=IDENTITY, phase='PREPARATION', updatedAt=updated_at)))
+                self.current.chmod(0o640)
+                self.assertTrue(archive.archive_complete())
+        archived = sorted(path.name for path in (self.status / 'archive').glob('*.json'))
+        self.assertEqual(len(archived), 2)
+        self.assertEqual(len(set(archived)), 2)
+        self.assertTrue(all(path.startswith(IDENTITY + '-') for path in archived))
+
+    def test_preparation_crash_after_hardlink_recovers_without_overwrite(self):
+        self.current.write_text(json.dumps(dict(
+            format='homecloud-update-status-v1', status='STOP',
+            manifestSha256=IDENTITY, phase='PREPARATION', updatedAt='crash-after-link')))
+        self.current.chmod(0o640)
+        self.original_fstat = os.fstat
+        with patch.object(archive.os, 'fstat', side_effect=self.fake_root_stat):
+            archive_name = archive.receipt_archive_name(self.current)
+            target = self.status / 'archive' / archive_name
+            target.parent.mkdir()
+            os.link(self.current, target)
+            archive.create_marker(IDENTITY, archive_name)
+            with patch.object(archive, 'verify_complete',
+                              side_effect=lambda *_: (IDENTITY, self.current.stat())):
+                self.assertTrue(archive.archive_complete())
+        self.assertFalse(self.current.exists())
+        self.assertFalse((self.status / 'archiving.json').exists())
+        self.assertTrue(target.exists())
+        self.assertEqual(target.stat().st_nlink, 1)
+        self.assertNotEqual(target.name, IDENTITY + '.json')
+
+    def test_preparation_crash_after_current_unlink_recovers_from_marker(self):
+        self.current.write_text(json.dumps(dict(
+            format='homecloud-update-status-v1', status='STOP',
+            manifestSha256=IDENTITY, phase='PREPARATION', updatedAt='crash-after-unlink')))
+        self.current.chmod(0o640)
+        self.original_fstat = os.fstat
+        with patch.object(archive.os, 'fstat', side_effect=self.fake_root_stat):
+            archive_name = archive.receipt_archive_name(self.current)
+            target = self.status / 'archive' / archive_name
+            target.parent.mkdir()
+            os.link(self.current, target)
+            archive.create_marker(IDENTITY, archive_name)
+            self.current.unlink()
+            with patch.object(archive, 'verify_complete',
+                              return_value=(IDENTITY, target.stat())) as verify:
+                self.assertTrue(archive.archive_complete())
+                verify.assert_called_once_with(target)
+        self.assertFalse(self.current.exists())
+        self.assertFalse((self.status / 'archiving.json').exists())
+        self.assertTrue(target.exists())
+        self.assertNotEqual(target.name, IDENTITY + '.json')
+
+    def test_other_stop_phase_is_not_archivable(self):
+        receipt = dict(format='homecloud-update-status-v1', status='STOP',
+                       manifestSha256=IDENTITY, phase='VERIFY_TRUST', updatedAt='now')
+        with patch.object(archive, 'trusted_parents'), \
+             patch.object(archive, 'json_file', return_value=(receipt, None)):
+            with self.assertRaises(archive.Refusal):
+                archive.verify_complete()
+
+    def test_legacy_archival_marker_recovers_successful_install(self):
+        target = self.status / 'archive' / (IDENTITY + '.json')
+        target.parent.mkdir()
+        os.link(self.current, target)
+        self.current.unlink()
+        marker = self.status / 'archiving.json'
+        marker.write_text(json.dumps({'manifestSha256': IDENTITY}))
+        marker.chmod(0o640)
+        self.original_fstat = os.fstat
+        with patch.object(archive.os, 'fstat', side_effect=self.fake_root_stat), \
+             patch.object(archive, 'verify_complete', return_value=(IDENTITY, target.stat())):
+            self.assertTrue(archive.archive_complete())
+        self.assertFalse(marker.exists())
 
     def test_parallel_archive_rejected_by_shared_lock(self):
         self.original_fstat = os.fstat

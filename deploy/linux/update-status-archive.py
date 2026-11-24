@@ -1,6 +1,7 @@
 #!/usr/bin/python3 -IS
 """Archive only a fully verified TEST installation receipt. No recovery actions."""
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -141,7 +142,7 @@ def verify_images(images, commit, project):
 
 
 def verify_complete(receipt=None):
-    """Return the identity only if independent durable and live evidence agrees."""
+    """Verify a completed install or a proven pretransaction refusal."""
     directory(STATUS_DIR, 0o750, 65533)
     directory(INBOX, 0o770, 65533)
     trusted_parents(CHANNEL)
@@ -154,28 +155,41 @@ def verify_complete(receipt=None):
     status, info = json_file(receipt, 0o640, 65533, 4096, (1, 2))
     require(set(status) == {'format', 'status', 'manifestSha256', 'phase', 'updatedAt'} and
             status['format'] == 'homecloud-update-status-v1' and
-            status['status'] == 'INSTALLED' and status['phase'] == 'COMPLETE' and
+            ((status['status'] == 'INSTALLED' and status['phase'] == 'COMPLETE') or
+             (status['status'] == 'STOP' and status['phase'] == 'PREPARATION')) and
             type(status['manifestSha256']) is str and HASH.fullmatch(status['manifestSha256']) and
             type(status['updatedAt']) is str and len(status['updatedAt']) <= 64,
-            'receipt is not confirmed complete')
+            'receipt is not archivable')
     identity = status['manifestSha256']
     last, _ = json_file(CHANNEL / 'last-status.json', 0o600, 0)
     # The installer appends each prior active manifest to history. A successful
     # second install already exceeds the generic 64 KiB checkpoint limit.
     state, _ = json_file(CHANNEL / 'state.json', 0o600, 0, 16 * 1024 * 1024)
     installed, _ = json_file(INSTALLED, 0o640, 65533, 4096)
-    require(last.get('status') == 'INSTALLED' and last.get('manifest_sha256') == identity and
+    require(last.get('status') == 'INSTALLED' and
+            type(last.get('manifest_sha256')) is str and HASH.fullmatch(last['manifest_sha256']) and
             type(last.get('commit')) is str and SHA.fullmatch(last['commit']),
-            'installer result differs from receipt')
+            'installed checkpoint is invalid')
+    if status['status'] == 'INSTALLED':
+        require(last['manifest_sha256'] == identity, 'installer result differs from receipt')
     commit = last['commit']
     active = state.get('active')
     require(state.get('format') == 'homecloud-test-install-v1' and type(active) is dict and
-            type(state.get('history')) is list and type(active.get('manifest')) is dict and
-            active['manifest'].get('manifest_sha256') == identity and
-            active['manifest'].get('commit') == commit and
+            type(state.get('history')) is list and
             type(active.get('images')) is dict and set(active['images']) == {'backend', 'frontend'} and
             type(active.get('schema_migrations')) is list,
             'installed state differs from receipt')
+    active_manifest = active.get('manifest')
+    if status['status'] == 'INSTALLED':
+        require(type(active_manifest) is dict and
+                active_manifest.get('manifest_sha256') == identity and
+                active_manifest.get('commit') == commit,
+                'installed state differs from receipt')
+    elif active_manifest is not None:
+        require(type(active_manifest) is dict and
+                active_manifest.get('manifest_sha256') == last['manifest_sha256'] and
+                active_manifest.get('commit') == commit,
+                'preparation refusal differs from installed checkpoint')
     names = [item.get('name') for item in active['schema_migrations']
              if type(item) is dict]
     require(len(names) == len(active['schema_migrations']) and names and
@@ -215,8 +229,20 @@ def fsync_dir(path):
         os.close(fd)
 
 
-def create_marker(identity):
-    value = json.dumps({'manifestSha256': identity}, sort_keys=True).encode() + b'\n'
+def receipt_archive_name(receipt):
+    status, _ = json_file(receipt, 0o640, 65533, 4096, (1, 2))
+    identity = status['manifestSha256']
+    if status['status'] == 'INSTALLED':
+        return identity + '.json'
+    # Repeated preparation failures for one candidate must never overwrite the
+    # prior attempt's evidence. updatedAt comes from the root-owned receipt.
+    suffix = hashlib.sha256(status['updatedAt'].encode()).hexdigest()[:16]
+    return identity + '-' + suffix + '.json'
+
+
+def create_marker(identity, archive_name):
+    value = json.dumps({'manifestSha256': identity, 'archiveName': archive_name},
+                       sort_keys=True).encode() + b'\n'
     fd = os.open(MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW |
                  os.O_CLOEXEC, 0o640)
     try:
@@ -238,10 +264,13 @@ def archive_complete():
             if MARKER.exists() or MARKER.is_symlink():
                 marker, _ = json_file(MARKER, 0o640, 65533, 4096)
                 identity = marker.get('manifestSha256')
-                require(set(marker) == {'manifestSha256'} and type(identity) is str and
-                        HASH.fullmatch(identity), 'invalid archival marker')
+                require(set(marker) in ({'manifestSha256'}, {'manifestSha256', 'archiveName'}) and
+                        type(identity) is str and HASH.fullmatch(identity), 'invalid archival marker')
+                archive_name = marker.get('archiveName', identity + '.json')
+                require(type(archive_name) is str and re.fullmatch(
+                    r'[a-f0-9]{64}(?:-[a-f0-9]{16})?\.json', archive_name), 'invalid archive name')
                 directory(ARCHIVE, 0o700, 0)
-                complete, _ = verify_complete(ARCHIVE / (identity + '.json'))
+                complete, _ = verify_complete(ARCHIVE / archive_name)
                 require(complete == identity, 'archived receipt differs from marker')
                 # Persist the absent current while the durable blocker still exists.
                 fsync_dir(STATUS_DIR)
@@ -250,16 +279,19 @@ def archive_complete():
                 return True
             return False
         identity, info = verify_complete()
+        archive_name = receipt_archive_name(CURRENT)
+        expected_marker = {'manifestSha256': identity, 'archiveName': archive_name}
         if MARKER.exists() or MARKER.is_symlink():
             marker, _ = json_file(MARKER, 0o640, 65533, 4096)
-            require(marker == {'manifestSha256': identity}, 'conflicting archival marker')
+            legacy_marker = archive_name == identity + '.json' and marker == {'manifestSha256': identity}
+            require(marker == expected_marker or legacy_marker, 'conflicting archival marker')
         else:
-            create_marker(identity)
+            create_marker(identity, archive_name)
         if not ARCHIVE.exists() and not ARCHIVE.is_symlink():
             ARCHIVE.mkdir(mode=0o700)
             fsync_dir(STATUS_DIR)
         directory(ARCHIVE, 0o700, 0)
-        destination = ARCHIVE / (identity + '.json')
+        destination = ARCHIVE / archive_name
         if destination.exists() or destination.is_symlink():
             archived_value, archived = json_file(destination, 0o640, 65533, 4096, (2,))
             require((archived.st_dev, archived.st_ino) == (info.st_dev, info.st_ino) and

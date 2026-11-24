@@ -216,7 +216,7 @@ describe('UpdatesSection', () => {
     )
 
     expect(screen.getByText(
-      'Заявка передана хосту.',
+      'Заявка передана хосту; обработка начнётся автоматически.',
     )).toBeInTheDocument()
   })
 
@@ -375,7 +375,32 @@ describe('UpdatesSection', () => {
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
       method: 'POST', url: '/updates/installations', data: { manifestSha256: hash },
     })))
-    expect(await screen.findByText('Заявка передана хосту.')).toBeInTheDocument()
+    expect(await screen.findByText('Заявка передана хосту; обработка начнётся автоматически.')).toBeInTheDocument()
+  })
+
+  it('allows a fresh attempt only after a preparation refusal is archived', async () => {
+    vi.useFakeTimers()
+    const state = mockUpdateLifecycle()
+    state.status = 'STOP'
+    state.phase = 'PREPARATION'
+
+    render(<UpdatesSection />)
+    await advancePolling(0)
+
+    expect(screen.getByText(
+      'Подготовка остановлена до внесения изменений. После устранения причины установку можно повторить.',
+    )).toBeInTheDocument()
+    expect(screen.queryByRole('button', {
+      name: 'Установить test-new',
+    })).not.toBeInTheDocument()
+
+    state.status = 'NO_JOB'
+    state.phase = null
+    await advancePolling(3000)
+
+    expect(screen.getByRole('button', {
+      name: 'Установить test-new',
+    })).toBeInTheDocument()
   })
 
   it('does not offer installation while the host status needs review', async () => {

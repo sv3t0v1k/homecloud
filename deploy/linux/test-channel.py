@@ -87,6 +87,10 @@ class Stop(Exception):
     pass
 
 
+class PretransactionStop(Stop):
+    """The installer refused before changing checkout, services or durable state."""
+
+
 def require(ok, reason):
     if not ok:
         raise Stop(reason)
@@ -1116,6 +1120,9 @@ def deploy(manifest, rollback=False, dry_run=False):
         transaction_started = True
         safe_checkout(manifest, rollback)
         record_phase(transaction, 'VERIFY_IMAGES')
+        # Prepare every image referenced by the verified target Compose config.
+        # The following preflight must not depend on a manual ingress/db pull.
+        compose('pull', 'db', 'backend', 'frontend', 'ingress', timeout=900)
         ids = verify_pulled(manifest)
         run(str(ROOT / 'deploy/linux/project-test.sh'), 'preflight')
         require(applied_migrations() == applied, 'migrations changed during preparation')
@@ -1182,14 +1189,17 @@ def deploy(manifest, rollback=False, dry_run=False):
                     'backup_id': backup_id,
                     'manifest_sha256': manifest['manifest_sha256'], 'at': datetime.now(timezone.utc).isoformat()})
         print('INSTALLED: exact TEST pair and public HTTPS smoke passed')
-    except Exception:
-        # Preflight/validation failures before the durable transaction begins
-        # must not poison the journal or require manual recovery of an install
-        # that never started. A pending transaction always blocks retries.
+    except Exception as error:
+        # A failure before pending.json is created has not changed checkout,
+        # services, configuration or installer journals. Give the host bridge a
+        # distinct, machine-verifiable refusal instead of a false recovery alarm.
         if transaction_started and not dry_run:
             atomic_json(CHANNEL / 'last-status.json', {'status': recover_before_start(transaction, state, applied),
                         'reason': 'installation failed; automatic retry prohibited',
                         'at': datetime.now(timezone.utc).isoformat()})
+        elif not dry_run and not ((CHANNEL / 'pending.json').exists() or
+                                  (CHANNEL / 'pending.json').is_symlink()):
+            raise PretransactionStop(str(error) or 'TEST preparation refused before transaction') from error
         raise
     finally:
         os.close(fd)
@@ -1215,6 +1225,9 @@ def main():
 if __name__ == '__main__':
     try:
         main()
+    except PretransactionStop:
+        print('STOP: TEST preparation refused before any transaction', file=sys.stderr)
+        sys.exit(2)
     except (Stop, ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError,
             json.JSONDecodeError, TimeoutError):
         print('STOP: TEST install refused; inspect root-only status and operational evidence', file=sys.stderr)

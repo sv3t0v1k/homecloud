@@ -584,8 +584,9 @@ class TestChannelTests(unittest.TestCase):
                         )
                         # The exact same request must refuse before any Git or Docker work.
                         prior_operations = list(operations)
-                        with self.assertRaisesRegex(installer.Stop, 'incomplete TEST transaction'):
+                        with self.assertRaisesRegex(installer.Stop, 'incomplete TEST transaction') as refusal:
                             installer.deploy(self.manifest)
+                        self.assertNotIsInstance(refusal.exception, installer.PretransactionStop)
                         self.assertEqual(operations, prior_operations)
                         snapshot = json.loads(pending_file.read_text())
                         self.assertEqual(snapshot['before']['git_sha'], previous)
@@ -617,7 +618,11 @@ class TestChannelTests(unittest.TestCase):
                 return previous
             return ''
 
-        def fake_compose(*args, **_kwargs):
+        def fake_compose(*args, **kwargs):
+            if args and args[0] == 'pull':
+                self.assertEqual(args, ('pull', 'db', 'backend', 'frontend', 'ingress'))
+                self.assertEqual(kwargs.get('timeout'), 900)
+                operations.append('pull')
             if args and args[0] == 'stop':
                 operations.append('stop')
             if args and args[0] == 'up':
@@ -636,6 +641,10 @@ class TestChannelTests(unittest.TestCase):
                     operations.append('full-start')
                     self.assertEqual(current[0], target)
             return ''
+
+        def fake_verify_pulled(_manifest):
+            operations.append('verify-pulled')
+            return {'backend': 'sha256:' + 'e' * 64, 'frontend': 'sha256:' + 'f' * 64}
 
         def fake_backup(active, _fd, _marker):
             self.assertEqual(len(active['schema_migrations']), 31)
@@ -661,8 +670,7 @@ class TestChannelTests(unittest.TestCase):
                                                side_effect=lambda: list(current[0])))
             patches.enter_context(patch.object(installer, 'precheck_source', return_value=previous))
             patches.enter_context(patch.object(installer, 'safe_checkout', return_value=previous))
-            patches.enter_context(patch.object(installer, 'verify_pulled', return_value={
-                'backend': 'sha256:' + 'e' * 64, 'frontend': 'sha256:' + 'f' * 64}))
+            patches.enter_context(patch.object(installer, 'verify_pulled', side_effect=fake_verify_pulled))
             patches.enter_context(patch.object(installer, 'compose', side_effect=fake_compose))
             patches.enter_context(patch.object(installer, 'backup', side_effect=fake_backup))
             patches.enter_context(patch.object(installer, 'verify_started_images',
@@ -681,6 +689,8 @@ class TestChannelTests(unittest.TestCase):
             channel = Path(tmp)
             state, operations, applied = self.exercise_migration_deploy(channel)
             self.assertEqual(applied, installer.migration_names(self.manifest))
+            self.assertLess(operations.index('pull'), operations.index('verify-pulled'))
+            self.assertLess(operations.index('verify-pulled'), operations.index('backup'))
             self.assertLess(operations.index('backup'), operations.index('migration-start'))
             self.assertLess(operations.index('migration-start'), operations.index('full-start'))
             self.assertLess(operations.index('verify-backend'), operations.index('full-start'))
@@ -723,8 +733,10 @@ class TestChannelTests(unittest.TestCase):
                  patch.object(installer, 'load_state', return_value=copy.deepcopy(self.state)), \
                  patch.object(installer, 'require_checkpoint_refs'), \
                  patch.object(installer, 'run', side_effect=RuntimeError('preflight refused')):
-                with self.assertRaisesRegex(RuntimeError, 'preflight refused'):
+                with self.assertRaises(installer.PretransactionStop) as refusal:
                     installer.deploy(self.manifest)
+                self.assertIsInstance(refusal.exception.__cause__, RuntimeError)
+                self.assertEqual(str(refusal.exception.__cause__), 'preflight refused')
             self.assertFalse((channel / 'pending.json').exists())
             self.assertFalse((channel / 'last-status.json').exists())
             self.assertFalse((channel / 'state.json').exists())
