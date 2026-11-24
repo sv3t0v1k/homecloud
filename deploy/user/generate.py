@@ -79,13 +79,26 @@ def validate_answers(answers):
     require(isinstance(layout, dict), 'layout: ожидается объект')
     mode = layout.get('mode')
     require(mode in ('system-root', 'two-disk'), 'layout.mode: system-root | two-disk')
+    require(answers['http_port'] != answers['https_port'], 'http_port и https_port обязаны различаться')
     canonical_dir(layout.get('db_dir'), 'layout.db_dir')
     canonical_dir(layout.get('storage_dir'), 'layout.storage_dir')
     require(layout['db_dir'] != layout['storage_dir'], 'db_dir и storage_dir обязаны различаться')
+    storage_mount = layout.get('storage_mount')
+    require(isinstance(storage_mount, str) and storage_mount.startswith('/'),
+            'layout.storage_mount обязателен')
+    require(layout['storage_dir'].startswith(storage_mount.rstrip('/') + '/'),
+            'layout.storage_dir должен находиться внутри storage_mount')
+    require(isinstance(layout.get('storage_uuid'), str) and layout['storage_uuid'],
+            'layout.storage_uuid обязателен')
     if mode == 'two-disk':
         require(isinstance(layout.get('db_uuid'), str) and layout['db_uuid'], 'layout.db_uuid обязателен')
-        require(isinstance(layout.get('storage_uuid'), str) and layout['storage_uuid'], 'layout.storage_uuid обязателен')
-        require(layout.get('db_mount') and layout.get('storage_mount'), 'mount обязателен для two-disk')
+        db_mount = layout.get('db_mount')
+        require(isinstance(db_mount, str) and db_mount.startswith('/'), 'layout.db_mount обязателен')
+        require(layout['db_dir'].startswith(db_mount.rstrip('/') + '/'),
+                'layout.db_dir должен находиться внутри db_mount')
+    else:
+        require(isinstance(layout.get('db_uuid'), str) and layout['db_uuid'],
+                'layout.db_uuid обязателен (UUID корневого раздела)')
     return answers
 
 
@@ -191,6 +204,7 @@ def build(answers):
 
     dirs = {
         str(root / '.runtime'): (0o700, (0, 0)),
+        str(root / '.runtime' / 'docker'): (0o700, (0, 0)),
         str(db_dir): (0o700, pg),
         str(storage_dir): (0o700, be),
         str(storage_dir / '.tmp'): (0o700, be),

@@ -20,7 +20,7 @@ def answers(**over):
         'https_port': 443,
         'layout': {
             'mode': 'two-disk',
-            'db_dir': '/opt/mycloud/data/postgres',
+            'db_dir': '/srv/ssd/mycloud/postgres',
             'storage_dir': '/srv/data/mycloud/storage',
             'db_uuid': 'ssd-uuid',
             'storage_uuid': 'hdd-uuid-1',
@@ -76,7 +76,7 @@ class GenerateContractTests(unittest.TestCase):
         self.assertEqual(fields[0], 'db')
         self.assertEqual(fields[1], 'ssd-uuid')
         self.assertEqual(fields[2], '/srv/ssd')
-        self.assertEqual(fields[3], '/opt/mycloud/data/postgres')
+        self.assertEqual(fields[3], '/srv/ssd/mycloud/postgres')
         self.assertEqual(fields[4:6], ['70', '70'])
         self.assertEqual(len(fields), 6)
         backend = plan['files']['.runtime/startup-backend.gate']['content'].split()
@@ -89,6 +89,7 @@ class GenerateContractTests(unittest.TestCase):
             'mode': 'system-root',
             'db_dir': '/opt/mycloud/data/postgres',
             'storage_dir': '/srv/data/mycloud/storage',
+            'db_uuid': 'root-uuid',
             'storage_uuid': 'hdd-uuid-1',
             'storage_mount': '/srv/data'})
         fields = plan['files']['.runtime/startup-db.gate']['content'].split()
@@ -97,7 +98,7 @@ class GenerateContractTests(unittest.TestCase):
 
     def test_markers_at_data_parents(self):
         plan = self.build()
-        marker = plan['files']['/opt/mycloud/data/.homecloud-db']
+        marker = plan['files']['/srv/ssd/mycloud/.homecloud-db']
         self.assertEqual(marker['owner'], (70, 70))
         self.assertEqual(marker['mode'], 0o400)
         self.assertIn('ssd-uuid', marker['content'])
@@ -106,14 +107,14 @@ class GenerateContractTests(unittest.TestCase):
 
     def test_dirs_ownership(self):
         plan = self.build()
-        self.assertEqual(plan['dirs']['/opt/mycloud/data/postgres'], (0o700, (70, 70)))
+        self.assertEqual(plan['dirs']['/srv/ssd/mycloud/postgres'], (0o700, (70, 70)))
         self.assertEqual(plan['dirs']['/srv/data/mycloud/storage'], (0o700, (1001, 65533)))
         self.assertEqual(plan['dirs']['/opt/mycloud/.runtime'], (0o700, (0, 0)))
 
     def test_inventory_matches_layout(self):
         plan = self.build()
         inventory = json.loads(plan['files']['.runtime/host-disks.json']['content'])
-        self.assertEqual(inventory['ssd']['data'], '/opt/mycloud/data/postgres')
+        self.assertEqual(inventory['ssd']['data'], '/srv/ssd/mycloud/postgres')
         self.assertEqual(inventory['hdd']['uuid'], 'hdd-uuid-1')
         self.assertEqual(inventory['hdd']['mount'], '/srv/data')
         self.assertEqual(inventory['postgres_uid'], 70)
@@ -179,6 +180,26 @@ class GenerateRefusalTests(unittest.TestCase):
                             'db_dir': '/opt/x/db', 'storage_dir': '/srv/data/storage',
                             'db_uuid': 'ssd-uuid', 'storage_uuid': '',
                             'db_mount': '/srv/ssd', 'storage_mount': '/srv/data'})
+
+    def test_same_ports(self):
+        self.refuse(http_port=443, https_port=443)
+
+    def test_storage_dir_outside_mount(self):
+        self.refuse(layout={'mode': 'system-root',
+                            'db_dir': '/opt/x/db', 'storage_dir': '/srv/other/storage',
+                            'storage_uuid': 'u', 'storage_mount': '/srv/data'})
+
+    def test_db_dir_outside_mount(self):
+        self.refuse(layout={'mode': 'two-disk',
+                            'db_dir': '/opt/x/db', 'storage_dir': '/srv/data/storage',
+                            'db_uuid': 'ssd-uuid', 'storage_uuid': 'u',
+                            'db_mount': '/srv/ssd', 'storage_mount': '/srv/data'})
+
+    def test_system_root_requires_db_uuid(self):
+        self.refuse(layout={'mode': 'system-root',
+                            'db_dir': '/opt/x/db', 'storage_dir': '/srv/data/storage',
+                            'db_uuid': '', 'storage_uuid': 'u',
+                            'storage_mount': '/srv/data'})
 
 
 if __name__ == '__main__':
