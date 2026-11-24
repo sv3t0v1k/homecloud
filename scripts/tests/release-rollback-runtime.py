@@ -2,6 +2,7 @@
 """Disposable production-mode migration/same-artifact restart drill, no deployment .env."""
 import secrets
 import base64, os, pathlib, socket, subprocess, tempfile, time, urllib.request, urllib.error, json, uuid, hashlib
+from runtime_fixture_user import seed_fixture_user
 urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
 repo=pathlib.Path(__file__).resolve().parents[2]; backend=repo/'backend'
 def port():
@@ -40,7 +41,9 @@ try:
   run('node',cli,'migration:show','-d',ds);run('node',cli,'migration:run','-d',ds,'--transaction','all')
   run('node',str(repo/'scripts/release-gate.cjs'),'migrations');result['migrations_no_pending']=True
   proc=subprocess.Popen(['node',str(backend/'dist/main.js')],cwd=root,env=env,stdout=log,stderr=log);ready()
-  code,b=request('auth/register',data={'email':'release@example.invalid','password':'ReleasePassword938475!','name':'Release'});assert code==201
+  credentials={'email':'release@example.invalid','password':'ReleasePassword938475!','name':'Release'}
+  seed_fixture_user(name,'hc_release',credentials)
+  code,b=request('auth/login',data={k:credentials[k] for k in ('email','password')});assert code==200
   docker('exec',name,'psql','-U','postgres','-d','hc_release','-c',"UPDATE users SET \"storageQuota\"=1048576 WHERE email='release@example.invalid'")
   result['fixture_quota_provisioned']=1048576
   token=json.loads(b)['data']['accessToken'];payload=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=')

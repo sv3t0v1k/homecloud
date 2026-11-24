@@ -83,12 +83,79 @@ export function useDialogFocus(
       }
     }
 
+    // Some dialogs put their role/ref on the overlay;
+    // others put them on the inner surface.
+    const backdrop = dialog?.closest<HTMLElement>(
+      '.dialog-overlay',
+    )
+
+    let pointerStartedOnBackdrop: boolean | null = null
+
+    function rememberBackdropPointer(event: PointerEvent) {
+      pointerStartedOnBackdrop = event.target === backdrop
+    }
+
+    function cancelBackdropPointer() {
+      pointerStartedOnBackdrop = null
+    }
+
+    function closeOnBackdropClick(event: MouseEvent) {
+      const startedOnBackdrop = pointerStartedOnBackdrop
+      pointerStartedOnBackdrop = null
+
+      if (
+        event.target !== backdrop ||
+        event.button !== 0 ||
+        !activeRef.current
+      ) return
+
+      // Do not let a backdrop click reach a file row or
+      // another enclosing React click handler.
+      event.stopPropagation()
+
+      // A text selection or drag that started inside
+      // the dialog must not dismiss the window.
+      if (startedOnBackdrop === false) return
+
+      // A nested confirmation has priority.
+      if (dialogRef.current?.querySelector(
+        '[aria-modal="true"]',
+      )) return
+
+      event.preventDefault()
+
+      // Reuse the existing guarded close action.
+      // Busy account mutations and other close locks
+      // remain authoritative.
+      onCloseRef.current()
+    }
+
+    backdrop?.addEventListener(
+      'pointerdown', rememberBackdropPointer, true,
+    )
+    backdrop?.addEventListener(
+      'pointercancel', cancelBackdropPointer, true,
+    )
+    backdrop?.addEventListener(
+      'click', closeOnBackdropClick, true,
+    )
+
     document.addEventListener('focusin', keepFocusInside)
     document.addEventListener('focusout', repairLostFocus)
     document.addEventListener('keydown', handleKeyDown)
 
     return () => {
       clearTimeout(focusRepairTimer)
+      backdrop?.removeEventListener(
+        'pointerdown', rememberBackdropPointer, true,
+      )
+      backdrop?.removeEventListener(
+        'pointercancel', cancelBackdropPointer, true,
+      )
+      backdrop?.removeEventListener(
+        'click', closeOnBackdropClick, true,
+      )
+
       document.removeEventListener('focusin', keepFocusInside)
       document.removeEventListener('focusout', repairLostFocus)
       document.removeEventListener('keydown', handleKeyDown)

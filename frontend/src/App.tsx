@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, Link, Outlet, useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 
 import { safeOperationError } from './files/operationErrors'
 import { useDialogFocus } from './accessibility/useDialogFocus'
@@ -9,8 +9,15 @@ import { FileBrowserPage, UploadQueueProvider } from './files/FileBrowserPage'
 import { TrashPage } from './files/TrashPage'
 import { ProtectedRoute } from './routing/ProtectedRoute'
 import { Icon } from './ui/Icon'
+import { LiquidCloseButton } from './ui/LiquidCloseButton'
 import { AccountDialog } from './account/AccountDialog'
+import { QuotaBadge } from './account/QuotaBadge'
+import { InitialsAvatar } from './ui/InitialsAvatar'
 import { PublicSharePage } from './sharing/PublicSharePage'
+import { GlobalSearchPage } from './files/GlobalSearchPage'
+import { SearchSessionProvider } from './files/useGlobalSearch'
+import { HolidayDecorAuto, HolidayLogoDecorAuto } from './holidays/HolidayDecor'
+import { HolidayPreviewPage } from './holidays/HolidayPreviewPage'
 
 function App() {
   return (
@@ -19,38 +26,85 @@ function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/share/:token" element={<PublicSharePage />} />
         <Route element={<ProtectedRoute />}>
-          <Route path="/files" element={<FileBrowserLayout />} />
-          <Route path="/files/folders/:folderId" element={<FileBrowserLayout />} />
-          <Route path="/files/trash" element={<FileBrowserLayout trash />} />
+          <Route path="/files" element={<FileBrowserLayout />}>
+            <Route index element={<DirectoryRoute />} />
+            <Route path="folders/:folderId" element={<DirectoryRoute />} />
+            <Route path="trash" element={<DirectoryRoute />} />
+            <Route path="search" element={<GlobalSearchPage />} />
+            <Route path="preview/holidays" element={<HolidayPreviewPage />} />
+          </Route>
         </Route>
         <Route path="/" element={<Navigate to="/files" replace />} />
-        <Route path="*" element={<div className="empty-state"><h2>Страница не найдена</h2><Link to="/files">К моим файлам</Link></div>} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </div>
   )
 }
 
-function FileBrowserLayout({ trash = false }: { trash?: boolean }) {
+function NotFoundPage() {
+  return (
+    <div className="not-found-page">
+      <div className="empty-state">
+        <Icon name="cloud" />
+        <h2>Страница не найдена</h2>
+        <p>Такого адреса в HomeCloud нет. Возможно, ссылка устарела.</p>
+        <Link className="text-link" to="/files">К моим файлам</Link>
+      </div>
+    </div>
+  )
+}
+
+function DirectoryRoute() {
+  const { revision } = useOutletContext<{ revision: number }>()
+  return <FileBrowserPage revision={revision} />
+}
+
+function useOffline(): boolean {
+  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine)
+  useEffect(() => {
+    const goOffline = () => setOffline(true)
+    const goOnline = () => setOffline(false)
+    window.addEventListener('offline', goOffline)
+    window.addEventListener('online', goOnline)
+    return () => {
+      window.removeEventListener('offline', goOffline)
+      window.removeEventListener('online', goOnline)
+    }
+  }, [])
+  return offline
+}
+
+function FileBrowserLayout() {
   const session = useSession()
   const navigate = useNavigate()
+  const location = useLocation()
+  const trash = location.pathname === '/files/trash'
   const [accountOpen, setAccountOpen] = useState(false)
   const [trashOpen, setTrashOpen] = useState(trash)
   const [revision, setRevision] = useState(0)
   const backgroundRef = useRef<HTMLDivElement>(null)
+  const offline = useOffline()
   useEffect(() => { if (trash) setTrashOpen(true) }, [trash])
   function closeTrash() { setTrashOpen(false); setRevision((value) => value + 1); if (trash) navigate('/files', { replace: true }) }
-  return <UploadQueueProvider key={session.user?.id ?? 0} ownerId={session.user?.id ?? 0}>
+  return <SearchSessionProvider key={session.user?.id ?? 0} ownerId={session.user?.id ?? 0}><UploadQueueProvider ownerId={session.user?.id ?? 0}>
     <div className="app-shell ux-v2">
+      {offline ? (
+        <div className="offline-banner" role="status">
+          <Icon name="warning" />
+          <span>Нет соединения. Новые действия могут завершиться ошибкой — проверьте сеть.</span>
+        </div>
+      ) : null}
       <div className="app-frame" ref={backgroundRef}>
         <a className="skip-link" href="#workspace">Перейти к содержимому</a>
         <Navbar onOpenAccount={() => setAccountOpen(true)} />
-        <main className="workspace" id="workspace" tabIndex={-1}><FileBrowserPage revision={revision} /></main>
+        <main className="workspace" id="workspace" tabIndex={-1}><Outlet context={{ revision }} /></main>
         <button aria-label="Открыть корзину" className="trash-launcher" onClick={(event) => { event.currentTarget.focus(); setTrashOpen(true) }} type="button"><Icon name="trash" height={25} width={25} /><span aria-hidden="true" className="trash-launcher-tooltip">Корзина</span></button>
       </div>
       {trashOpen ? <TrashDialog background={backgroundRef.current} onClose={closeTrash} /> : null}
       {accountOpen ? <AccountDialog onClose={() => setAccountOpen(false)} /> : null}
+      <HolidayDecorAuto />
     </div>
-  </UploadQueueProvider>
+  </UploadQueueProvider></SearchSessionProvider>
 }
 
 function TrashDialog({ background, onClose }: { background: HTMLElement | null; onClose(): void }) {
@@ -64,15 +118,92 @@ function TrashDialog({ background, onClose }: { background: HTMLElement | null; 
     return () => { if (background) background.inert = inert; document.body.style.overflow = overflow }
   }, [background])
   return <div className="dialog-overlay"><div aria-label="Корзина" aria-modal="true" className="dialog-surface trash-dialog" ref={ref} role="dialog" tabIndex={-1}>
-    <div className="dialog-header"><h2>Удалённые объекты</h2><button aria-label="Закрыть корзину" className="icon-button" onClick={onClose} type="button"><Icon name="close" /></button></div>
-    <TrashPage onConfirmationChange={setConfirming} />
+    <div className="dialog-header"><h2 id="trash-dialog-heading">Корзина</h2><LiquidCloseButton aria-label="Закрыть корзину" onClick={onClose} /></div>
+    <TrashPage embedded onConfirmationChange={setConfirming} />
   </div></div>
 }
 
 function Navbar({ onOpenAccount }: { onOpenAccount(): void }) {
   const session = useSession()
+  const location = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
+
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchLauncher = useRef<HTMLButtonElement>(null)
+  const searchPanel = useRef<HTMLDivElement>(null)
+
+  function closeSearch(restoreFocus = true) {
+    setSearchOpen(false)
+    if (restoreFocus) searchLauncher.current?.focus()
+  }
+
+  function openSearch() {
+    // Preserve compatibility with existing saved search URLs.
+    if (location.pathname === '/files/search') {
+      document.getElementById('global-search-query')?.focus()
+      return
+    }
+    setSearchOpen(true)
+  }
+
+  useEffect(() => {
+    setSearchOpen(false)
+  }, [location.key])
+
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      const target = event.target
+      if (event.defaultPrevented || event.altKey ||
+        !(event.ctrlKey || event.metaKey) ||
+        event.key.toLowerCase() !== 'k' ||
+        (target instanceof HTMLElement &&
+          target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) ||
+        document.querySelector('[aria-modal="true"]')) return
+
+      event.preventDefault()
+
+      if (location.pathname === '/files/search') {
+        document.getElementById('global-search-query')?.focus()
+      } else {
+        setSearchOpen(true)
+      }
+    }
+
+    window.addEventListener('keydown', shortcut)
+    return () => window.removeEventListener('keydown', shortcut)
+  }, [location.pathname])
+
+  useEffect(() => {
+    if (!searchOpen) return
+
+    function outside(event: PointerEvent) {
+      if (document.querySelector('[aria-modal="true"]')) return
+      if (!(event.target instanceof Node)) return
+
+      if (!searchPanel.current?.contains(event.target) &&
+          !searchLauncher.current?.contains(event.target)) {
+        setSearchOpen(false)
+      }
+    }
+
+    function escape(event: KeyboardEvent) {
+      if (event.key !== 'Escape' || event.defaultPrevented ||
+          document.querySelector('[aria-modal="true"]')) return
+
+      event.preventDefault()
+      setSearchOpen(false)
+      searchLauncher.current?.focus()
+    }
+
+    document.addEventListener('pointerdown', outside)
+    window.addEventListener('keydown', escape)
+
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      window.removeEventListener('keydown', escape)
+    }
+  }, [searchOpen])
 
   async function handleLogout() {
     if (loggingOut) return
@@ -90,15 +221,68 @@ function Navbar({ onOpenAccount }: { onOpenAccount(): void }) {
   }
 
   return (
+    <>
     <header className="topbar">
-      <Link className="brand" to="/files"><span className="brand-mark"><Icon name="cloud" /></span><span>HomeCloud</span></Link>
+      <Link className="brand" to="/files"><span className="brand-mark"><Icon name="cloud" /><HolidayLogoDecorAuto /></span><span>HomeCloud</span></Link>
+      <div className="spotlight-launcher-slot">
+        <button
+          className="global-search-launcher button button--ghost"
+          aria-label="Поиск во всех файлах"
+          aria-keyshortcuts="Control+k Meta+k"
+          aria-expanded={searchOpen}
+          aria-controls={searchOpen ? 'homecloud-spotlight' : undefined}
+          ref={searchLauncher}
+          onClick={() => searchOpen ? closeSearch() : openSearch()}
+          type="button"
+        >
+          <Icon name="search" />
+          <span className="spotlight-launcher-label">Поиск</span>
+        </button>
+      </div>
       <div className="account-area">
-        {session.status === 'authenticated' ? <button aria-label={`Открыть аккаунт: ${session.user.name}`} className="button button--ghost" onClick={(event) => { event.currentTarget.focus(); onOpenAccount() }} type="button"><Icon name="user" /><span>{session.user.name}</span></button> : null}
+        {session.status === 'authenticated' ? <QuotaBadge /> : null}
+        {session.status === 'authenticated' ? (
+          <button
+            aria-label={`Открыть аккаунт: ${session.user.name}`}
+            className="button button--ghost liquid-topbar-button liquid-topbar-account"
+            onClick={(event) => {
+              event.currentTarget.focus()
+              onOpenAccount()
+            }}
+            type="button"
+          >
+            <InitialsAvatar name={session.user.name || session.user.email} />
+            <span className="liquid-topbar-label">
+              {session.user.name}
+            </span>
+          </button>
+        ) : null}
         {logoutError ? <span className="inline-alert" role="alert">{logoutError}</span> : null}
 
-        <button className="button button--ghost" disabled={loggingOut} onClick={() => void handleLogout()} type="button">{loggingOut ? 'Выходим…' : 'Выйти'}</button>
+        <button
+          className="button button--ghost liquid-topbar-button liquid-topbar-logout"
+          aria-label={loggingOut ? 'Выходим…' : 'Выйти'}
+          disabled={loggingOut}
+          onClick={() => void handleLogout()}
+          type="button"
+        >
+          <Icon name="logout" />
+          <span className="liquid-topbar-label">
+            {loggingOut ? 'Выходим…' : 'Выйти'}
+          </span>
+        </button>
       </div>
     </header>
+    {searchOpen ? (
+      <div
+        className="spotlight-panel"
+        id="homecloud-spotlight"
+        ref={searchPanel}
+      >
+        <GlobalSearchPage onClose={() => closeSearch()} />
+      </div>
+    ) : null}
+    </>
   )
 }
 

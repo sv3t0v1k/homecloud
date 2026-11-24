@@ -1,0 +1,1447 @@
+
+
+/* UI foundation: liquid trash */
+
+/* Floating neutral glass capsule. */
+.ux-v2 .trash-launcher {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  padding: 0 15px;
+  gap: 0;
+
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+
+  background: var(--surface-elevated);
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.14),
+    rgba(255,255,255,.025) 55%,
+    rgba(0,0,0,.06)
+  );
+
+  color: var(--text-secondary);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.22),
+    inset 0 -2px 4px rgba(0,0,0,.08),
+    0 5px 18px rgba(0,0,0,.20);
+
+  overflow: hidden;
+  white-space: nowrap;
+  transform: none;
+
+  transition:
+    width 450ms cubic-bezier(.4,0,.3,1),
+    gap 450ms cubic-bezier(.4,0,.3,1),
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.ux-v2 .trash-launcher > svg {
+  width: 25px;
+  height: 25px;
+  flex-shrink: 0;
+}
+
+/* The old tooltip becomes an integrated label. */
+.ux-v2 .trash-launcher > .trash-launcher-tooltip {
+  position: static;
+  display: block;
+
+  min-width: 0;
+  max-width: 0;
+
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+
+  color: inherit;
+  font-size: 13px;
+  font-weight: 650;
+
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transform: none;
+
+  transition:
+    max-width 450ms cubic-bezier(.4,0,.3,1),
+    opacity 350ms ease;
+}
+
+/* No old upward hover movement. */
+.ux-v2 .trash-launcher:hover,
+.ux-v2 .trash-launcher:focus-visible {
+  transform: none;
+  color: var(--text-primary);
+
+  border-color: color-mix(
+    in srgb, var(--border-strong) 70%, white
+  );
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ux-v2 .trash-launcher:hover,
+  .ux-v2 .trash-launcher:focus-visible {
+    width: 152px;
+    gap: 10px;
+  }
+
+  .ux-v2 .trash-launcher:hover > .trash-launcher-tooltip,
+  .ux-v2 .trash-launcher:focus-visible > .trash-launcher-tooltip {
+    max-width: 95px;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Actual backdrop blur only on the floating button. */
+@supports (
+  (backdrop-filter: blur(24px)) or
+  (-webkit-backdrop-filter: blur(24px))
+) {
+  .ux-v2 .trash-launcher {
+    background-color: color-mix(
+      in srgb, var(--surface-elevated) 78%, transparent
+    );
+
+    -webkit-backdrop-filter:
+      blur(24px) saturate(145%);
+
+    backdrop-filter:
+      blur(24px) saturate(145%);
+  }
+}
+
+/* Main trash dialog: same material, stable geometry.
+   Keep the original overlay blur and focus handling. */
+.ux-v2 .trash-dialog {
+  border-radius: 28px;
+
+  background-color: var(--surface-elevated);
+  background-color: color-mix(
+    in srgb, var(--surface-elevated) 90%, transparent
+  );
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005) 65%
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 24px 72px rgba(0,0,0,.35);
+
+  /* No transform or additional backdrop filter here:
+     nested deletion confirmation remains fixed. */
+}
+
+.ux-v2 .trash-dialog > .dialog-header {
+  align-items: center;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ux-v2 .trash-dialog > .dialog-header > .icon-button {
+  box-sizing: border-box;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 999px;
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(255,255,255,.09),
+    transparent
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.12);
+}
+
+/* Restore and delete actions retain their semantic colors. */
+.ux-v2 .trash-page .trash-actions > .button,
+.ux-v2 .trash-page .page-header > .button {
+  border-radius: 999px;
+}
+
+.ux-v2 .trash-page .trash-card {
+  border-radius: 14px;
+  padding-inline: 12px;
+
+  transition:
+    background-color 150ms ease;
+}
+
+.ux-v2 .trash-page .trash-card:hover,
+.ux-v2 .trash-page .trash-card:focus-within {
+  background-color: var(--surface-primary);
+}
+
+.ux-v2 .trash-page .trash-card > .item-icon {
+  border-radius: 12px;
+}
+
+/* Keep the destructive confirmation in the same family. */
+.ux-v2 .trash-page > .dialog-overlay > .dialog-surface {
+  border-radius: 24px;
+  background: var(--surface-elevated);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.16),
+    var(--elevation-modal);
+}
+
+.ux-v2 .trash-page > .dialog-overlay
+.dialog-actions > .button {
+  border-radius: 999px;
+}
+
+/* Soft entrance, no scale or directional movement. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .dialog-overlay:has(> .trash-dialog) {
+    animation: homecloud-trash-backdrop-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .ux-v2 .trash-dialog {
+    animation: homecloud-trash-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-trash-backdrop-appear {
+    from {
+      background-color: transparent;
+      backdrop-filter: blur(0px);
+    }
+
+    to {
+      background-color: var(--overlay);
+      backdrop-filter: blur(5px);
+    }
+  }
+
+  @keyframes homecloud-trash-appear {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .trash-dialog {
+    border-radius: 22px;
+  }
+
+  .ux-v2 .trash-page .trash-card {
+    padding-inline: 8px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ux-v2 .trash-launcher,
+  .ux-v2 .trash-dialog {
+    background-color: var(--surface-elevated);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .trash-launcher,
+  .ux-v2 .trash-launcher > .trash-launcher-tooltip,
+  .ux-v2 .trash-page .trash-card {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: compact liquid trash */
+
+.ux-v2 .trash-dialog {
+  padding: clamp(20px, 3vw, 32px);
+}
+
+.ux-v2 .trash-dialog > .dialog-header {
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+}
+
+.ux-v2 .trash-dialog > .dialog-header h2 {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -.035em;
+}
+
+.ux-v2 .trash-dialog .trash-page > .page-header {
+  align-items: center;
+  margin-bottom: 20px;
+  gap: 16px;
+}
+
+.ux-v2 .trash-dialog .page-header .page-description {
+  margin: 0;
+  max-width: 48ch;
+  line-height: 1.65;
+  font-size: 12px;
+}
+
+/* Calm, frameless empty state. */
+.ux-v2 .trash-dialog .trash-page > .empty-state {
+  border: 0;
+  background: transparent;
+  padding: 24px 12px 36px;
+}
+
+.ux-v2 .trash-dialog
+.trash-page > .empty-state > svg {
+  box-sizing: border-box;
+  display: block;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 20px;
+  padding: 17px;
+
+  border-radius: 999px;
+
+  background: var(--accent-soft);
+
+  background-image: linear-gradient(
+    150deg,
+    rgba(159,190,99,.12),
+    rgba(159,190,99,.015)
+  );
+
+  border: 1px solid var(--accent-muted);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.13),
+    0 5px 16px rgba(0,0,0,.10);
+}
+
+.ux-v2 .trash-dialog
+.trash-page > .empty-state > h3 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+  margin: 0 0 8px;
+}
+
+.ux-v2 .trash-dialog
+.trash-page > .empty-state > p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+/* Empty/loading/error states need less horizontal space.
+   The populated list retains the original 960px maximum. */
+@supports selector(:has(*)) {
+  .ux-v2 .trash-dialog:not(:has(.trash-list)) {
+    max-width: 560px;
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .trash-dialog {
+    padding: 20px;
+  }
+
+  .ux-v2 .trash-dialog > .dialog-header h2 {
+    font-size: 23px;
+  }
+
+  .ux-v2 .trash-dialog .trash-page > .empty-state {
+    padding: 20px 8px 28px;
+  }
+
+  .ux-v2 .trash-dialog .trash-page > .page-header {
+    align-items: stretch;
+  }
+}
+
+
+/* UI foundation: liquid close button */
+
+.ux-v2 .trash-dialog > .dialog-header
+> .liquid-close-button {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
+  padding: 0 12px;
+  gap: 0;
+
+  border-radius: var(--liquid-close-radius);
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+
+  background: var(--surface-primary);
+  background-image: var(--liquid-close-glass);
+
+  border: 1px solid var(--border-subtle);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10),
+    0 2px 8px rgba(0,0,0,.08);
+
+  transition:
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    box-shadow var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
+}
+
+.ux-v2 .liquid-close-button > svg {
+  width: var(--liquid-close-icon-size);
+  height: var(--liquid-close-icon-size);
+  flex-shrink: 0;
+}
+
+.ux-v2 .liquid-close-label {
+  display: block;
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+
+  transition:
+    max-width var(--liquid-close-expand-motion),
+    opacity var(--liquid-close-fade-motion);
+}
+
+/* Reserve space so the title never moves. */
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .ux-v2 .trash-dialog > .dialog-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 128px;
+    align-items: center;
+  }
+
+  .ux-v2 .trash-dialog > .dialog-header
+  > .liquid-close-button {
+    justify-self: end;
+  }
+
+  .ux-v2 .trash-dialog > .dialog-header
+  > .liquid-close-button:is(:hover, :focus-visible) {
+    width: var(--liquid-close-expanded-width);
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: var(--liquid-close-hover-border);
+
+    box-shadow:
+      inset 0 1px 2px rgba(255,255,255,.22),
+      0 3px 14px rgba(0,0,0,.14);
+  }
+
+  .ux-v2 .liquid-close-button:is(
+    :hover, :focus-visible
+  ) > .liquid-close-label {
+    max-width: var(--liquid-close-label-width);
+    opacity: 1;
+  }
+}
+
+.ux-v2 .liquid-close-button:active {
+  background-color: var(--surface-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .trash-dialog > .dialog-header
+  > .liquid-close-button,
+  .ux-v2 .liquid-close-label {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid preview */
+
+.ux-v2 .preview-dialog {
+  max-width: 1160px;
+  padding: clamp(18px, 3vw, 28px);
+  border-radius: 28px;
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005) 65%
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 24px 72px rgba(0,0,0,.35);
+}
+
+.ux-v2 .preview-dialog > .dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.ux-v2 .preview-dialog .preview-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+  line-height: 1.5;
+}
+
+.ux-v2 .preview-dialog > .dialog-header
+> .liquid-close-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+
+  box-sizing: border-box;
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
+
+  padding: 0 12px;
+  gap: 0;
+
+  border-radius: var(--liquid-close-radius);
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: var(--liquid-close-glass);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10);
+
+  white-space: nowrap;
+  overflow: hidden;
+
+  transition:
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .ux-v2 .preview-dialog > .dialog-header {
+    grid-template-columns: minmax(0, 1fr) 128px;
+  }
+
+  .ux-v2 .preview-dialog > .dialog-header
+  > .liquid-close-button:is(:hover, :focus-visible) {
+    width: var(--liquid-close-expanded-width);
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: var(--liquid-close-hover-border);
+  }
+}
+
+.ux-v2 .preview-dialog .preview-content {
+  min-width: 0;
+  min-height: 160px;
+  padding: 0;
+}
+
+.ux-v2 .preview-dialog .preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 75dvh;
+
+  object-fit: contain;
+  border-radius: 12px;
+}
+
+.ux-v2 .preview-dialog .preview-text {
+  border-radius: 16px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .preview-overlay {
+    animation: homecloud-preview-backdrop
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .ux-v2 .preview-dialog {
+    animation: homecloud-preview-surface
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-preview-backdrop {
+    from {
+      background-color: transparent;
+      backdrop-filter: blur(0px);
+    }
+
+    to {
+      background-color: var(--overlay);
+      backdrop-filter: blur(5px);
+    }
+  }
+
+  @keyframes homecloud-preview-surface {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .preview-dialog {
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .ux-v2 .preview-dialog .preview-title {
+    font-size: 14px;
+  }
+
+  .ux-v2 .preview-dialog .preview-image {
+    max-height: 70dvh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .preview-dialog > .dialog-header
+  > .liquid-close-button {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: soft liquid preview */
+
+/* Reserve the photograph's viewing area before it loads.
+   Keep text documents at their natural content size. */
+.ux-v2 .preview-dialog[data-preview-image="true"]
+.preview-content {
+  height: min(64dvh, 720px);
+  min-height: 0;
+}
+
+.ux-v2 .preview-dialog[data-preview-image="true"]
+.preview-image {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* A gentle reveal inside the already stable preview.
+   No geometry change, zoom or flying copy. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .preview-dialog .preview-image {
+    animation: homecloud-preview-image-reveal
+      450ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-preview-image-reveal {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .preview-dialog[data-preview-image="true"]
+  .preview-content {
+    height: min(60dvh, 620px);
+  }
+}
+
+
+/* UI foundation: liquid preview loader */
+
+.ux-v2 .preview-dialog .preview-content {
+  position: relative;
+}
+
+.ux-v2 .preview-dialog .preview-loader {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+
+  padding: 24px 16px;
+  text-align: center;
+}
+
+/* Neutral glass with a soft green light. */
+.ux-v2 .preview-loader-orbit {
+  position: relative;
+  isolation: isolate;
+
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--accent-muted);
+
+  background: radial-gradient(
+    circle at 35% 25%,
+    rgba(159,190,99,.17),
+    rgba(159,190,99,.035) 75%
+  );
+
+  color: var(--accent);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.13),
+    0 0 28px rgba(159,190,99,.06);
+}
+
+/* Moving light, not a spinning cloud. */
+.ux-v2 .preview-loader-orbit::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+
+  box-sizing: border-box;
+  border-radius: inherit;
+
+  border: 2px solid transparent;
+
+  border-top-color: var(--success);
+  border-right-color: var(--accent-muted);
+
+  pointer-events: none;
+}
+
+.ux-v2 .preview-loader-orbit > svg {
+  width: 32px;
+  height: 32px;
+}
+
+.ux-v2 .preview-loader-label {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* Do not let an undecoded image affect the layout. */
+.ux-v2 .preview-dialog
+.preview-image[data-image-pending="true"] {
+  position: absolute;
+  opacity: 0;
+  animation: none;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .preview-loader-orbit::before {
+    animation: homecloud-preview-orbit 1800ms linear infinite;
+  }
+
+  .ux-v2 .preview-loader {
+    animation: homecloud-loader-appear
+      350ms cubic-bezier(.4,0,.3,1);
+  }
+
+  @keyframes homecloud-preview-orbit {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes homecloud-loader-appear {
+    from { opacity: .6; }
+    to { opacity: 1; }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .preview-loader-orbit::before {
+    animation: none;
+  }
+}
+
+
+/* UI foundation: liquid operation dialogs */
+
+/* Compact, neutral glass surface. */
+.ux-v2 .liquid-operation-dialog {
+  max-width: 520px;
+  padding: clamp(20px, 3vw, 28px);
+  border-radius: 28px;
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005) 65%
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 24px 72px rgba(0,0,0,.35);
+}
+
+.ux-v2 .liquid-operation-dialog > .dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 12px;
+
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ux-v2 .liquid-operation-dialog
+> .dialog-header > h3 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.035em;
+  line-height: 1.35;
+}
+
+/* Reuse the approved Liquid Close label behavior. */
+.ux-v2 .liquid-operation-dialog
+> .dialog-header > .liquid-close-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+
+  box-sizing: border-box;
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
+  padding: 0 10px;
+  gap: 0;
+
+  border-radius: var(--liquid-close-radius);
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: var(--liquid-close-glass);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10);
+
+  overflow: hidden;
+  white-space: nowrap;
+
+  transition:
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .ux-v2 .liquid-operation-dialog > .dialog-header {
+    grid-template-columns: minmax(0, 1fr) 128px;
+  }
+
+  .ux-v2 .liquid-operation-dialog
+  > .dialog-header
+  > .liquid-close-button:is(:hover, :focus-visible) {
+    width: var(--liquid-close-expanded-width);
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: var(--liquid-close-hover-border);
+  }
+}
+
+/* Calm typography and clean input surfaces. */
+.ux-v2 .liquid-operation-dialog .field {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.ux-v2 .liquid-operation-dialog .input {
+  min-height: 50px;
+  padding-inline: 14px;
+
+  border-radius: 14px;
+  background-color: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 3px rgba(0,0,0,.10);
+
+  transition:
+    border-color 200ms ease,
+    box-shadow 250ms ease;
+}
+
+.ux-v2 .liquid-operation-dialog .input:focus {
+  border-color: var(--accent);
+
+  box-shadow:
+    0 0 0 3px var(--accent-soft);
+}
+
+.ux-v2 .liquid-operation-dialog .dialog-item-name {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Rounded actions, preserving semantic colors. */
+.ux-v2 .liquid-operation-dialog .dialog-actions {
+  margin-top: 24px;
+  gap: 10px;
+}
+
+.ux-v2 .liquid-operation-dialog
+.dialog-actions > .button {
+  min-height: 44px;
+  border-radius: 999px;
+  padding-inline: 18px;
+}
+
+.ux-v2 .liquid-operation-dialog
+.dialog-actions > .button--primary {
+  background-image: linear-gradient(
+    160deg,
+    rgba(255,255,255,.28),
+    rgba(255,255,255,.04) 55%,
+    rgba(0,0,0,.06)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.30),
+    0 3px 10px rgba(0,0,0,.10);
+}
+
+.ux-v2 .liquid-operation-dialog
+.dialog-actions > .button--ghost {
+  border-color: var(--border-subtle);
+}
+
+/* The same opening rhythm as the approved trash dialog. */
+@media (prefers-reduced-motion: no-preference) {
+  .ux-v2 .liquid-operation-overlay {
+    animation: homecloud-trash-backdrop-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .ux-v2 .liquid-operation-dialog {
+    animation: homecloud-trash-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .liquid-operation-dialog {
+    padding: 20px;
+    border-radius: 22px;
+  }
+
+  .ux-v2 .liquid-operation-dialog .input {
+    font-size: 16px;
+  }
+
+  .ux-v2 .liquid-operation-dialog
+  .dialog-actions > .button {
+    flex: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-v2 .liquid-operation-dialog
+  > .dialog-header > .liquid-close-button,
+  .ux-v2 .liquid-operation-dialog .input {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid share and account */
+
+.liquid-settings-dialog {
+  padding: clamp(20px, 3vw, 28px);
+  border-radius: 28px;
+
+  background: var(--surface-elevated);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.055),
+    rgba(255,255,255,.005) 65%
+  );
+
+  border: 1px solid var(--border-strong);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.18),
+    0 24px 72px rgba(0,0,0,.35);
+}
+
+.liquid-settings-dialog.share-dialog {
+  max-width: 720px;
+}
+
+.liquid-settings-dialog.account-dialog {
+  max-width: 640px;
+}
+
+.liquid-settings-dialog > .dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: start;
+  gap: 12px;
+
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.liquid-settings-dialog > .dialog-header > div {
+  min-width: 0;
+}
+
+.liquid-settings-dialog > .dialog-header h2,
+.liquid-settings-dialog > .dialog-header h3 {
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -.035em;
+}
+
+.liquid-settings-dialog > .dialog-header
+.page-description {
+  margin: 10px 0 0;
+  line-height: 1.65;
+}
+
+/* Compact, expanding close control. */
+.liquid-settings-dialog > .dialog-header
+> .liquid-close-button {
+  box-sizing: border-box;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+
+  width: var(--liquid-close-size);
+  min-width: var(--liquid-close-size);
+  height: var(--liquid-close-size);
+  padding: 0 10px;
+  gap: 0;
+
+  border-radius: var(--liquid-close-radius);
+  border: 1px solid var(--border-subtle);
+
+  background: var(--surface-primary);
+
+  background-image: var(--liquid-close-glass);
+
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,.10);
+
+  white-space: nowrap;
+  overflow: hidden;
+
+  transition:
+    width var(--liquid-close-expand-motion),
+    gap var(--liquid-close-expand-motion),
+    border-color var(--liquid-close-fade-motion),
+    background-color var(--liquid-close-fade-motion);
+}
+
+.liquid-settings-dialog .liquid-close-button > svg {
+  width: var(--liquid-close-icon-size);
+  height: var(--liquid-close-icon-size);
+  flex-shrink: 0;
+}
+
+.liquid-settings-dialog .liquid-close-label {
+  display: block;
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+
+  transition:
+    max-width var(--liquid-close-expand-motion),
+    opacity var(--liquid-close-fade-motion);
+}
+
+@media (hover: hover) and (pointer: fine)
+and (min-width: 601px) {
+  .liquid-settings-dialog > .dialog-header {
+    grid-template-columns: minmax(0, 1fr) 128px;
+  }
+
+  .liquid-settings-dialog > .dialog-header
+  > .liquid-close-button:not(:disabled):is(
+    :hover, :focus-visible
+  ) {
+    width: var(--liquid-close-expanded-width);
+    gap: 8px;
+
+    background-color: var(--surface-elevated);
+
+    border-color: var(--liquid-close-hover-border);
+  }
+
+  .liquid-settings-dialog
+  .liquid-close-button:not(:disabled):is(
+    :hover, :focus-visible
+  ) > .liquid-close-label {
+    max-width: var(--liquid-close-label-width);
+    opacity: 1;
+  }
+}
+
+/* Form controls share the operation-dialog language. */
+.liquid-settings-dialog .input {
+  min-height: 48px;
+  border-radius: 14px;
+  padding-inline: 14px;
+  background-color: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 3px rgba(0,0,0,.10);
+
+  transition:
+    border-color 200ms ease,
+    box-shadow 250ms ease;
+}
+
+.liquid-settings-dialog .input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.liquid-settings-dialog .button {
+  border-radius: 999px;
+}
+
+.liquid-settings-dialog .button--primary {
+  background-image: linear-gradient(
+    160deg,
+    rgba(255,255,255,.28),
+    rgba(255,255,255,.04) 55%,
+    rgba(0,0,0,.06)
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.30),
+    0 3px 10px rgba(0,0,0,.10);
+}
+
+/* Share links: separate calm, readable glass cards. */
+.liquid-settings-dialog .share-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.055);
+}
+
+.liquid-settings-dialog .share-list {
+  gap: 12px;
+}
+
+.liquid-settings-dialog .share-links .empty-state {
+  padding: 24px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  background: var(--surface-primary);
+}
+
+.liquid-settings-dialog .share-create {
+  min-height: 48px;
+}
+
+.liquid-settings-dialog .share-actions > .button {
+  min-height: 40px;
+}
+
+/* Account: separate profile, quota, updates and security. */
+.liquid-settings-dialog.account-dialog .dialog-body {
+  gap: 14px;
+}
+
+.liquid-settings-dialog.account-dialog .account-section {
+  min-width: 0;
+  padding: 20px;
+
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+
+  background: var(--surface-primary);
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.045);
+}
+
+.liquid-settings-dialog.account-dialog .account-section h3 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+}
+
+.liquid-settings-dialog.account-dialog .account-identity {
+  gap: 14px;
+}
+
+.liquid-settings-dialog.account-dialog .avatar {
+  width: 48px;
+  height: 48px;
+
+  background: var(--accent-soft);
+  color: var(--accent);
+
+  border: 1px solid var(--accent-muted);
+}
+
+.liquid-settings-dialog.account-dialog
+.upload-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+}
+
+/* Reuse the already approved 750ms entrance. */
+@media (prefers-reduced-motion: no-preference) {
+  .liquid-settings-overlay {
+    animation: homecloud-trash-backdrop-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+
+  .liquid-settings-dialog {
+    animation: homecloud-trash-appear
+      750ms cubic-bezier(.4,0,.3,1);
+  }
+}
+
+@media (max-width: 600px) {
+  .liquid-settings-dialog {
+    padding: 20px;
+    border-radius: 22px;
+  }
+
+  .liquid-settings-dialog > .dialog-header h2,
+  .liquid-settings-dialog > .dialog-header h3 {
+    font-size: 20px;
+  }
+
+  .liquid-settings-dialog .input {
+    font-size: 16px;
+  }
+
+  .liquid-settings-dialog.account-dialog
+  .account-section {
+    padding: 16px;
+  }
+
+  .liquid-settings-dialog .share-actions > .button {
+    flex: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-settings-dialog > .dialog-header
+  > .liquid-close-button,
+  .liquid-settings-dialog .liquid-close-label,
+  .liquid-settings-dialog .input {
+    transition: none;
+  }
+}
+
+
+/* UI foundation: liquid share target */
+
+.liquid-settings-dialog.share-dialog
+> .dialog-header {
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.liquid-settings-dialog.share-dialog
+> .dialog-header h3 {
+  font-size: 26px;
+}
+
+.liquid-settings-dialog.share-dialog
+.dialog-body {
+  gap: 18px;
+}
+
+/* A compact glass card for the actual selected object. */
+.liquid-settings-dialog .share-target-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+
+  min-width: 0;
+  padding: 12px;
+
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+
+  background: var(--surface-primary);
+
+  background-image: linear-gradient(
+    155deg,
+    rgba(255,255,255,.035),
+    transparent 65%
+  );
+
+  box-shadow:
+    inset 0 1px 1px rgba(255,255,255,.06);
+}
+
+.liquid-settings-dialog .share-target-card
+> .file-thumbnail,
+.liquid-settings-dialog .share-target-icon {
+  box-sizing: border-box;
+
+  display: grid;
+  place-items: center;
+
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+
+  margin: 0;
+  flex: 0 0 56px;
+
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.liquid-settings-dialog .share-target-card
+.file-thumbnail-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.liquid-settings-dialog .share-target-icon {
+  color: var(--text-secondary);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.liquid-settings-dialog .share-target-icon.is-folder {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-muted);
+}
+
+.liquid-settings-dialog .share-target-icon > svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* The full name remains in the DOM and in the tooltip.
+   Long names cannot stretch the dialog. */
+.liquid-settings-dialog .share-target-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.liquid-settings-dialog .share-target-name {
+  display: block;
+  min-width: 0;
+
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.liquid-settings-dialog .share-target-type {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.liquid-settings-dialog .share-policy-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+@media (max-width: 600px) {
+  .liquid-settings-dialog.share-dialog
+  > .dialog-header h3 {
+    font-size: 23px;
+  }
+
+  .liquid-settings-dialog .share-target-card {
+    gap: 12px;
+    padding: 10px;
+  }
+
+  .liquid-settings-dialog .share-target-card
+  > .file-thumbnail,
+  .liquid-settings-dialog .share-target-icon {
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    flex-basis: 48px;
+  }
+
+  /* Touch users can read the complete filename. */
+  .liquid-settings-dialog .share-target-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

@@ -1,23 +1,63 @@
+import { useEffect } from 'react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AccountDialog } from './AccountDialog'
-import { changePassword, getStorageInfo, updateProfile } from './api'
-const session = vi.hoisted(() => ({ user: { name: 'Алексей', email: 'alex@example.invalid', avatar: null as string | null }, endSession: vi.fn(), updateUser: vi.fn() }))
+import { changePassword, getAdminUsers, getStorageInfo, updateProfile } from './api'
+const session = vi.hoisted(() => ({ user: { id: 7, name: 'Алексей', email: 'alex@example.invalid', role: 'USER' as 'ADMIN' | 'USER', avatar: null as string | null }, endSession: vi.fn(), updateUser: vi.fn() }))
+const updatesAccess = vi.hoisted(() => ({ admin: false }))
 vi.mock('../auth/SessionContext', () => ({ useSession: () => session }))
-vi.mock('./api', () => ({ changePassword: vi.fn(), getStorageInfo: vi.fn(), updateProfile: vi.fn() }))
-vi.mock('./UpdatesSection', () => ({ UpdatesSection: () => null }))
+vi.mock('./api', () => ({ changeAdminUserPassword: vi.fn(), changeAdminUserStatus: vi.fn(), changePassword: vi.fn(), createAdminUser: vi.fn(), deleteAdminUser: vi.fn(), getAdminUsers: vi.fn(), getStorageInfo: vi.fn(), updateAdminUser: vi.fn(), updateProfile: vi.fn() }))
+vi.mock('./UpdatesSection', () => {
+  function UpdatesSection({ visible = false, onAccessChange }: { visible?: boolean; onAccessChange?: (admin: boolean) => void }) {
+    useEffect(() => { onAccessChange?.(updatesAccess.admin) }, [onAccessChange])
+    return visible && updatesAccess.admin ? <section aria-label="Обновления"><h3>Обновления</h3></section> : null
+  }
+  return { UpdatesSection }
+})
+async function selectSettingsSection(name: string) {
+  await userEvent.click(screen.getByRole('button', { name }))
+}
+
 describe('AccountDialog', () => {
-  beforeEach(() => { vi.clearAllMocks(); vi.mocked(getStorageInfo).mockResolvedValue({ storageQuota: '1000', storageUsed: '25', fileCount: 2, folderCount: 1 }) })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    session.user.role = 'USER'
+    updatesAccess.admin = false
+    vi.mocked(getAdminUsers).mockResolvedValue({ items: [], page: 1, pageSize: 25, total: 0 })
+    vi.mocked(getStorageInfo).mockResolvedValue({ storageQuota: '1000', storageUsed: '25', fileCount: 2, folderCount: 1 })
+  })
   afterEach(cleanup)
-  it('shows persisted name and email with a generic icon and no unsupported photo editor', async () => {
+  it('shows users to an admin independently of updates access', async () => {
+    session.user.role = 'ADMIN'
     render(<AccountDialog onClose={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Пользователи' }))
+
+    expect(await screen.findByRole('heading', { name: 'Пользователи' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Обновления' })).not.toBeInTheDocument()
+    expect(getAdminUsers).toHaveBeenCalledOnce()
+  })
+  it('hides users and preserves updates navigation for updates-only access', async () => {
+    updatesAccess.admin = true
+    render(<AccountDialog onClose={vi.fn()} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Обновления' }))
+
+    expect(screen.getByRole('heading', { name: 'Обновления' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Пользователи' })).not.toBeInTheDocument()
+    expect(getAdminUsers).not.toHaveBeenCalled()
+  })
+  it('shows persisted name and email with initials avatar and no unsupported photo editor', async () => {
+    const { container } = render(<AccountDialog onClose={vi.fn()} />)
     expect(screen.getByText('Алексей')).toBeInTheDocument()
     expect(screen.getByText('alex@example.invalid')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Общий значок пользователя' })).toBeInTheDocument()
+    expect(container.querySelector('.account-identity .initials-avatar')).toHaveTextContent('А')
     expect(screen.queryByLabelText(/Аватар/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /фото|аватар/i })).not.toBeInTheDocument()
+    await selectSettingsSection('Безопасность')
     expect(screen.getByRole('heading', { name: 'Безопасность' })).toBeInTheDocument()
+    await selectSettingsSection('Хранилище')
     await screen.findByText(/Использовано/)
   })
   it('preserves the persisted avatar string exactly when editing name', async () => {
@@ -31,14 +71,32 @@ describe('AccountDialog', () => {
   it('formats quota and clamps over-limit progress without changing usage text', async () => {
     vi.mocked(getStorageInfo).mockResolvedValue({ storageUsed: '1825361101', storageQuota: '1073741824', fileCount: 2, folderCount: 1 })
     render(<AccountDialog onClose={vi.fn()} />)
+    await selectSettingsSection('Хранилище')
     expect(await screen.findByText(/Использовано 1,7 ГБ из 1 ГБ/)).not.toHaveTextContent('байт')
     expect(screen.getByRole('progressbar', { name: 'Использование хранилища' })).toHaveAttribute('value', '100')
+  })
+
+  it('shows bytes reserved by active uploads and copies alongside usage', async () => {
+    vi.mocked(getStorageInfo).mockResolvedValue({ storageUsed: '400', storageQuota: '1000', storageReserved: '150', storageAvailable: '450', fileCount: 2, folderCount: 1 })
+    render(<AccountDialog onClose={vi.fn()} />)
+    await selectSettingsSection('Хранилище')
+    expect(await screen.findByText(/Использовано 400 Б из 1 000 Б/)).toBeInTheDocument()
+    expect(screen.getByText(/Ещё 150 Б зарезервировано активными загрузками и копированиями/)).toBeInTheDocument()
+  })
+
+  it('omits the reserved line when nothing is reserved', async () => {
+    render(<AccountDialog onClose={vi.fn()} />)
+    await selectSettingsSection('Хранилище')
+    await screen.findByText(/Использовано 25 Б/)
+    expect(screen.queryByText(/зарезервировано/)).not.toBeInTheDocument()
   })
 
   it('shows persisted quota and saves profile then updates session without unmounting', async () => {
     const user = userEvent.setup()
     render(<AccountDialog onClose={vi.fn()} />)
+    await selectSettingsSection('Хранилище')
     expect(await screen.findByText(/Использовано 25 Б/)).toHaveTextContent('Файлов: 2. Папок: 1.')
+    await selectSettingsSection('Профиль')
     await user.clear(screen.getByLabelText('Имя'))
     await user.type(screen.getByLabelText('Имя'), ' Новое имя ')
     await user.click(screen.getByRole('button', { name: 'Сохранить профиль' }))
@@ -49,9 +107,35 @@ describe('AccountDialog', () => {
   it('keeps native focus transfers editable and cycles keyboard focus inside the dialog', async () => {
     const user = userEvent.setup()
     render(<AccountDialog onClose={vi.fn()} />)
-    await screen.findByText(/Использовано 25 Б/)
+
     const close = screen.getByRole('button', { name: 'Закрыть' })
-    const fields = ['Имя', 'Текущий пароль', 'Новый пароль', 'Повторите новый пароль'].map((label) => screen.getByLabelText(label))
+    const name = screen.getByLabelText('Имя')
+
+    await user.click(name)
+    expect(name).toHaveFocus()
+    await user.clear(name)
+    await user.type(name, 'probe')
+    expect(name).toHaveValue('probe')
+
+    close.focus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Профиль' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Хранилище' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Безопасность' })).toHaveFocus()
+    await user.tab()
+    expect(name).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Сохранить профиль' })).toHaveFocus()
+    await user.tab()
+    expect(close).toHaveFocus()
+
+    await selectSettingsSection('Безопасность')
+
+    const fields = ['Текущий пароль', 'Новый пароль', 'Повторите новый пароль']
+      .map((label) => screen.getByLabelText(label))
+
     for (const field of fields) {
       expect(field).toBeEnabled()
       expect(field).not.toHaveAttribute('readonly')
@@ -61,17 +145,7 @@ describe('AccountDialog', () => {
       await user.type(field, 'probe')
       expect(field).toHaveValue('probe')
     }
-    close.focus()
-    await user.tab()
-    expect(fields[0]).toHaveFocus()
-    await user.tab()
-    expect(screen.getByRole('button', { name: 'Сохранить профиль' })).toHaveFocus()
-    await user.tab()
-    expect(fields[1]).toHaveFocus()
-    for (const field of fields.slice(2)) {
-      await user.tab()
-      expect(field).toHaveFocus()
-    }
+
     await user.tab()
     expect(screen.getByRole('button', { name: 'Изменить пароль' })).toHaveFocus()
     await user.tab()
@@ -81,7 +155,7 @@ describe('AccountDialog', () => {
   })
   it('allows Safari focusout microtasks before the native input receives focus', async () => {
     render(<AccountDialog onClose={vi.fn()} />)
-    await screen.findByText(/Использовано 25 Б/)
+    await selectSettingsSection('Безопасность')
     const close = screen.getByRole('button', { name: 'Закрыть' })
     const input = screen.getByLabelText('Текущий пароль')
     close.focus()
@@ -133,22 +207,53 @@ describe('AccountDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Сохранить профиль' }))
     await user.keyboard('{Escape}')
     expect(close).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('dialog', {
+      name: 'Настройки HomeCloud',
+    }))
+
+    expect(close).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Закрыть' })).toBeDisabled()
     resolve({ id: 1, name: 'Алексей' } as Awaited<ReturnType<typeof updateProfile>>)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Закрыть' })).toBeEnabled())
     await user.keyboard('{Escape}')
     expect(close).toHaveBeenCalledOnce()
   })
+  it('clears password drafts when leaving security and preserves profile edits', async () => {
+    const user = userEvent.setup()
+    render(<AccountDialog onClose={vi.fn()} />)
+
+    await user.clear(screen.getByLabelText('Имя'))
+    await user.type(screen.getByLabelText('Имя'), 'Draft')
+
+    await selectSettingsSection('Безопасность')
+    await user.type(screen.getByLabelText('Текущий пароль'), 'old-password')
+    await user.type(screen.getByLabelText('Новый пароль'), 'new-password')
+
+    await selectSettingsSection('Профиль')
+
+    expect(screen.getByLabelText('Имя')).toHaveValue('Draft')
+    expect(screen.queryByLabelText('Текущий пароль')).not.toBeInTheDocument()
+
+    await selectSettingsSection('Безопасность')
+
+    expect(screen.getByLabelText('Текущий пароль')).toHaveValue('')
+    expect(screen.getByLabelText('Новый пароль')).toHaveValue('')
+    expect(changePassword).not.toHaveBeenCalled()
+  })
+
   it('retries failed quota request', async () => {
     vi.mocked(getStorageInfo).mockRejectedValueOnce(new Error('network'))
     const user = userEvent.setup()
     render(<AccountDialog onClose={vi.fn()} />)
+    await selectSettingsSection('Хранилище')
     await user.click(await screen.findByRole('button', { name: 'Повторить загрузку квоты' }))
     expect(await screen.findByText(/Использовано 25 Б/)).toBeInTheDocument()
     expect(getStorageInfo).toHaveBeenCalledTimes(2)
   })
 })
 async function fillPassword(user: ReturnType<typeof userEvent.setup>, old: string, next: string, confirm: string) {
+  await selectSettingsSection('Безопасность')
   await user.type(screen.getByLabelText('Текущий пароль'), old)
   await user.type(screen.getByLabelText('Новый пароль'), next)
   await user.type(screen.getByLabelText('Повторите новый пароль'), confirm)

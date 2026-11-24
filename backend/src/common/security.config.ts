@@ -6,7 +6,11 @@ import { ConfigService } from "@nestjs/config";
 import { NextFunction, Request, Response } from "express";
 import { clientIp } from "./trusted-proxy";
 import * as crypto from "crypto";
+import { isIP } from "node:net";
 import { JwtService } from "@nestjs/jwt";
+import { JwtStrategy } from "../auth/jwt.strategy";
+import { parseAccessSessionClaims } from "../auth/session-token";
+import { bearerTokenFromHeader } from "../auth/guards/bearer-token";
 import { browserDownloadErrorLocation } from "../sharing/browser-download-redirect";
 import {
   UploadRateLimitService,
@@ -56,6 +60,92 @@ export function buildCorsOptions(configService: ConfigService) {
   };
 }
 
+const THUMBNAIL_PATH =
+  /^\/api\/v1\/previews\/[1-9][0-9]*\/thumbnail\/?$/i;
+
+function isThumbnailRequest(req: Request): boolean {
+  return (
+    (req.method === "GET" || req.method === "HEAD") &&
+    THUMBNAIL_PATH.test(req.originalUrl.split("?")[0])
+  );
+}
+
+// The rate-limit package is on v7: IPv6 subnet masking must be explicit.
+// Only the configured trusted proxy can supply the client IP in production.
+export function thumbnailClientKey(req: Request): string {
+  const address = clientIp(req);
+  const raw = address.split("%", 1)[0];
+
+  if (isIP(raw) === 4) return `ip4:${raw}`;
+  if (isIP(raw) !== 6) return "ip:unknown";
+
+  // WHATWG URL canonicalizes IPv6 and expands IPv4-embedded tails to hex.
+  const canonical = new URL(`http://[${raw}]/`).hostname.slice(1, -1);
+  const [left, right] = canonical.split("::");
+  const before = left ? left.split(":") : [];
+  const after = right ? right.split(":") : [];
+
+  const groups = canonical.includes("::")
+    ? [
+        ...before,
+        ...Array(8 - before.length - after.length).fill("0"),
+        ...after,
+      ]
+    : canonical.split(":");
+
+  if (groups.length !== 8) return "ip:unknown";
+
+  const prefix = groups.slice(0, 4)
+    .map((group) => group.padStart(4, "0"))
+    .join(":");
+
+  return `ip6:${prefix}/64`;
+}
+
+export function getThumbnailRateLimitOptions() {
+  return {
+    keyGenerator: thumbnailClientKey,
+    windowMs: 60 * 1000,
+    max: 240,
+    message: {
+      statusCode: 429,
+      message: "Too many thumbnail requests",
+    },
+  };
+}
+
+// Independent per-user limiter. Invalid, absent or malformed JWTs fall back
+// to the same IP/subnet grouping; the IP limiter always runs first.
+export function getThumbnailUserRateLimitOptions(jwtService?: JwtService) {
+  return {
+    windowMs: 60 * 1000,
+    max: 240,
+    message: {
+      statusCode: 429,
+      message: "Too many thumbnail requests",
+    },
+    keyGenerator: (req: Request): string => {
+      const token = bearerTokenFromHeader(req.headers.authorization);
+
+      if (jwtService && token) {
+        try {
+          const payload = jwtService.verify(token);
+          if (
+            Number.isSafeInteger(payload?.sub) &&
+            payload.sub > 0
+          ) {
+            return `user:${payload.sub}`;
+          }
+        } catch {
+          // Untrusted JWT never creates an attacker-selected user bucket.
+        }
+      }
+
+      return thumbnailClientKey(req);
+    },
+  };
+}
+
 export function getGlobalRateLimitOptions() {
   return {
     keyGenerator: clientIp,
@@ -63,6 +153,29 @@ export function getGlobalRateLimitOptions() {
     max: 100,
     message: { statusCode: 429, message: "Too many requests" },
     handler: publicDownloadRateLimitHandler,
+  };
+}
+
+
+export function getSearchRateLimitOptions(jwtService?: JwtService) {
+  return {
+    windowMs: 60 * 1000,
+    max: 12,
+    message: { statusCode: 429, message: "Too many search requests" },
+    keyGenerator: (req: Request): string => {
+      const token = bearerTokenFromHeader(req.headers.authorization);
+      if (jwtService && token) {
+        try {
+          const payload = jwtService.verify(token);
+          if (Number.isSafeInteger(payload?.sub) && payload.sub > 0) {
+            return `user:${payload.sub}`;
+          }
+        } catch {
+          // Недействительные JWT учитываются по IP; JwtGuard отклонит их.
+        }
+      }
+      return `ip:${clientIp(req)}`;
+    },
   };
 }
 
@@ -173,7 +286,7 @@ const publicDownloadRateLimitHandler: RateLimitExceededEventHandler = (
 export function applySecurityMiddleware(
   app: INestApplication,
   configService: ConfigService,
-  transfer?: { jwtService: JwtService; uploads: UploadRateLimitService; publicUploads?: { admit(token: string, proof: string | undefined, uploadId: string): Promise<{ userId: number }> } },
+  transfer?: { jwtService: JwtService; jwtStrategy?: Pick<JwtStrategy, "validate">; uploads: UploadRateLimitService; publicUploads?: { admit(token: string, proof: string | undefined, uploadId: string): Promise<{ userId: number }> } },
 ): void {
   app.use(
     helmet({
@@ -228,16 +341,19 @@ export function applySecurityMiddleware(
         res.status(429).json({ statusCode: 429, message: error.message });
         return;
       }
-      const auth = req.headers.authorization;
-      if (
-        typeof auth === "string" &&
-        auth.length <= 4096 &&
-        /^Bearer [^ ]+$/.test(auth)
-      ) {
+      const token = bearerTokenFromHeader(req.headers.authorization);
+      if (token) {
         try {
-          const payload = transfer.jwtService.verify(auth.slice(7));
-          if (Number.isSafeInteger(payload.sub) && payload.sub > 0)
-            markVerifiedTransfer(req, payload.sub);
+          const payload: unknown = transfer.jwtService.verify(token, {
+            algorithms: ["HS256"],
+          });
+
+          const claims = parseAccessSessionClaims(payload);
+
+          if (claims && transfer.jwtStrategy) {
+            const user = await transfer.jwtStrategy.validate(claims);
+            markVerifiedTransfer(req, user.userId);
+          }
         } catch {
           /* Invalid JWT keeps the ordinary IP limiter and JwtGuard. */
         }
@@ -245,10 +361,49 @@ export function applySecurityMiddleware(
       next();
     });
   }
+  // Every thumbnail spends both an IP/subnet budget and a user budget.
+  // Separate MemoryStores prevent either budget from resetting the other.
+  // Other routes retain the ordinary global limiter.
+  const thumbnailIpLimiter = rateLimit(getThumbnailRateLimitOptions());
+  const thumbnailUserLimiter = rateLimit(
+    getThumbnailUserRateLimitOptions(transfer?.jwtService),
+  );
+
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (isThumbnailRequest(req)) {
+      return thumbnailIpLimiter(req, res, next);
+    }
+    next();
+  });
+
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (isThumbnailRequest(req)) {
+      return thumbnailUserLimiter(req, res, next);
+    }
+    next();
+  });
+
   app.use(
     "/api/v1",
-    rateLimit({ ...getGlobalRateLimitOptions(), skip: hasVerifiedTransfer }),
+    rateLimit({
+      ...getGlobalRateLimitOptions(),
+      skip: (req: Request) =>
+        hasVerifiedTransfer(req) || isThumbnailRequest(req),
+    }),
   );
+
+  // Один MemoryStore и один бюджет для нового и совместимого поиска.
+  const searchLimiter = rateLimit(getSearchRateLimitOptions(transfer?.jwtService));
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const pathname = req.path;
+    const legacy = /^\/api\/v1\/files\/?$/i.test(pathname) &&
+      Object.prototype.hasOwnProperty.call(req.query, "search");
+    if ((req.method === "GET" || req.method === "HEAD") &&
+        (/^\/api\/v1\/files\/search\/?$/i.test(pathname) || legacy)) {
+      return searchLimiter(req, res, next);
+    }
+    next();
+  });
 
   app.use("/api/v1/auth", rateLimit(getAuthRateLimitOptions()));
 

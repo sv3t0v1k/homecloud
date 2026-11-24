@@ -1,0 +1,101 @@
+/* U4: листание файлов, масштаб изображения, PDF/аудио в предпросмотре */
+
+.ux-v2 .preview-dialog .preview-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ux-v2 .preview-dialog .preview-counter {
+  flex: none;
+  color: var(--text-secondary, rgba(235, 240, 238, 0.62));
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ux-v2 .preview-dialog .preview-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+.ux-v2 .preview-dialog .preview-nav .icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ux-v2 .preview-dialog .preview-zoom-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ux-v2 .preview-dialog .preview-zoom-toolbar .icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ux-v2 .preview-dialog .preview-zoom-reset {
+  min-width: 84px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.14));
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary, rgba(235, 240, 238, 0.92));
+  font: inherit;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.ux-v2 .preview-dialog .preview-zoom-reset:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ux-v2 .preview-dialog .preview-zoom-surface {
+  overflow: auto;
+  max-width: 100%;
+  max-height: 70vh;
+}
+
+.ux-v2 .preview-dialog .preview-zoom-surface .preview-image {
+  display: block;
+}
+
+.ux-v2 .preview-dialog .preview-frame {
+  width: 100%;
+  height: 70vh;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.ux-v2 .preview-dialog .preview-audio-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 32px 16px;
+  color: var(--text-secondary, rgba(235, 240, 238, 0.62));
+}
+
+.ux-v2 .preview-dialog .preview-audio {
+  width: 100%;
+  max-width: 420px;
+}
+
+@media (max-width: 600px) {
+  .ux-v2 .preview-dialog .preview-frame {
+    height: 60vh;
+  }
+
+  .ux-v2 .preview-dialog .preview-zoom-surface {
+    max-height: 60vh;
+  }
+}

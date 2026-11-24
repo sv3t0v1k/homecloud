@@ -87,7 +87,7 @@ postgres("public folder creation — PostgreSQL", () => {
       `TRUNCATE public_share_operations, share_links, files, folders, users RESTART IDENTITY CASCADE`,
     );
     await db.query(
-      `INSERT INTO users(id,email,password,name) VALUES (1,'stage2@example.invalid','synthetic','QA')`,
+      `INSERT INTO users(id,email,password,name,"storageQuota","storageUsed") VALUES (1,'stage2@example.invalid','synthetic','QA',1000000000,0)`,
     );
     await db.query(`INSERT INTO folders(id,name,"userId","parentId") VALUES
       (10,'shared',1,NULL),(11,'child',1,10),(12,'outside',1,NULL)`);

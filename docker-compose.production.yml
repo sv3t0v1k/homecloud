@@ -90,6 +90,11 @@ services:
         target: /run/homecloud/volume-marker
         read_only: true
         bind: {create_host_path: false}
+      - type: bind
+        source: /etc/homecloud/maintenance
+        target: /run/homecloud/maintenance
+        read_only: true
+        bind: {create_host_path: false}
     networks: !override
       app_network:
       backend_proxy:
@@ -105,10 +110,13 @@ services:
         ipv4_address: ${FRONTEND_PROXY_IP:?Укажите exact frontend peer IP}
       ingress_frontend:
   ingress:
-    image: docker.io/library/nginx:1.30.6-alpine3.24-slim@sha256:8f06fd647c6687eae0fd7bee8a43df66e61edb9f093bb0a9079d69cb355b879b
+    image: docker.io/library/nginx:1.30.7-alpine3.24-slim@sha256:e2fc266695cef82e3a686c7ed628d1f09c2a7bb5ffb2a718ae7f7c821f5583c1
     platform: linux/amd64
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?Укажите публичное DNS имя}
+      # Дополнительные доверенные хосты через пробел (например test-hc.f50a44.ru).
+      # Пустое значение — только PUBLIC_HOST.
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-}
       NGINX_ENVSUBST_FILTER: ^PUBLIC_HOST$
     ports:
       - "${PUBLIC_BIND_IP:-127.0.0.1}:${PUBLIC_HTTP_PORT:?Укажите свободный HTTP port HomeCloud}:80"

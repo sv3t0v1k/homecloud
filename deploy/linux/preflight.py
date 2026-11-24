@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """D3: только чтение host/config; не создаёт каталоги, не монтирует и не запускает API."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,12 @@ def command(*args):
     # stderr/config может содержать секреты: наружу только название операции.
     require(result.returncode == 0, 'Не прошла операция: ' + args[0])
     return result.stdout.strip()
+
+
+def host_findmnt(*args):
+    # systemd's ProtectSystem/ReadWritePaths creates private bind mounts.
+    # Read PID 1's mount table so the disk checks inspect the actual host.
+    return command('findmnt', '--task', '1', *args)
 
 
 def ordinary_directory(value):
@@ -58,7 +65,7 @@ def check_inventory_layout(inventory):
 def docker_command_prefix(inventory):
     if 'project_root' in inventory:
         # Same daemon as project wrapper; root's default context may differ.
-        return ['docker', '--host', 'unix:///var/run/docker.sock']
+        return ['docker', '--config', '/etc/homecloud-test/docker', '--host', 'unix:///var/run/docker.sock']
     endpoint = command('docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}')
     require(endpoint.startswith('unix:///'), 'Remote Docker context запрещён')
     return ['docker']
@@ -72,7 +79,7 @@ def check_disk(spec, role=None):
     require(not system_root or (role == 'db' and str(root) == '/'),
             'system-root-lvm разрешён только для БД на /')
     require(str(root) != '/' or system_root, 'Системный root запрещён как диск данных')
-    record = json.loads(command('findmnt', '--json', '--target', str(root),
+    record = json.loads(host_findmnt('--json', '--target', str(root),
                                 '--output', 'TARGET,SOURCE,FSTYPE,UUID,OPTIONS,FSROOT'))['filesystems']
     require(len(record) == 1, 'Неоднозначный mount')
     record = record[0]
@@ -125,17 +132,33 @@ def check_data_directory(value, disk, uid, gid):
     p = ordinary_directory(value)
     require(p != Path(disk['mount']) and Path(disk['mount']) in p.parents,
             'Data directory должен быть дочерним каталогом диска')
-    record = json.loads(command('findmnt', '--json', '--target', str(p),
+    record = json.loads(host_findmnt('--json', '--target', str(p),
                                 '--output', 'TARGET,UUID'))['filesystems']
     require(len(record) == 1 and record[0]['target'] == disk['mount'] and
             record[0]['uuid'] == disk['uuid'], 'Data directory на другом/nested mount')
     # --list включает file mounts и mounts ниже PGDATA, например pg_wal на root FS.
-    targets = json.loads(command('findmnt', '--json', '--list', '--output', 'TARGET'))['filesystems']
+    targets = json.loads(host_findmnt('--json', '--list', '--output', 'TARGET'))['filesystems']
     require(not any(p in Path(row['target']).parents for row in targets),
             'Nested mount внутри data directory запрещён')
     meta = p.stat()
     require((meta.st_uid, meta.st_gid, stat.S_IMODE(meta.st_mode)) == (uid, gid, 0o700),
             'Owner/mode data directory не совпадают с service UID/GID и 0700')
+
+
+def check_maintenance_directory(value):
+    maintenance = ordinary_directory(value)
+    for parent in reversed(maintenance.parents):
+        parent_info = parent.lstat()
+        require(stat.S_ISDIR(parent_info.st_mode) and
+                parent_info.st_uid == 0 and
+                not parent_info.st_mode & 0o022 and
+                not os.listxattr(parent, follow_symlinks=False),
+                'Небезопасный родитель maintenance directory')
+    info = maintenance.stat()
+    require(info.st_uid == 0 and info.st_gid == 0 and
+            stat.S_IMODE(info.st_mode) == 0o711 and
+            not os.listxattr(maintenance, follow_symlinks=False),
+            'Неверный owner/mode maintenance directory')
 
 
 def check_config(config, inventory):
@@ -156,14 +179,31 @@ def check_config(config, inventory):
     require(env.get('STORAGE_PATH') == '/storage' and env.get('NODE_ENV') == 'production',
             'Некорректный storage root/NODE_ENV')
     require(backend.get('user') == '1001:65533', 'Требуется backend UID/GID 1001:65533')
+    test_channel = env.get('UPDATE_CHANNEL') == 'test'
+    test_updates = test_channel and env.get('UPDATE_INSTALL_BRIDGE_ENABLED') == 'true'
+    if test_channel:
+        require(env.get('UPDATE_INSTALL_BRIDGE_ENABLED') in ('true', 'false'),
+                'Неверный TEST update flag')
+    if test_updates:
+        require(
+                env.get('UPDATE_REQUEST_INBOX') == '/run/homecloud-update/inbox' and
+                env.get('UPDATE_STATUS_FILE') == '/run/homecloud-update/status/current.json' and
+                env.get('UPDATE_INSTALLED_METADATA_PATH') == '/run/homecloud-update/status/installed.json' and
+                env.get('UPDATE_TEST_CANDIDATE_PATH') == '/run/homecloud-update/status/available.json' and
+                env.get('UPDATE_GITHUB_TOKEN') == '' and env.get('UPDATE_GITHUB_USER') == '',
+                'Неверная TEST update boundary')
     for name, target, source in (
         ('backend', '/storage', inventory['hdd']['data']),
         ('db', '/var/lib/postgresql/data', inventory['ssd']['data']),
     ):
         mounts = services[name]['volumes']
         by_target = {mount['target']: mount for mount in mounts}
-        require(len(mounts) == 6 and len(by_target) == 6 and target in by_target,
-                'Нужны ровно шесть уникальных mount targets')
+        extra = {
+            '/run/homecloud-update/inbox': ('/var/lib/homecloud-update/inbox', False, 0o770),
+            '/run/homecloud-update/status': ('/var/lib/homecloud-update/status', True, 0o750),
+        } if name == 'backend' and test_updates else {}
+        require(len(mounts) == 6 + (1 if name == 'backend' else 0) + len(extra) and len(by_target) == len(mounts) and target in by_target,
+                'Неверное число уникальных mount targets')
         data_mount = by_target[target]
         require(data_mount['type'] == 'bind' and data_mount['source'] == source and
                 not data_mount.get('read_only', False) and
@@ -180,7 +220,9 @@ def check_config(config, inventory):
             '/run/homecloud/dev': '/dev',
             '/run/homecloud/volume-marker': str(Path(source).parent / ('.homecloud-' + name)),
         }
-        require(set(by_target) == set(expected) | {target}, 'Неверный набор gate mounts')
+        if name == 'backend':
+            expected['/run/homecloud/maintenance'] = config_dir + '/maintenance'
+        require(set(by_target) == set(expected) | {target} | set(extra), 'Неверный набор gate mounts')
         for gate_target in expected:
             mount = by_target[gate_target]
             require(mount['type'] == 'bind' and
@@ -188,6 +230,26 @@ def check_config(config, inventory):
                     mount.get('read_only') is True and
                     mount.get('bind', {}).get('create_host_path') is False,
                     'Gate mount обязан быть exact readonly без создания source')
+        if name == 'backend':
+            check_maintenance_directory(config_dir + '/maintenance')
+        for extra_target, (source, read_only, mode) in extra.items():
+            mount = by_target[extra_target]
+            require(mount['type'] == 'bind' and mount['source'] == source and
+                    mount.get('read_only', False) is read_only and
+                    mount.get('bind', {}).get('create_host_path') is False,
+                    'TEST update mount отличается от квалифицированного')
+            path = ordinary_directory(source)
+            for parent in reversed(path.parents):
+                parent_info = parent.lstat()
+                require(stat.S_ISDIR(parent_info.st_mode) and parent_info.st_uid == 0 and
+                        not parent_info.st_mode & 0o022 and
+                        not os.listxattr(parent, follow_symlinks=False),
+                        'Небезопасный родитель TEST update directory')
+            info = path.stat()
+            require(info.st_uid == 0 and info.st_gid == 65533 and
+                    stat.S_IMODE(info.st_mode) == mode and
+                    not os.listxattr(path, follow_symlinks=False),
+                    'Неверный владелец или права TEST update directory')
         require(not services[name].get('privileged') and not services[name].get('cap_add') and
                 not services[name].get('devices'), 'Gate не требует privileged/devices/cap_add')
     for network in config.get('networks', {}).values():
@@ -233,7 +295,7 @@ def check_gate_files(role, disk, uid, gid, config_dir='/etc/homecloud'):
                 'Неверный owner/mode gate/marker')
     require(gate.read_text() == ' '.join(values) + '\n', 'Gate не совпадает с inventory')
     require(marker.read_text() == f'homecloud-v1 {role} {disk["uuid"]}\n', 'Marker не совпадает с inventory')
-    record = json.loads(command('findmnt', '--json', '--target', str(marker),
+    record = json.loads(host_findmnt('--json', '--target', str(marker),
                                 '--output', 'TARGET,UUID'))['filesystems']
     require(len(record) == 1 and record[0]['target'] == disk['mount'] and
             record[0]['uuid'] == disk['uuid'], 'Marker не на ожидаемом диске')
@@ -279,6 +341,12 @@ def main():
                     '-f', 'docker-compose.yml', '-f', 'docker-compose.production.yml']
     if 'project_root' in inventory:
         compose_args += ['-f', 'docker-compose.project-test.yml']
+        spec = importlib.util.spec_from_file_location(
+            'test_compose_profile', Path(__file__).with_name('test-compose-profile.py'))
+        profile = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profile)
+        if profile.enabled():
+            compose_args += ['-f', 'docker-compose.project-test-updates.yml']
     config = json.loads(command(*compose_args, 'config', '--format', 'json'))
     check_config(config, inventory)
     ssd_device = check_disk(inventory['ssd'], 'db')

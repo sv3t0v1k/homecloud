@@ -11,6 +11,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 
 import { apiClient } from '../api/client'
 import { FileBrowserPage } from './FileBrowserPage'
+import { ITEMS_MIME } from './dragItems'
 
 describe('FileBrowserPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks() })
@@ -80,6 +81,152 @@ describe('FileBrowserPage', () => {
     expect(screen.getByText('Выбрано: 3')).toBeInTheDocument()
     fireEvent.contextMenu(first.closest('tr')!)
     expect(screen.getByRole('menuitem', { name: 'Открыть' })).toBeInTheDocument()
+  })
+
+  it('exposes Liquid Selection Dock actions and clears selection without deleting files', async () => {
+    apiClient.defaults.adapter = async config => ok(
+      config,
+      config.url === '/files/folders'
+        ? [folder(7, 'A', null), folder(8, 'B', null)]
+        : [],
+    )
+
+    renderPage('/files')
+    const user = userEvent.setup()
+
+    const first = await screen.findByRole('button', {
+      name: 'A',
+    })
+
+    expect(screen.queryByRole('region', {
+      name: 'Выделенные объекты',
+    })).not.toBeInTheDocument()
+
+    await user.click(first)
+
+    const dock = screen.getByRole('region', {
+      name: 'Выделенные объекты',
+    })
+
+    expect(dock).toHaveClass('liquid-selection-dock')
+
+    expect(within(dock).getByText('Выбрано: 1')).toBeInTheDocument()
+
+    expect(within(dock).queryByRole('button', {
+      name: 'Скачать ZIP',
+    })).not.toBeInTheDocument()
+
+    await user.click(within(dock).getByRole('button', {
+      name: 'Выбрать всё',
+    }))
+
+    expect(within(dock).getByText('Выбрано: 2')).toBeInTheDocument()
+
+    expect(within(dock).getByRole('button', {
+      name: 'Скачать ZIP',
+    })).toBeEnabled()
+
+    await user.click(within(dock).getByRole('button', {
+      name: 'Снять выделение',
+    }))
+
+    expect(screen.queryByRole('region', {
+      name: 'Выделенные объекты',
+    })).not.toBeInTheDocument()
+
+    expect(screen.getByRole('button', {
+      name: 'A',
+    })).toBeInTheDocument()
+
+    expect(screen.getByRole('button', {
+      name: 'B',
+    })).toBeInTheDocument()
+
+    expect(screen.getByRole('checkbox', {
+      name: 'Выбрать A',
+    })).not.toBeChecked()
+
+    expect(screen.getByRole('checkbox', {
+      name: 'Выбрать B',
+    })).not.toBeChecked()
+  })
+
+  it('clears selection on empty workspace clicks without affecting files or modal actions', async () => {
+    apiClient.defaults.adapter = async config => ok(
+      config,
+      config.url === '/files/folders'
+        ? [folder(7, 'A', null), folder(8, 'B', null)]
+        : [],
+    )
+
+    renderPage('/files')
+    const user = userEvent.setup()
+
+    const first = await screen.findByRole('button', {
+      name: 'A',
+    })
+
+    const page = screen.getByRole('region', {
+      name: 'Мои файлы',
+    })
+
+    await user.click(first)
+
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument()
+
+    // Interactive toolbar actions must preserve selection.
+    await user.click(screen.getByRole('button', {
+      name: 'Плитка',
+    }))
+
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument()
+
+    // Empty grid space clears the selected object.
+    await user.click(page.querySelector('tbody')!)
+
+    expect(screen.queryByRole('region', {
+      name: 'Выделенные объекты',
+    })).not.toBeInTheDocument()
+
+    await user.click(first)
+
+    await user.click(screen.getByRole('button', {
+      name: 'В корзину',
+    }))
+
+    const dialog = screen.getByRole('dialog', {
+      name: 'Переместить выбранное в корзину?',
+    })
+
+    // Clicking inside the dialog does not dismiss it.
+    await user.click(within(dialog).getByRole('heading'))
+
+    expect(dialog).toBeInTheDocument()
+
+    // Backdrop dismisses only the dialog.
+    await user.click(dialog.closest('.dialog-overlay')!)
+
+    expect(dialog).not.toBeInTheDocument()
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument()
+
+    // A separate background click clears the selection.
+    await user.click(page)
+
+    expect(screen.queryByRole('region', {
+      name: 'Выделенные объекты',
+    })).not.toBeInTheDocument()
+
+    expect(screen.getByRole('checkbox', {
+      name: 'Выбрать A',
+    })).not.toBeChecked()
+
+    expect(screen.getByRole('button', {
+      name: 'A',
+    })).toBeInTheDocument()
+
+    expect(screen.getByRole('button', {
+      name: 'B',
+    })).toBeInTheDocument()
   })
 
   it('reconstructs named breadcrumbs on a direct nested load', async () => {
@@ -177,7 +324,18 @@ describe('FileBrowserPage', () => {
 
     await waitFor(() => expect(screen.getByRole('listitem', { name: 'Загрузка: new.png' })).toHaveTextContent('Файл загружен'))
     expect(screen.getByRole('listitem', { name: 'Загрузка: new.png' })).toHaveTextContent('Файл загружен')
-    expect(screen.getByRole('listitem', { name: 'Загрузка: new.png' })).toHaveTextContent('4 Б из 4 Б')
+    const completedCard = screen.getByRole('listitem', {
+      name: 'Загрузка: new.png',
+    })
+
+    expect(completedCard).toHaveAttribute(
+      'data-upload-state', 'completed',
+    )
+    expect(completedCard).toHaveTextContent('· 4 Б')
+
+    expect(screen.getByRole('progressbar', {
+      name: 'Прогресс: new.png',
+    })).toHaveAttribute('value', '100')
     expect(screen.queryByText(/Принято сервером:/)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Закрыть' }))
     expect(screen.queryByLabelText('Загрузки')).not.toBeInTheDocument()
@@ -263,7 +421,7 @@ describe('FileBrowserPage', () => {
     expect(sessions).toBe(0)
   })
 
-  it('selects with one click, opens on double click, supports range selection, search and context actions', async () => {
+  it('selects with one click, opens on double click, supports range selection and context actions', async () => {
     apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files' ? [file(11, 'first.txt', 1), file(12, 'second.txt', 1)] : [])
     renderPage('/files')
     const user = userEvent.setup()
@@ -281,8 +439,8 @@ describe('FileBrowserPage', () => {
     await user.dblClick(first)
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     await user.keyboard('{Escape}')
-    await user.type(screen.getByLabelText('Поиск в текущей папке'), 'second')
-    expect(screen.queryByRole('button', { name: 'first.txt' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Поиск в текущей папке')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'first.txt' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'second.txt' })).toBeInTheDocument()
   })
 
@@ -325,14 +483,16 @@ describe('FileBrowserPage', () => {
     renderPage('/files/folders/7')
     const user = userEvent.setup()
     await chooseAction(user, 'inside.txt', 'Переместить')
-    await screen.findByRole('option', { name: 'Sibling / Deep' })
-    await waitFor(() => expect(screen.getByLabelText('Папка назначения')).toBeEnabled())
-    await user.selectOptions(screen.getByLabelText('Папка назначения'), '10')
+    const firstTree = await screen.findByRole('group', { name: 'Папка назначения' })
+    await waitFor(() => expect(within(firstTree).getByRole('button', { name: 'Deep' })).toBeEnabled())
+    await user.click(within(firstTree).getByRole('button', { name: 'Deep' }))
     await user.click(screen.getByRole('button', { name: 'Переместить' }))
     await waitFor(() => expect(mutations).toContainEqual({ targetParentId: 10 }))
     await chooseAction(user, 'Moving', 'Переместить')
-    await screen.findByRole('option', { name: 'Sibling / Deep' })
-    expect(screen.queryByRole('option', { name: /Moving|Child/ })).not.toBeInTheDocument()
+    const secondTree = await screen.findByRole('group', { name: 'Папка назначения' })
+    await within(secondTree).findByRole('button', { name: 'Deep' })
+    expect(within(secondTree).queryByRole('button', { name: 'Moving' })).not.toBeInTheDocument()
+    expect(within(secondTree).queryByRole('button', { name: 'Child' })).not.toBeInTheDocument()
   })
 
   it.each([
@@ -598,8 +758,9 @@ describe('FileBrowserPage', () => {
     await user.click(screen.getByRole('button', { name: 'Переименовать' }))
     await waitFor(() => expect(mutations).toHaveLength(1))
     await chooseAction(user, 'report.txt', 'Переместить')
-    await waitFor(() => expect(screen.getByLabelText('Папка назначения')).toBeEnabled())
-    await user.selectOptions(screen.getByLabelText('Папка назначения'), '7')
+    const destinationTree = await screen.findByRole('group', { name: 'Папка назначения' })
+    await waitFor(() => expect(within(destinationTree).getByRole('button', { name: 'Destination' })).toBeEnabled())
+    await user.click(within(destinationTree).getByRole('button', { name: 'Destination' }))
     await user.click(screen.getByRole('button', { name: 'Переместить' }))
     await waitFor(() => expect(mutations).toHaveLength(2))
     await chooseAction(user, 'report.txt', 'Копировать')
@@ -707,8 +868,9 @@ describe('FileBrowserPage', () => {
     await user.click(screen.getByRole('button', { name: 'Переименовать' }))
     await waitFor(() => expect(mutations).toHaveLength(1))
     await chooseAction(user, 'Project', 'Переместить')
-    await waitFor(() => expect(screen.getByLabelText('Папка назначения')).toBeEnabled())
-    await user.selectOptions(screen.getByLabelText('Папка назначения'), '8')
+    const archiveTree = await screen.findByRole('group', { name: 'Папка назначения' })
+    await waitFor(() => expect(within(archiveTree).getByRole('button', { name: 'Archive' })).toBeEnabled())
+    await user.click(within(archiveTree).getByRole('button', { name: 'Archive' }))
     await user.click(screen.getByRole('button', { name: 'Переместить' }))
     await waitFor(() => expect(mutations).toHaveLength(2))
     await chooseAction(user, 'Project', 'В корзину')
@@ -900,11 +1062,357 @@ describe('FileBrowserPage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('sorts rows by a clicked column and reverses on a second click', async () => {
+    sessionStorage.clear()
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders'
+      ? []
+      : [file(11, 'big.txt', '2048'), file(12, 'small.txt', '10'), file(13, 'mid.txt', '512')])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'big.txt' })
+
+    const rows = () => Array.from(document.querySelectorAll('.directory-row .file-name'))
+      .map((button) => button.textContent)
+
+    expect(rows()).toEqual(['big.txt', 'mid.txt', 'small.txt'])
+
+    const sizeHeader = screen.getByRole('button', { name: 'Сортировать: Размер' })
+    await user.click(sizeHeader)
+    expect(rows()).toEqual(['small.txt', 'mid.txt', 'big.txt'])
+    expect(sizeHeader.closest('th')).toHaveAttribute('aria-sort', 'ascending')
+
+    await user.click(screen.getByRole('button', { name: 'Сортировать: Размер' }))
+    expect(rows()).toEqual(['big.txt', 'mid.txt', 'small.txt'])
+    expect(screen.getByRole('button', { name: 'Сортировать: Размер' }).closest('th')).toHaveAttribute('aria-sort', 'descending')
+
+    expect(JSON.parse(sessionStorage.getItem('homecloud.directorySort') ?? '{}')).toEqual({ key: 'size', direction: 'desc' })
+  })
+
+  it('filters rows by name and restores them on clear', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders'
+      ? [folder(7, 'Архив', null)]
+      : [file(11, 'report.txt', '10'), file(12, 'photo.png', '20')])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'report.txt' })
+
+    const filter = screen.getByRole('searchbox', { name: 'Фильтр по имени в этой папке' })
+    await user.type(filter, 'реп')
+    expect(screen.queryByRole('button', { name: 'report.txt' })).not.toBeInTheDocument()
+    await user.clear(filter)
+    await user.type(filter, 'rep')
+    expect(screen.getByRole('button', { name: 'report.txt' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'photo.png' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Архив' })).not.toBeInTheDocument()
+    expect(screen.getByText(/По фильтру: 1/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Очистить фильтр' }))
+    expect(screen.getByRole('button', { name: 'photo.png' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Архив' })).toBeInTheDocument()
+  })
+
+  it('shows a dedicated state when the filter matches nothing', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'report.txt', '10')])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'report.txt' })
+
+    await user.type(screen.getByRole('searchbox', { name: 'Фильтр по имени в этой папке' }), 'zzz')
+    expect(screen.getByText('По фильтру ничего не найдено')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'report.txt' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Сбросить фильтр' }))
+    expect(screen.getByRole('button', { name: 'report.txt' })).toBeInTheDocument()
+  })
+
+  it('offers an undo toast after moving a file to trash and restores it', async () => {
+    let trashed = false
+    const mutations: Array<{ url?: string; method?: string }> = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [])
+      if (config.url === '/files') return ok(config, trashed ? [] : [file(11, 'report.txt', 2)])
+      mutations.push({ url: config.url, method: config.method })
+      if (config.url === '/files/11' && config.method === 'delete') trashed = true
+      if (config.url === '/files/11/restore' && config.method === 'post') trashed = false
+      return ok(config, {})
+    }
+    renderPage('/files')
+    const user = userEvent.setup()
+    await chooseAction(user, 'report.txt', 'В корзину')
+    await user.click(screen.getByRole('button', { name: 'Переместить в корзину' }))
+    await screen.findByText('Файл перемещён в корзину')
+    await user.click(screen.getByRole('button', { name: 'Отменить' }))
+    await waitFor(() => expect(mutations).toEqual(expect.arrayContaining([
+      { url: '/files/11', method: 'delete' },
+      { url: '/files/11/restore', method: 'post' },
+    ])))
+    expect(await screen.findByRole('button', { name: 'report.txt' })).toBeInTheDocument()
+  })
+
+  it('offers an undo toast after bulk trash and restores every item', async () => {
+    const trashed = new Set<number>()
+    const restored: string[] = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [])
+      if (config.url === '/files') return ok(config, [file(11, 'a.txt', 1), file(12, 'b.txt', 1)].filter((item) => !trashed.has(item.id)))
+      const single = /^\/files\/(\d+)$/.exec(config.url ?? '')
+      if (single && config.method === 'delete') { trashed.add(Number(single[1])); return ok(config, {}) }
+      const restore = /^\/files\/(\d+)\/restore$/.exec(config.url ?? '')
+      if (restore && config.method === 'post') { trashed.delete(Number(restore[1])); restored.push(config.url!); return ok(config, {}) }
+      throw new Error(`Unexpected request: ${config.method} ${config.url}`)
+    }
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'a.txt' })
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать a.txt' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать b.txt' }))
+    await user.click(screen.getByRole('button', { name: 'В корзину' }))
+    await user.click(screen.getByRole('button', { name: 'Переместить выбранное' }))
+    await screen.findByText('Перемещено в корзину: 2')
+    await user.click(screen.getByRole('button', { name: 'Отменить' }))
+    await waitFor(() => expect(restored.sort()).toEqual(['/files/11/restore', '/files/12/restore']))
+    expect(await screen.findByRole('button', { name: 'a.txt' })).toBeInTheDocument()
+  })
+
+  it('selects all with Ctrl+A and clears the selection with Escape', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders'
+      ? [folder(7, 'Архив', null)]
+      : [file(11, 'a.txt', 1), file(12, 'b.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'a.txt' })
+
+    await user.keyboard('{Control>}a{/Control}')
+    expect(screen.getByText('Выбрано: 3')).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByText(/Выбрано:/)).not.toBeInTheDocument()
+  })
+
+  it('opens the bulk trash confirmation with Delete', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'a.txt' }))
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument()
+
+    await user.keyboard('{Delete}')
+    expect(screen.getByRole('dialog')).toHaveTextContent('Переместить выбранное в корзину?')
+  })
+
+  it('opens the rename dialog with F2 for a single selection', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'a.txt' }))
+
+    await user.keyboard('{F2}')
+    expect(await screen.findByLabelText('Новое название')).toBeInTheDocument()
+  })
+
+  it('shows the shortcuts reference with ? and from the toolbar button', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'a.txt' })
+
+    await user.keyboard('?')
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('Горячие клавиши')
+    expect(dialog).toHaveTextContent('Переименовать выбранный элемент')
+    await user.click(within(dialog).getByRole('button', { name: 'Закрыть' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Горячие клавиши' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Выбрать все видимые элементы')
+  })
+
+  it('moves focus across rows with arrows, Home and End', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders'
+      ? [folder(7, 'Архив', null)]
+      : [file(11, 'a.txt', 1), file(12, 'b.txt', 1)])
+    sessionStorage.clear()
+    renderPage('/files')
+    const first = await screen.findByRole('button', { name: 'Архив' })
+    first.focus()
+
+    fireEvent.keyDown(first, { key: 'ArrowDown' })
+    expect(screen.getByRole('button', { name: 'a.txt' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'a.txt' }), { key: 'End' })
+    expect(screen.getByRole('button', { name: 'b.txt' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'b.txt' }), { key: 'ArrowDown' })
+    expect(screen.getByRole('button', { name: 'b.txt' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'b.txt' }), { key: 'Home' })
+    expect(first).toHaveFocus()
+    fireEvent.keyDown(first, { key: 'ArrowUp' })
+    expect(first).toHaveFocus()
+  })
+
+  it('ignores page shortcuts while typing in the folder filter', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    await screen.findByRole('button', { name: 'a.txt' })
+
+    const filterInput = screen.getByRole('searchbox', { name: 'Фильтр по имени в этой папке' })
+    await user.click(filterInput)
+    await user.keyboard('{Control>}a{/Control}')
+    expect(screen.queryByText(/Выбрано:/)).not.toBeInTheDocument()
+    await user.keyboard('{Delete}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.keyboard('?')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('moves a file onto a folder row with drag and drop', async () => {
+    let moved = false
+    const mutations: Array<{ url?: string; method?: string; data?: unknown }> = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [folder(7, 'Архив', null)])
+      if (config.url === '/files') return ok(config, moved ? [] : [file(11, 'a.txt', 1)])
+      mutations.push({ url: config.url, method: config.method, data: config.data ? JSON.parse(String(config.data)) : undefined })
+      if (config.url === '/files/11/move') moved = true
+      return ok(config, {})
+    }
+    renderPage('/files')
+    const fileRow = (await screen.findByRole('button', { name: 'a.txt' })).closest('tr')!
+    const folderRow = screen.getByRole('button', { name: 'Архив' }).closest('tr')!
+
+    const transfer = dataTransfer()
+    fireEvent.dragStart(fileRow, { dataTransfer: transfer })
+    expect(transfer.types).toContain(ITEMS_MIME)
+
+    fireEvent.dragOver(folderRow, { dataTransfer: transfer })
+    expect(folderRow).toHaveClass('is-drop-target')
+
+    fireEvent.drop(folderRow, { dataTransfer: transfer })
+    fireEvent.dragEnd(fileRow, { dataTransfer: transfer })
+
+    await screen.findByText('Перемещено: 1')
+    expect(mutations).toEqual([{ url: '/files/11/move', method: 'post', data: { targetParentId: 7 } }])
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'a.txt' })).not.toBeInTheDocument())
+  })
+
+  it('refuses to drop a folder onto itself', async () => {
+    const mutations: Array<{ url?: string; method?: string }> = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [folder(7, 'Архив', null)])
+      if (config.url === '/files') return ok(config, [])
+      mutations.push({ url: config.url, method: config.method })
+      return ok(config, {})
+    }
+    renderPage('/files')
+    const folderRow = (await screen.findByRole('button', { name: 'Архив' })).closest('tr')!
+
+    const transfer = dataTransfer()
+    fireEvent.dragStart(folderRow, { dataTransfer: transfer })
+    fireEvent.dragOver(folderRow, { dataTransfer: transfer })
+    expect(folderRow).not.toHaveClass('is-drop-target')
+    fireEvent.drop(folderRow, { dataTransfer: transfer })
+    fireEvent.dragEnd(folderRow, { dataTransfer: transfer })
+
+    expect(mutations).toEqual([])
+  })
+
+  it('drags the whole selection when a selected row is dragged', async () => {
+    const moves: string[] = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders') return ok(config, [folder(7, 'Архив', null)])
+      if (config.url === '/files') return ok(config, [file(11, 'a.txt', 1), file(12, 'b.txt', 1)])
+      if (config.url?.endsWith('/move')) { moves.push(config.url); return ok(config, {}) }
+      throw new Error(`Unexpected request: ${config.url}`)
+    }
+    renderPage('/files')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('checkbox', { name: 'Выбрать a.txt' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать b.txt' }))
+    expect(screen.getByText('Выбрано: 2')).toBeInTheDocument()
+
+    const transfer = dataTransfer()
+    fireEvent.dragStart(screen.getByRole('button', { name: 'a.txt' }).closest('tr')!, { dataTransfer: transfer })
+    expect(JSON.parse(transfer.getData(ITEMS_MIME)).keys.sort()).toEqual(['file:11', 'file:12'])
+    fireEvent.drop(screen.getByRole('button', { name: 'Архив' }).closest('tr')!, { dataTransfer: transfer })
+
+    await screen.findByText('Перемещено: 2')
+    expect(moves.sort()).toEqual(['/files/11/move', '/files/12/move'])
+  })
+
+  it('moves an item to the root through the breadcrumbs', async () => {
+    const mutations: Array<{ url?: string; method?: string; data?: unknown }> = []
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/files/folders/7') return ok(config, folder(7, 'Вложенная', null))
+      if (config.url === '/files/folders') return ok(config, [])
+      if (config.url === '/files') return ok(config, [file(11, 'a.txt', 1)])
+      mutations.push({ url: config.url, method: config.method, data: config.data ? JSON.parse(String(config.data)) : undefined })
+      return ok(config, {})
+    }
+    renderPage('/files/folders/7')
+    const fileRow = (await screen.findByRole('button', { name: 'a.txt' })).closest('tr')!
+    const rootCrumb = screen.getByRole('link', { name: 'Мои файлы' }).closest('li')!
+
+    const transfer = dataTransfer()
+    fireEvent.dragStart(fileRow, { dataTransfer: transfer })
+    fireEvent.dragOver(rootCrumb, { dataTransfer: transfer })
+    expect(rootCrumb).toHaveClass('is-drop-target')
+    fireEvent.drop(rootCrumb, { dataTransfer: transfer })
+    fireEvent.dragEnd(fileRow, { dataTransfer: transfer })
+
+    await screen.findByText('Перемещено: 1')
+    expect(mutations).toEqual([{ url: '/files/11/move', method: 'post', data: {} }])
+  })
+
+  it('opens a context menu at the cursor and closes it with Escape returning focus', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    const name = await screen.findByRole('button', { name: 'a.txt' })
+
+    fireEvent.contextMenu(name.closest('tr')!, { clientX: 120, clientY: 240 })
+    const menu = screen.getByRole('menu', { name: 'Действия с объектом' })
+    expect(menu).toHaveClass('context-menu-popover')
+    expect(menu.style.position).toBe('fixed')
+    expect(menu.style.left).toBe('120px')
+    expect(menu.style.top).toBe('240px')
+    expect(within(menu).getByRole('menuitem', { name: 'Просмотр' })).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(name).toHaveFocus()
+  })
+
+  it('runs context menu actions and closes on outside pointer down', async () => {
+    apiClient.defaults.adapter = async (config) => ok(config, config.url === '/files/folders' ? [] : [file(11, 'a.txt', 1)])
+    renderPage('/files')
+    const user = userEvent.setup()
+    const row = (await screen.findByRole('button', { name: 'a.txt' })).closest('tr')!
+
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
+    await user.click(screen.getByRole('menuitem', { name: 'Переименовать' }))
+    expect(await screen.findByLabelText('Новое название')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    fireEvent.contextMenu(row, { clientX: 10, clientY: 10 })
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
 })
 
 async function chooseAction(user: ReturnType<typeof userEvent.setup>, name: string, action: string) {
   await user.click(await screen.findByRole('button', { name: `Действия: ${name}` }))
   await user.click(screen.getByRole('menuitem', { name: action }))
+}
+
+function dataTransfer() {
+  const data = new Map<string, string>()
+  return {
+    types: [] as string[],
+    effectAllowed: '',
+    dropEffect: '',
+    setData(type: string, value: string) { data.set(type, value); this.types = Array.from(data.keys()) },
+    getData(type: string) { return data.get(type) ?? '' },
+  }
 }
 
 function renderPage(path: string) {

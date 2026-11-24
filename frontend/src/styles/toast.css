@@ -1,0 +1,89 @@
+/* U3: стек уведомлений (тосты) с действием и автозакрытием. */
+
+.toast-stack {
+  position: fixed;
+  top: 84px;
+  right: max(24px, env(safe-area-inset-right));
+  z-index: 90;
+  display: grid;
+  gap: var(--space-2);
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-floating);
+  color: var(--text-primary);
+  font-size: 13px;
+  pointer-events: auto;
+  animation: toast-enter var(--motion-normal) ease-out;
+}
+
+.toast[data-kind='success'] { border-color: var(--accent-muted); }
+.toast[data-kind='error'] { border-color: var(--danger); color: var(--danger); }
+
+.toast-message {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.toast-action {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 650;
+  font-size: 12px;
+}
+
+.toast-action:hover { background: var(--accent-muted); color: var(--text-primary); }
+
+.toast-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.toast-close:hover { background: var(--surface-primary); color: var(--text-primary); }
+.toast-close svg { width: 16px; height: 16px; }
+
+@keyframes toast-enter {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 600px) {
+  .toast-stack {
+    top: auto;
+    right: 16px;
+    left: 16px;
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 88px);
+    width: auto;
+  }
+
+  @keyframes toast-enter {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}

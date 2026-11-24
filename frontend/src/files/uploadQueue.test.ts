@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AxiosRequestConfig } from 'axios'
 import { apiRequest } from '../api/client'
 import { ApiError } from '../api/errors'
-import { UploadQueue } from './uploadQueue'
+import { localFileReadError, UploadQueue } from './uploadQueue'
 
 vi.mock('../api/client', () => ({ apiRequest: vi.fn() }))
 const request = vi.mocked(apiRequest)
@@ -392,6 +392,31 @@ describe('UploadQueue', () => {
     const persisted = JSON.parse(window.localStorage.getItem('homecloud.uploads.v1.owner.42')!) as unknown[]
     expect(persisted).toHaveLength(205)
     write.mockRestore()
+  })
+
+  it('explains unreadable local files (macOS package, iCloud placeholder) instead of raw browser text', async () => {
+    const server = fixture()
+    const q = queue()
+    const unreadable = file('CoolApp.app', 10)
+    // jsdom-Blob не имеет arrayBuffer: подменяем slice, чтобы readBlob пошёл по ветке arrayBuffer и упал, как браузер на пакете macOS.
+    unreadable.slice = () => ({ arrayBuffer: () => Promise.reject(new DOMException('Path no longer exists or is no longer a directory', 'NotReadableError')) }) as unknown as Blob
+    const [id] = q.enqueue([unreadable])
+    await vi.waitFor(() => expect(state(q, id).state).toBe('error'))
+    expect(state(q, id).error).toContain('сожмите его в ZIP или загрузите как папку')
+    expect(state(q, id).error).toContain('iCloud')
+    expect(state(q, id).error).not.toContain('Path no longer exists')
+    expect(server.creates()).toBe(0)
+  })
+
+  it('localFileReadError explains raw browser read failures and ignores other errors', () => {
+    const domException = new DOMException('Path no longer exists or is no longer a directory', 'NotReadableError')
+    expect(localFileReadError(domException)).toContain('сожмите его в ZIP или загрузите как папку')
+    // DOMException в jsdom может не наследовать Error — хелпер обязан работать и с такими объектами.
+    const plainDomLike = { name: 'NotReadableError', message: 'A file could not be read' }
+    expect(localFileReadError(plainDomLike)).toContain('iCloud')
+    expect(localFileReadError(new Error('Network connection lost'))).toBeNull()
+    expect(localFileReadError(new ApiError('not found', 'unknown', 404))).toBeNull()
+    expect(localFileReadError(null)).toBeNull()
   })
 
   it('StrictMode authenticated discovery can remount a disposed queue without losing controls', async () => {

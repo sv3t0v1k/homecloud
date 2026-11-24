@@ -40,12 +40,18 @@ services:
       NODE_OPTIONS: --max-old-space-size=512
       # Updates v1: пустой ID сохраняет прежнее поведение (раздел выключен).
       UPDATE_ADMIN_USER_ID: ${UPDATE_ADMIN_USER_ID:-}
+      UPDATE_CHANNEL: test
+      UPDATE_INSTALL_BRIDGE_ENABLED: "false" # admission only; requires separate host approval
+      UPDATE_GITHUB_TOKEN: ${UPDATE_GITHUB_TOKEN:-}
+      UPDATE_GITHUB_USER: ${UPDATE_GITHUB_USER:-}
       # Файл создаётся оператором только после сверки работающего SHA и миграций.
       # /storage уже является собственным bind mount тестового проекта.
       UPDATE_INSTALLED_METADATA_PATH: /storage/.homecloud-installed-version.json
-      # Малые initial tests: 256 MiB/file, 2 GiB total. Один upload за раз.
-      MAX_FILE_SIZE: "268435456"
-      MAX_TOTAL_SIZE: "2147483648"
+      # Большие файлы: 100 GiB/file, 100 GiB total. Один upload за раз.
+      # Физическая ёмкость HDD-bind sdc сейчас ~90 GiB свободно: честный
+      # тест 100 GiB требует расширения диска в Proxmox (growpart+resize2fs).
+      MAX_FILE_SIZE: "107374182400"
+      MAX_TOTAL_SIZE: "107374182400"
     volumes: !override
       - type: bind
         source: ${HDD_STORAGE_DIR:?Укажите project HDD bind storage}
@@ -74,6 +80,11 @@ services:
       - type: bind
         source: ${HDD_STORAGE_DIR}/../.homecloud-backend
         target: /run/homecloud/volume-marker
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./.runtime/maintenance
+        target: /run/homecloud/maintenance
         read_only: true
         bind: {create_host_path: false}
   frontend:

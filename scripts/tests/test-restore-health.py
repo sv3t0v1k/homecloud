@@ -19,12 +19,15 @@ sys.argv = [sys.argv[0], *remaining]
 ROOT = options.baseline_root or Path(__file__).resolve().parents[2]
 
 class HealthGate(unittest.TestCase):
+    READY = {'success': True, 'data': {'status': 'ready', 'checks': {'database': 'ok', 'storage': 'ok'}}}
+
     def gate(self, body, rc=0):
         source = (ROOT / 'scripts/restore.sh').read_text()
         block = source.split('# --- Health check (actual HTTP probe, output captured) ---', 1)[1]
         shim = '''set -euo pipefail
 log() { :; }; err() { printf '%s\\n' "$*" >&2; }
 sleep() { :; }
+restore_ack() { :; }
 docker() { cat >/dev/null; printf '%s' "$TEST_BODY"; return "$TEST_RC"; }
 RECOVERY_STORAGE_TYPE=fixture; RECOVERY_STORAGE_TARGET=/fixture
 STORAGE_VOLUME=fixture; BACKEND_IMAGE=fixture
@@ -33,19 +36,38 @@ STORAGE_VOLUME=fixture; BACKEND_IMAGE=fixture
                               env=dict(os.environ, TEST_BODY=json.dumps(body) if not isinstance(body, str) else body, TEST_RC=str(rc)))
 
     def test_ready_http200(self):
-        self.assertEqual(self.gate({'status':'ready', 'checks':{'database':'ok','storage':'ok'}}).returncode, 0)
+        self.assertEqual(self.gate(self.READY).returncode, 0)
+
+    def test_success_envelope_is_required(self):
+        for success in (False, None, 1, 'true'):
+            with self.subTest(success=success):
+                self.assertNotEqual(self.gate(dict(self.READY, success=success)).returncode, 0)
+        self.assertNotEqual(self.gate({'data': self.READY['data']}).returncode, 0)
+        self.assertNotEqual(self.gate(self.READY['data']).returncode, 0)
+
+    def test_invalid_envelope_data_or_checks_is_failure(self):
+        for value in (None, [], 'ready', 1):
+            with self.subTest(value=value):
+                self.assertNotEqual(self.gate({'success': True, 'data': value}).returncode, 0)
+                self.assertNotEqual(self.gate({'success': True, 'data': {'status': 'ready', 'checks': value}}).returncode, 0)
+
+    def test_failed_dependency_is_failure(self):
+        for dependency in ('database', 'storage'):
+            body = json.loads(json.dumps(self.READY))
+            body['data']['checks'][dependency] = 'failed'
+            self.assertNotEqual(self.gate(body).returncode, 0)
 
     def test_http_error_with_ok_body_is_failure(self):
-        self.assertNotEqual(self.gate({'status':'ready', 'checks':{'database':'ok','storage':'ok'}}, 1).returncode, 0)
+        self.assertNotEqual(self.gate(self.READY, 1).returncode, 0)
 
     def test_not_ready_body_is_failure(self):
-        self.assertNotEqual(self.gate({'status':'not_ready','checks':{'database':'ok','storage':'failed'}}).returncode, 0)
+        self.assertNotEqual(self.gate({'success': True, 'data': {'status':'not_ready','checks':{'database':'ok','storage':'ok'}}}).returncode, 0)
 
     def test_unrelated_ok_string_is_failure(self):
         self.assertNotEqual(self.gate({'error':'ok'}).returncode, 0)
 
     def test_missing_checks_is_failure(self):
-        self.assertNotEqual(self.gate({'status':'ready'}).returncode, 0)
+        self.assertNotEqual(self.gate({'success': True, 'data': {'status':'ready'}}).returncode, 0)
 
     def test_invalid_json_is_failure(self):
         self.assertNotEqual(self.gate('not JSON').returncode, 0)
@@ -57,7 +79,7 @@ STORAGE_VOLUME=fixture; BACKEND_IMAGE=fixture
         self.assertIsNotNone(match)
         # The actual probe runs with a module shim, never a network connection.
         stub="const Module=require('module'),events=require('events');const old=Module._load;Module._load=function(id,...args){if(id==='http')return {get(){const pending=setInterval(()=>{},1000);const q=new events.EventEmitter();q.setTimeout=()=>q;q.destroy=error=>{clearInterval(pending);q.emit('error',error);};return q;}};return old.call(this,id,...args);};"
-        with tempfile.TemporaryDirectory(dir='/private/tmp') as tmp:
+        with tempfile.TemporaryDirectory(prefix='hc-restore-health-') as tmp:
             module=Path(tmp)/'http-fixture.cjs';module.write_text(stub)
             start=time.monotonic()
             try:

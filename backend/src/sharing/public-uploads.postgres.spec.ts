@@ -1422,7 +1422,18 @@ pg(
           (row) => row.uploadId === session.uploadId,
         ),
       ).toBe(false);
-      const jwt = app.get(JwtService).sign({ sub: f.user.id });
+      const freshUser = await db
+        .getRepository(UserEntity)
+        .findOneOrFail({ where: { id: f.user.id } });
+      const jwt = app.get(JwtService).sign(
+        {
+          sub: f.user.id,
+          email: freshUser.email,
+          sv: freshUser.sessionVersion,
+          tokenUse: "access",
+        },
+        { expiresIn: 60 },
+      );
       await request(app.getHttpServer())
         .get(`/api/v1/uploads/session/${session.uploadId}`)
         .set("Authorization", `Bearer ${jwt}`)

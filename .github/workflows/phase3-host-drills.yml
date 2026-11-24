@@ -1,0 +1,147 @@
+name: Phase 3 host qualification and failure drills
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+  actions: read
+  packages: read
+jobs:
+  phase3-host-drills:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Повторить синтетические отказные сценарии на Linux/amd64
+        run: |
+          test "$(uname -m)" = x86_64
+          python3 scripts/ci/test-update-install-host.py
+          python3 scripts/ci/test-update-install-bridge.py
+          python3 scripts/ci/test-update-status-archive.py
+          python3 scripts/ci/test-update-admission.py
+          python3 scripts/ci/test-update-host-discover.py
+          python3 scripts/ci/test-phase3-host-evidence.py
+          python3 scripts/ci/test-test-channel.py
+          python3 scripts/ci/test-backup-qualification.py
+          python3 scripts/ci/test-root-boundary.py
+      - name: Получить кандидатный hash актуального protected TEST artifact
+        id: test-evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          identity=$(python3 scripts/ci/phase3-host-evidence.py)
+          [[ "$identity" =~ ^[a-f0-9]{64}$ ]]
+          printf 'identity=%s\n' "$identity" >> "$GITHUB_OUTPUT"
+      - name: Подготовить только временные доверенные пути в runner
+        run: |
+          sudo install -d -o root -g root -m 0755 /home/hs
+          sudo cp -a "$GITHUB_WORKSPACE" /home/hs/homecloud-test
+          sudo chown -R root:root /home/hs/homecloud-test
+          if sudo git -C /home/hs/homecloud-test config --local --get gc.auto >/dev/null; then
+            sudo git -C /home/hs/homecloud-test config --local --unset gc.auto
+          fi
+          sudo setfacl -b -k /home
+          sudo setfacl -R -b -k /home/hs
+          sudo install -o root -g root -m 0755 /home/hs/homecloud-test/deploy/linux/update-host-verify.py /usr/local/sbin/homecloud-update-verify
+          sudo install -o root -g root -m 0755 /home/hs/homecloud-test/deploy/linux/update-install-bridge.py /usr/local/sbin/homecloud-update-install
+          sudo install -o root -g root -m 0700 /home/hs/homecloud-test/deploy/linux/update-status-archive.py /usr/local/sbin/homecloud-update-archive
+          sudo stat -c '%u:%g %a %n' /home/hs/homecloud-test /usr/local/sbin/homecloud-update-verify /usr/local/sbin/homecloud-update-install
+      - name: Проверить root, ACL, SHA256 и ожидаемый target gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_MANIFEST_SHA256: ${{ steps.test-evidence.outputs.identity }}
+        run: |
+          cd /home/hs/homecloud-test
+          sudo --preserve-env=GH_TOKEN,TEST_MANIFEST_SHA256 /usr/bin/python3 -I -S - <<'PY'
+          import hashlib
+          import os
+          import runpy
+          from pathlib import Path
+          worker = runpy.run_path('/usr/local/sbin/homecloud-update-install')
+          verifier = runpy.run_path('/usr/local/sbin/homecloud-update-verify')
+          worker['trusted_anchor_path'](worker['WORKER'])
+          worker['trusted_anchor_path'](worker['VERIFIER'])
+          modules = verifier['load_helpers'](verifier['ROOT'])
+          boundary = modules['boundary']
+          boundary.validate_checkout(verifier['ROOT'])
+          for path, expected in verifier['QUALIFIED'].values():
+              assert hashlib.sha256((verifier['ROOT'] / path).read_bytes()).hexdigest() == expected
+          assert worker['PROVISIONED'] is False
+          client = modules['update_source'].GitHubClient(os.environ['GH_TOKEN'])
+          # The previous step's PR-checkout code supplies only an untrusted hint.
+          manifest = modules['update_source'].fetch_test_evidence(
+              os.environ['TEST_MANIFEST_SHA256'], modules['test_contract'].shape, client)
+          source = verifier['GitSource'](verifier['ROOT'], boundary.clean_environment())
+          current = source.head().decode('ascii')
+          deploy_diff = source.git('diff-tree', '-r', '-z', '--no-renames',
+                                   '--name-only', current, manifest['commit'],
+                                   '--', 'deploy')
+          deploy_changed = {path.decode('utf-8')
+                            for path in deploy_diff.split(bytes([0])) if path}
+          scripts_diff = source.git('diff-tree', '-r', '-z', '--no-renames',
+                                    '--name-only', current, manifest['commit'],
+                                    '--', 'scripts')
+          scripts_changed = {path.decode('utf-8')
+                             for path in scripts_diff.split(bytes([0])) if path}
+          changed = bool(deploy_changed or scripts_changed)
+          deploy_qualified = verifier.get('DEPLOY_ONLY_CHANGES', frozenset())
+          deploy_within_qualified = deploy_changed <= deploy_qualified
+          try:
+              verifier['target_sources'](manifest, modules['test_contract'], source)
+          except ValueError as error:
+              assert changed and str(error) in (
+                  'deploy changes outside qualified set; separate qualification required',
+                  'root helper tree changed; separate qualification required',
+              ), str(error)
+              if deploy_within_qualified:
+                  raise AssertionError('qualified deploy change was rejected')
+              print('PASS: helper tree change refused by target gate')
+          else:
+              if changed:
+                  if not deploy_within_qualified:
+                      raise AssertionError('unqualified deploy change was accepted')
+                  assert scripts_changed <= verifier['CI_ONLY_SCRIPT_CHANGES'], \
+                      'accepted helper tree change outside the CI-only whitelist'
+                  print('PASS: qualified deploy or CI-only script change accepted by target gate')
+              else:
+                  print('PASS: unchanged helper tree and target sources accepted')
+          print('PASS: root trust, six SHA256 pins, current protected TEST evidence')
+          PY
+          # Overlayfs-backed runner roots may not expose POSIX ACL xattrs via
+          # listxattr, which would silently defeat this drill. Run the ACL
+          # refusal check against an anchor on a fresh tmpfs instead.
+          sudo mount -t tmpfs tmpfs /mnt
+          sudo install -o root -g root -m 0755 /home/hs/homecloud-test/deploy/linux/update-install-bridge.py /mnt/homecloud-update-install
+          sudo setfacl -m u:1001:r-- /mnt/homecloud-update-install
+          sudo /usr/bin/python3 -I -S - <<'PY'
+          import os
+          from pathlib import Path
+          import runpy
+          anchor = Path('/mnt/homecloud-update-install')
+          if 'system.posix_acl_access' not in os.listxattr(anchor, follow_symlinks=False):
+              raise AssertionError('filesystem does not expose ACL xattrs for the drill')
+          worker = runpy.run_path(str(anchor))
+          try:
+              worker['trusted_anchor_path'](anchor)
+          except worker['Stop']:
+              print('PASS: installed worker ACL refused')
+          else:
+              raise AssertionError('ACL-bearing worker accepted')
+          PY
+          sudo umount /mnt
+          test -f deploy/systemd/homecloud-update-install.service
+          test ! -e /etc/systemd/system/homecloud-update-install.service
+          if sudo /usr/bin/python3 -I -S /usr/local/sbin/homecloud-update-install > "$RUNNER_TEMP/worker-stop.txt" 2>&1; then
+            echo 'Unprovisioned worker unexpectedly ran' >&2
+            exit 1
+          fi
+          grep -Fx 'STOP: host installer bridge refused; operator review required' "$RUNNER_TEMP/worker-stop.txt"
+          test ! -e /var/lib/homecloud-update/status/current.json
+          test ! -e /home/hs/homecloud-test/.runtime/test-channel/pending.json
+      - name: Проверить реальный синтетический backup и восстановление
+        run: sudo /usr/bin/python3 /home/hs/homecloud-test/scripts/ci/phase3-backup-drill.py

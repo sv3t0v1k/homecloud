@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { ConfigService } from "@nestjs/config";
 import { UpdatesService, verifiedLock } from "./updates.service";
+import * as hostCandidate from "./host-test-candidate";
 
 const repo = "sv3t0v1k/https---github.com-sv3t0v1k-homecloud";
 const oldSha = "a".repeat(40);
@@ -32,7 +33,7 @@ describe("updates discovery", () => {
   let directory: string;
   let originalFetch: typeof fetch;
   beforeEach(async () => { directory = await mkdtemp(join(tmpdir(), "homecloud-updates-")); originalFetch = global.fetch; });
-  afterEach(async () => { global.fetch = originalFetch; await rm(directory, { recursive: true, force: true }); });
+  afterEach(async () => { jest.restoreAllMocks(); global.fetch = originalFetch; await rm(directory, { recursive: true, force: true }); });
 
   it("rejects a changed digest and incomplete qualification", () => {
     const value = lock(newSha, "v0.9.1-beta.1");
@@ -55,6 +56,40 @@ describe("updates discovery", () => {
     });
   });
 
+  it("uses TEST Actions discovery only for the configured test channel", async () => {
+    await writeFile(join(directory, "snapshot.json"), JSON.stringify({
+      format: "homecloud-installed-test-v1", version: oldSha.slice(0, 7), gitSha: oldSha,
+      schemaMigrations: ["MigrationOne"],
+    }));
+    const config = { get: (key: string) => key === "UPDATE_CHANNEL" ? "test" :
+      key === "UPDATE_INSTALLED_METADATA_PATH" ? join(directory, "snapshot.json") : "" } as ConfigService;
+    global.fetch = jest.fn(async (url: string) => {
+      expect(url).toContain("/branches/test");
+      return Response.json({ protected: true, commit: { sha: oldSha } });
+    }) as typeof fetch;
+    const result = await new UpdatesService(config).check();
+    expect(result).toMatchObject({ channel: "test", installed: { gitSha: oldSha }, available: null, status: "current" });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the root-owned TEST hint without external backend access", async () => {
+    await writeFile(join(directory, "snapshot.json"), JSON.stringify({
+      format: "homecloud-installed-test-v1", version: oldSha.slice(0, 7), gitSha: oldSha,
+      schemaMigrations: ["MigrationOne"],
+    }));
+    const candidate = { version: `test-${newSha.slice(0, 7)}`, gitSha: newSha,
+      backendDigest: digest, frontendDigest: digest, manifestSha256: "f".repeat(64),
+      compatibility: "exact-migrations" as const, changes: "" };
+    jest.spyOn(hostCandidate, "readHostTestCandidate").mockResolvedValue(candidate);
+    global.fetch = jest.fn(async () => { throw new Error("backend has no egress"); }) as typeof fetch;
+    const config = { get: (key: string) => key === "UPDATE_CHANNEL" ? "test" :
+      key === "UPDATE_INSTALLED_METADATA_PATH" ? join(directory, "snapshot.json") :
+      key === "UPDATE_TEST_CANDIDATE_PATH" ? "/run/homecloud-update/status/available.json" : "" } as ConfigService;
+    expect(await new UpdatesService(config).check()).toMatchObject({ status: "available", available: candidate });
+    expect(hostCandidate.readHostTestCandidate).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("hides releases that are drafts or lack current registry digests", async () => {
     const installed = lock(oldSha, "v0.9.0-beta.1");
     await writeFile(join(directory, "installed.json"), JSON.stringify(installed));
@@ -64,7 +99,7 @@ describe("updates discovery", () => {
     expect(service.isAdmin(8)).toBe(false);
     let draft = true;
     global.fetch = jest.fn(async (url: string) => {
-      if (url.includes("/releases?")) return Response.json([{ draft, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/releases/assets/42` }] }]);
+      if (url.includes("/releases?")) return Response.json([{ draft, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` }] }]);
       if (url.includes("/releases/assets/42")) return Response.json(lock(newSha, "v0.9.1-beta.1"));
       if (url.includes("/compare/")) return Response.json({ status: "ahead" });
       if (url.includes("/actions/runs/123")) return Response.json({ conclusion: "success", head_sha: newSha, event: "workflow_dispatch", path: ".github/workflows/release.yml", run_attempt: 1 });
@@ -84,7 +119,7 @@ describe("updates discovery", () => {
     await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
     const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") : "" } as ConfigService);
     global.fetch = jest.fn(async (url: string) => {
-      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/releases/assets/42` }] }]);
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` }] }]);
       if (url.includes("/releases/assets/42")) return Response.json(lock(newSha, "v0.9.1-beta.1"));
       if (url.includes("/compare/")) return Response.json({ status: "ahead" });
       if (url.includes("/actions/runs/123")) return Response.json({ conclusion: "success", head_sha: newSha, event: "workflow_dispatch", path: ".github/workflows/release.yml", run_attempt: 1 });

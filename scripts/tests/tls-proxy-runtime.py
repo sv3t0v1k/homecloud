@@ -6,6 +6,7 @@ Only uniquely named containers/networks created by this script are removed.
 """
 import secrets
 import base64, hashlib, json, os, pathlib, socket, subprocess, tempfile, time, uuid
+from runtime_fixture_user import seed_fixture_user
 repo = pathlib.Path(__file__).resolve().parents[2]
 root = pathlib.Path(tempfile.mkdtemp(prefix='hc-tls-proxy-'))
 name = 'hc-tls-' + uuid.uuid4().hex[:10]
@@ -126,9 +127,14 @@ try:
     assert container_requests(edge,'172.29.0.40','https://172.29.0.10',['/api/v1/probe'],spoof)[0]['status']==429
     result.update(trusted_protocol_client_host=True,direct_spoof_ignored=True,independent_client_budgets=True,spoof_rotation_limited=True,backend_no_host_publish=True)
     credentials={'email':'tls@example.invalid','password':'TlsPassword938475!','name':'TLS'}
-    code,body,h=request('/api/v1/auth/register',data=credentials,headers={'X-Request-Id':'tls-proxy-runtime-938475'}); assert code==201 and h['x-request-id']=='tls-proxy-runtime-938475'
+    code,body,h=request('/api/v1/auth/register',data=credentials,headers={'X-Request-Id':'tls-proxy-runtime-938475'})
+    assert code==403 and h['x-request-id']=='tls-proxy-runtime-938475'
+    assert json.loads(body)['code']=='REGISTRATION_DISABLED'
+    result['public_registration_disabled']=True
+    seed_fixture_user(db,'hc_tls',credentials)
     docker('exec',db,'psql','-U','postgres','-d','hc_tls','-c',"UPDATE users SET \"storageQuota\"=1048576 WHERE email='tls@example.invalid'")
-    code,body,h=request('/api/v1/auth/login',data={'email':credentials['email'],'password':credentials['password']}); assert code==200
+    code,body,h=request('/api/v1/auth/login',data={'email':credentials['email'],'password':credentials['password']},headers={'X-Request-Id':'tls-proxy-login-938475'})
+    assert code==200 and h['x-request-id']=='tls-proxy-login-938475'
     token=json.loads(body)['data']['accessToken']; assert request('/api/v1/files',token)[0]==200
     payload=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=')
     code,body,_=request('/api/v1/uploads/session',token,{'filename':'tls.png','totalSize':len(payload),'chunkSize':len(payload)}); assert code==201

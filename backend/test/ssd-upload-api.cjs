@@ -78,6 +78,7 @@ async function boot(enabled, recovery = "manual") {
   const { ValidationPipe } = require("@nestjs/common");
   const { ConfigService } = require("@nestjs/config");
   const { JwtService } = require("@nestjs/jwt");
+  const { JwtStrategy } = require("../dist/auth/jwt.strategy");
   const {
     HttpExceptionFilter,
   } = require("../dist/common/errors/http-exception.filter");
@@ -117,6 +118,7 @@ async function boot(enabled, recovery = "manual") {
   app.use(requestObservability(app.get(MetricsService)));
   applySecurityMiddleware(app, config, {
     jwtService: app.get(JwtService),
+    jwtStrategy: app.get(JwtStrategy),
     uploads: app.get(UploadRateLimitService),
   });
   app.useBodyParser("json");
@@ -288,10 +290,22 @@ async function run() {
   process.env.REDIS_PASSWORD = randomBytes(24).toString("hex");
   process.env.JWT_SECRET = randomBytes(32).toString("hex");
   process.env.JWT_REFRESH_SECRET = randomBytes(32).toString("hex");
-  process.env.UPLOAD_SSD_MOUNT_SOURCE = "/dev/vda1";
-  process.env.UPLOAD_SSD_MOUNT_ROOT =
-    "/docker/volumes/homecloud-stage24-ssd/_data";
-  process.env.UPLOAD_SSD_FS_TYPE = "ext4";
+  const mounts = fs.readFileSync("/proc/self/mountinfo", "utf8")
+    .split(String.fromCharCode(10))
+    .map((line) => line.split(" "))
+    .filter((fields) => fields[4] === "/ssd");
+
+  assert.equal(mounts.length, 1, "Exact owned SSD mount required");
+
+  const fields = mounts[0];
+  const separator = fields.indexOf("-");
+
+  assert.ok(separator >= 6, "Invalid SSD mount metadata");
+  assert.equal(fields[separator + 1], "ext4", "Fixture SSD must use ext4");
+
+  process.env.UPLOAD_SSD_MOUNT_SOURCE = fields[separator + 2];
+  process.env.UPLOAD_SSD_MOUNT_ROOT = fields[3];
+  process.env.UPLOAD_SSD_FS_TYPE = fields[separator + 1];
   process.env.MAX_CHUNK_SIZE = "1048576";
   process.env.MAX_FILE_SIZE = "10485760";
   process.env.MAX_TOTAL_SIZE = "104857600";
@@ -350,7 +364,7 @@ async function run() {
   const fixtureUrl = new URL(originalUrl);
   fixtureUrl.searchParams.set("options", `-c search_path=${schema}`);
   process.env.DATABASE_URL = fixtureUrl.toString();
-  const migrations = require("../dist/data-source").default;
+  const migrations = new DataSource(require("../dist/data-source").default.options);
   migrations.setOptions({
     schema,
     extra: { options: `-c search_path=${schema}` },
@@ -364,14 +378,37 @@ async function run() {
   await request("GET", "/uploads/sessions", 401);
   const email = `${schema}@example.test`;
   const password = randomBytes(16).toString("hex");
-  const auth = await request("POST", "/auth/register", 201, {
+  // Only this fixture's randomly named, isolated PostgreSQL schema.
+  assert.equal(
+    (await query("SELECT current_schema() schema"))[0].schema,
+    schema,
+  );
+
+  const passwordHash = await require("bcryptjs").hash(password, 12);
+
+  const inserted = await query(
+    `INSERT INTO "${schema}".users
+       (email,password,name,role,"sessionVersion","isActive")
+     VALUES ($1,$2,$3,'USER',1,true)
+     RETURNING id,role`,
+    [email, passwordHash, "SSD API Fixture"],
+  );
+
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].role, "USER");
+  userId = inserted[0].id;
+
+  const auth = await request("POST", "/auth/login", 200, {
     email,
     password,
-    name: "SSD API Fixture",
   });
   token = auth.accessToken;
-  assert.equal(typeof token, "string", "Register must issue access token");
-  userId = (await query(`SELECT id FROM users WHERE email=$1`, [email]))[0].id;
+  assert.equal(typeof token, "string", "Login must issue access token");
+  assert.equal(typeof auth.refreshToken, "string");
+  assert.equal(
+    (await query(`SELECT id FROM users WHERE email=$1`, [email]))[0].id,
+    userId,
+  );
   await query(`UPDATE users SET "storageQuota"=$2 WHERE id=$1`, [
     userId,
     "1073741824",

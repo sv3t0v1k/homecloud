@@ -15,7 +15,7 @@ import provenance
 ROOT = Path(__file__).resolve().parents[2]
 EXCLUDED = ':(top,exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md'
 SHA = re.compile(r'^[a-f0-9]{40}$')
-TAG = re.compile(r'^v0\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-beta\.([1-9][0-9]*)$')
+TAG = re.compile(r'^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-beta\.([1-9][0-9]*))?$')
 DIGEST = re.compile(r'^sha256:[a-f0-9]{64}$')
 REPO = re.compile(r'^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_.-]*$')
 SOURCE_PATHS = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-compose.project-test.yml',

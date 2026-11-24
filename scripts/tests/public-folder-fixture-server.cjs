@@ -17,6 +17,10 @@ const mode = process.env.FIXTURE_SSD === 'true';
 const controls = {};
 const events = [];
 const controlKey = process.env.FIXTURE_CONTROL_KEY;
+if (typeof controlKey !== 'string' ||
+    !/^[a-f0-9]{48}$/.test(controlKey)) {
+  throw Error('Strong disposable fixture control key required');
+}
 function event(name,detail={}) {events.push({name,time:Date.now(),...detail});}
 async function boot(){
  process.env.UPLOAD_SSD_ENABLED=String(mode);
@@ -26,6 +30,7 @@ async function boot(){
  const {ValidationPipe}=require('@nestjs/common');
  const {ConfigService}=require('@nestjs/config');
  const {JwtService}=require('@nestjs/jwt');
+ const {JwtStrategy}=require('/app/dist/auth/jwt.strategy');
  const {HttpExceptionFilter}=require('/app/dist/common/errors/http-exception.filter');
  const {TransformInterceptor}=require('/app/dist/common/interceptors/transform.interceptor');
  const {structuredLogger}=require('/app/dist/common/observability/structured-logger');
@@ -39,7 +44,7 @@ async function boot(){
  await validateStartupConfiguration(app);
  const config=app.get(ConfigService);assert.equal(String(config.get('UPLOAD_SSD_ENABLED')),String(mode));
  configureTrustedProxy(app,config);app.use(requestObservability(app.get(MetricsService)));
- applySecurityMiddleware(app,config,{jwtService:app.get(JwtService),uploads:app.get(UploadRateLimitService),publicUploads:app.get(require('/app/dist/sharing/public-uploads.service').PublicUploadsService)});
+ applySecurityMiddleware(app,config,{jwtService:app.get(JwtService),jwtStrategy:app.get(JwtStrategy),uploads:app.get(UploadRateLimitService),publicUploads:app.get(require('/app/dist/sharing/public-uploads.service').PublicUploadsService)});
  app.useBodyParser('json');app.useBodyParser('urlencoded',{extended:true});
  const query=(sql,args=[])=>app.get(DataSource).query(sql,args);
  assert.equal((await query('select current_schema() schema'))[0].schema,schema);
@@ -47,6 +52,44 @@ async function boot(){
   if(req.path.startsWith('/__fixture')){
    if(req.get('x-fixture-control')!==controlKey)return res.status(403).end();
    try{
+
+    // Test process only: the existing fixture opt-in, Linux UID,
+    // dedicated DB, private schema and control key remain mandatory.
+    if(req.path==='/__fixture/account' && req.method==='POST'){
+      const body=req.body;
+      if(!body || typeof body.email!=='string' ||
+         typeof body.password!=='string' ||
+         !/^public-browser-[a-f0-9]{12}@example[.]test$/.test(body.email) ||
+         !/^[a-f0-9]{40}$/.test(body.password) ||
+         Object.keys(body).sort().join(',')!=='email,password'){
+        return res.status(400).json({message:'Invalid fixture account'});
+      }
+
+      try {
+        assert.equal(
+          (await query('SELECT current_schema() schema'))[0].schema,
+          schema,
+        );
+
+        const passwordHash=await require('bcryptjs').hash(body.password,12);
+
+        const rows=await query(
+          `INSERT INTO "${schema}".users
+             (email,password,name,role,"sessionVersion","isActive")
+           VALUES ($1,$2,$3,'USER',1,true)
+           RETURNING id,role`,
+          [body.email,passwordHash,'Browser fixture'],
+        );
+
+        assert.equal(rows.length,1);
+        assert.equal(rows[0].role,'USER');
+
+        return res.json({id:rows[0].id,role:'USER'});
+      } catch {
+        // Do not emit SQL errors, credential values or password hashes.
+        return res.status(500).json({message:'Fixture account preparation failed'});
+      }
+    }
     if(req.path==='/__fixture/control' && req.method==='POST'){Object.assign(controls,req.body);return res.json({mode,controls});}
     if(req.path==='/__fixture/state')return res.json({schema,mode,controls,events,sessions:await query('SELECT "uploadId",filename,"expectedSha256","workspaceId",status,"uploadedCount","totalChunks" FROM upload_sessions ORDER BY id'),folders:await query('SELECT id,name,"parentId" FROM folders ORDER BY id'),files:await query('SELECT id,name,size,"parentId","folderId",checksum,"storagePath" as path,"relativeObjectKey","storageLocationId","uploadId" FROM files ORDER BY id'),receipts:await query('SELECT "uploadId",state,"cleanupState" FROM ssd_finalization_operations')});
     if(req.path==='/__fixture/quota' && req.method==='POST'){const bytes=req.body.bytes??1073741824;assert.ok(Number.isSafeInteger(bytes)&&bytes>=0);await query('UPDATE users SET \"storageQuota\"=$2 WHERE email=$1',[req.body.email,bytes]);return res.json({ok:true});}
@@ -77,6 +120,6 @@ async function boot(){
  assert.notEqual(fs.statSync('/storage').dev,fs.statSync('/ssd').dev);
  admin=new DataSource({type:'postgres',url:originalUrl.toString()});await admin.initialize();await admin.query(`CREATE SCHEMA "${schema}"`);
  const fixtureUrl=new URL(originalUrl);fixtureUrl.searchParams.set('options',`-c search_path=${schema}`);process.env.DATABASE_URL=fixtureUrl.toString();
- const migrations=require('/app/dist/data-source').default;migrations.setOptions({schema,extra:{options:`-c search_path=${schema}`}});await migrations.initialize();await migrations.runMigrations();await migrations.destroy();
+ const migrations=new DataSource(require('/app/dist/data-source').default.options);migrations.setOptions({schema,extra:{options:`-c search_path=${schema}`}});await migrations.initialize();await migrations.runMigrations();await migrations.destroy();
  await boot();
 })().catch(error=>{console.error('Fixture failure:',error.message);process.exitCode=1;});

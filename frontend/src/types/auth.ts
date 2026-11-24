@@ -3,12 +3,6 @@ export interface LoginDto {
   password: string
 }
 
-export interface RegisterDto {
-  email: string
-  password: string
-  name?: string
-}
-
 export interface Tokens {
   accessToken: string
   refreshToken: string
@@ -20,6 +14,7 @@ export interface User {
   name: string
   isActive: boolean
   isEmailVerified: boolean
+  role: 'ADMIN' | 'USER'
   avatar: string | null
   storageQuota: string | number
   storageUsed: string | number

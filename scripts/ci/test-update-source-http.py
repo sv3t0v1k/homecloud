@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Offline HTTP and ZIP security tests for TEST update source."""
+import io
+import json
+from pathlib import Path
+import sys
+import unittest
+import urllib.error
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "deploy/linux"))
+
+from update_source import GitHubClient, NetworkError, SourceError, MAX_JSON
+
+
+class Response:
+    status = 200
+
+    def __init__(self, body, headers=None):
+        self.body = io.BytesIO(body)
+        self.headers = headers or {}
+
+    def read(self, count=-1):
+        return self.body.read(count)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.body.close()
+
+
+class Opener:
+    def __init__(self, *results):
+        self.results = list(results)
+        self.requests = []
+
+    def open(self, request, timeout=None):
+        self.requests.append(request)
+        if not self.results:
+            raise AssertionError("Unexpected network request")
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def redirect(location):
+    return urllib.error.HTTPError(
+        "https://api.github.com/artifact", 302, "Found",
+        {"Location": location}, io.BytesIO(b""),
+    )
+
+
+def make_zip(entries):
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, body in entries.items():
+            archive.writestr(name, body)
+    return output.getvalue()
+
+
+BLOB = "https://productionresultssa30.blob.core.windows.net/file"
+
+
+class SourceHttpTests(unittest.TestCase):
+    def client(self, *results):
+        client = GitHubClient("private-test-token")
+        client.opener = Opener(*results)
+        return client
+
+    def test_api_authentication(self):
+        client = self.client(Response(b'{"ok":true}'))
+        self.assertEqual(client.api_json("/branches/test"), {"ok": True})
+        self.assertEqual(
+            client.opener.requests[0].get_header("Authorization"),
+            "Bearer private-test-token",
+        )
+
+    def test_rejects_oversized_body_without_length(self):
+        client = self.client(Response(b"x" * 20))
+        with self.assertRaises(SourceError):
+            client.read("https://api.github.com/test", 10, True)
+
+    def test_rejects_oversized_content_length(self):
+        client = self.client(Response(
+            b"{}", {"Content-Length": "999999999"},
+        ))
+        with self.assertRaises(SourceError):
+            client.read("https://api.github.com/test", 10, True)
+
+    def test_rejects_api_redirect(self):
+        client = self.client(redirect(BLOB), redirect(BLOB))
+        with self.assertRaises(SourceError):
+            client.api_json("/branches/test")
+        # Оба имени репозитория опробованы, редиректу не следовали.
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_valid_zip_never_leaks_token(self):
+        payload = {"format": "example"}
+        archive = make_zip({
+            "test-channel.json": json.dumps(payload).encode(),
+        })
+        client = self.client(redirect(BLOB), Response(archive))
+        self.assertEqual(client.artifact_json(42), payload)
+
+        first, second = client.opener.requests
+        self.assertEqual(
+            first.get_header("Authorization"),
+            "Bearer private-test-token",
+        )
+        self.assertIsNone(second.get_header("Authorization"))
+        self.assertEqual(second.full_url, BLOB)
+
+    def test_rejects_untrusted_redirect(self):
+        client = self.client(
+            redirect("https://evil.example/file"),
+            redirect("https://evil.example/file"),
+        )
+        with self.assertRaises(SourceError):
+            client.artifact_json(42)
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_falls_back_to_legacy_repository_name(self):
+        missing = Response(b"{}")
+        missing.status = 404
+        client = self.client(missing, Response(b'{"ok":true}'))
+        self.assertEqual(client.api_json("/branches/test"), {"ok": True})
+        self.assertEqual(len(client.opener.requests), 2)
+        self.assertIn("/sv3t0v1k/homecloud/", client.opener.requests[0].full_url)
+        self.assertIn("/sv3t0v1k/https---github.com-sv3t0v1k-HomeCloud/",
+                      client.opener.requests[1].full_url)
+
+    def test_unavailable_on_both_repository_names(self):
+        missing = Response(b"{}")
+        missing.status = 404
+        client = self.client(missing, missing)
+        with self.assertRaises(SourceError):
+            client.api_json("/branches/test")
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_transport_failures_raise_network_error(self):
+        import urllib.error
+        client = self.client(
+            urllib.error.URLError("down"), urllib.error.URLError("down"))
+        with self.assertRaises(NetworkError):
+            client.api_json("/branches/test")
+
+    def test_http_error_status_raises_network_error(self):
+        failure = Response(b"{}")
+        failure.status = 500
+        client = self.client(failure, failure)
+        with self.assertRaises(NetworkError):
+            client.api_json("/branches/test")
+
+    def test_logical_refusal_stays_source_error(self):
+        # 200 с перекрытым телом — логический отказ, не недоступность сети.
+        client = self.client(Response(b"x" * 20))
+        with self.assertRaises(SourceError) as caught:
+            client.read("https://api.github.com/test", 10, True)
+        self.assertNotIsInstance(caught.exception, NetworkError)
+
+    def test_rejects_corrupt_zip(self):
+        client = self.client(redirect(BLOB), Response(b"bad zip"))
+        with self.assertRaises(SourceError):
+            client.artifact_json(42)
+
+    def test_rejects_multiple_zip_entries(self):
+        archive = make_zip({
+            "test-channel.json": b"{}",
+            "extra.json": b"{}",
+        })
+        client = self.client(redirect(BLOB), Response(archive))
+        with self.assertRaises(SourceError):
+            client.artifact_json(42)
+
+    def test_rejects_oversized_uncompressed_entry(self):
+        archive = make_zip({
+            "test-channel.json": b"x" * (MAX_JSON + 1),
+        })
+        client = self.client(redirect(BLOB), Response(archive))
+        with self.assertRaises(SourceError):
+            client.artifact_json(42)
+
+    def test_logical_error_wins_over_later_network_error(self):
+        # primary: логический отказ; fallback: сетевая недоступность.
+        # Логический отказ важнее независимо от порядка имён.
+        import urllib.error
+        client = self.client(
+            Response(b"x" * (MAX_JSON + 1)), urllib.error.URLError("down"))
+        with self.assertRaises(SourceError) as caught:
+            client.api_json("/branches/test")
+        self.assertNotIsInstance(caught.exception, NetworkError)
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_logical_error_wins_after_earlier_network_error(self):
+        # Обратный порядок: сеть падает первой, логический отказ вторым.
+        import urllib.error
+        client = self.client(
+            urllib.error.URLError("down"), Response(b"x" * (MAX_JSON + 1)))
+        with self.assertRaises(SourceError) as caught:
+            client.api_json("/branches/test")
+        self.assertNotIsInstance(caught.exception, NetworkError)
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_artifact_logical_error_wins_over_later_network_error(self):
+        import urllib.error
+        client = self.client(
+            redirect("https://evil.example/file"),
+            urllib.error.URLError("down"))
+        with self.assertRaises(SourceError) as caught:
+            client.artifact_json(42)
+        self.assertNotIsInstance(caught.exception, NetworkError)
+        self.assertEqual(len(client.opener.requests), 2)
+
+    def test_artifact_logical_error_wins_after_earlier_network_error(self):
+        import urllib.error
+        client = self.client(
+            urllib.error.URLError("down"),
+            redirect("https://evil.example/file"))
+        with self.assertRaises(SourceError) as caught:
+            client.artifact_json(42)
+        self.assertNotIsInstance(caught.exception, NetworkError)
+        self.assertEqual(len(client.opener.requests), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,15 +1,73 @@
 name: HomeCloud PR Fast + Integration v2
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [test]
 permissions:
   contents: read
   pull-requests: read
 concurrency:
-  group: ci-v2-fast-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: ci-v2-fast-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  merge-reuse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      checks: read
+    outputs:
+      mode: ${{ steps.classify-reuse.outputs.mode }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Доказать reuse только для точного protected merge
+        id: classify-reuse
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/merge-reuse-evidence.json"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            printf '{"mode":"pr"}\n' > "$evidence"
+            echo 'mode=pr' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! base=$(git rev-parse HEAD^1); then
+            printf '{"mode":"full","reason":"missing protected parent"}\n' > "$evidence"
+            echo 'mode=full' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git show "$base:scripts/ci/ci-v2-merge-reuse.py" > "$RUNNER_TEMP/merge-reuse-policy.py"; then
+            printf '{"mode":"full","reason":"protected base policy unavailable"}\n' > "$evidence"
+            echo 'mode=full' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 -I -B "$RUNNER_TEMP/merge-reuse-policy.py" \
+            --event "$GITHUB_EVENT_PATH" --base "$base" \
+            --repository "$GITHUB_REPOSITORY" > "$evidence"
+          mode=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mode"])' "$evidence")
+          case "$mode" in
+            full|reuse) echo "mode=$mode" >> "$GITHUB_OUTPUT" ;;
+            *) echo 'Invalid merge reuse mode' >&2; exit 1 ;;
+          esac
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && github.event_name == 'push'
+        with:
+          name: merge-reuse-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/merge-reuse-evidence.json
+          if-no-files-found: error
+          retention-days: 30
   pr-fast-backend:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
@@ -21,20 +79,46 @@ jobs:
           test "$(dpkg-query -W -f='${Version}' perl-base)" = 5.36.0-7+deb12u4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - run: python3 scripts/ci/install-npm.py
       - run: npm ci --no-audit
         working-directory: backend
       - run: sh native/build.sh
         working-directory: backend
+      - run: node --test scripts/ci/test-recovery-workflow.cjs
+      - run: node --test scripts/ci/test-recovery-native-workflow.cjs
+      - run: python3 -B scripts/ci/test-recovery-context.py
       - run: python3 scripts/ci/test-ci-v2-fast-gate.py
+      - run: python3 scripts/ci/test-ci-v2-merge-reuse.py
+      - run: python3 -B scripts/ci/test-ci-v3-recovery-scope.py
       - run: python3 scripts/ci/test-ci-v2-candidate.py
+      - run: python3 scripts/ci/test-test-channel.py
+      - run: python3 scripts/ci/test-update-preflight.py
+      - run: python3 scripts/ci/test-test-job.py
+      - run: python3 scripts/ci/test-root-boundary.py
+      - run: python3 scripts/ci/test-update-admission.py
+      - run: python3 scripts/ci/test-update-evidence.py
+      - run: python3 scripts/ci/test-update-source-http.py
+      - name: Подготовить root-owned checkout для изолированной проверки хоста
+        run: |
+          stat -c '%u:%g %n' "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/.git"
+          chown -R root:root "$GITHUB_WORKSPACE"
+      - run: python3 scripts/ci/test-update-host-verify.py
+      - run: python3 scripts/ci/test-update-host-discover.py
+      - run: python3 scripts/ci/test-update-install-bridge.py
+      - run: python3 scripts/ci/test-provenance.py
+      - run: python3 scripts/ci/test-backup-qualification.py
       - run: python3 scripts/ci/test-secret-findings.py
+      - run: python3 scripts/ci/test-check-excluded-history.py
+      - run: python3 scripts/ci/test-install-oci-scanner.py
       - run: python3 scripts/ci/test-install-npm.py
       - run: python3 scripts/ci/test-test-routing.py
       - name: Route all unit suites, including critical smoke
         run: python3 scripts/ci/test-routing.py list unit > backend-unit-suites.txt
+      - name: Compile production code for real crash workers
+        run: npm run build
+        working-directory: backend
       - name: Run unit suites without PostgreSQL or bench suites
         shell: bash
         working-directory: backend
@@ -48,9 +132,10 @@ jobs:
         working-directory: backend
       - run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
         working-directory: backend
-      - run: npm run build
-        working-directory: backend
       - run: node test/file-type-compiled-runtime.cjs
+        working-directory: backend
+      - name: Linux writer fencing and orphan child regressions
+        run: runuser -u node -- node --test --test-timeout=30000 test/inherited-root-fence.runtime.cjs test/copy-root-fence-supervisor.runtime.cjs test/operator-cli-fence.runtime.cjs
         working-directory: backend
       - name: Patched dependency runtime and multipart boundaries
         run: runuser -u node -- node --test --test-timeout=10000 test/dependency-security-runtime.cjs
@@ -63,6 +148,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   backend:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
@@ -86,7 +173,7 @@ jobs:
           test "$(dpkg-query -W -f='${Version}' perl-base)" = 5.36.0-7+deb12u4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Install checksum-pinned compatible npm before dependency commands
         run: python3 scripts/ci/install-npm.py
@@ -96,6 +183,9 @@ jobs:
         working-directory: backend
       - name: Route PostgreSQL, concurrency, filesystem and bench suites
         run: python3 scripts/ci/test-routing.py list integration > backend-integration-suites.txt
+      - name: Compile production code for real crash workers
+        run: npm run build
+        working-directory: backend
       - name: Integration suites as unprivileged user
         shell: bash
         run: |
@@ -115,12 +205,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   frontend:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -147,20 +239,28 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   configuration:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Pin normalized Compose API; preserve explicit false bind flags
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/homecloud-compose-bin"
-          curl --fail --silent --show-error --location https://github.com/docker/compose/releases/download/v5.6.0/docker-compose-linux-x86_64 -o "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          echo "40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a  $RUNNER_TEMP/homecloud-compose-bin/docker-compose" | sha256sum --check
+          compose_image="docker.io/docker/compose-bin@sha256:1937db832e42161ab9b2bd35f3cfa24be06f8179dc4e2fc9e978e1380ee8b6be"
+          docker pull --platform linux/amd64 "$compose_image"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$compose_image")" = linux/amd64
+          compose_container="$(docker create --platform linux/amd64 --entrypoint /docker-compose "$compose_image" version --short)"
+          trap 'docker rm "$compose_container" >/dev/null 2>&1 || :' EXIT
+          docker cp "$compose_container:/docker-compose" "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
+          test -s "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
           chmod +x "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
+          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker-compose" version --short)" = 5.6.0
           cat > "$RUNNER_TEMP/homecloud-compose-bin/docker" <<'SHIM'
           #!/bin/sh
           set -eu
@@ -172,8 +272,20 @@ jobs:
           echo "$RUNNER_TEMP/homecloud-compose-bin" >> "$GITHUB_PATH"
           test "$("$RUNNER_TEMP/homecloud-compose-bin/docker" compose version --short)" = 5.6.0
       - run: docker compose version && python3 scripts/ci/compose-check.py
+      - run: python3 scripts/ci/test-update-preflight.py
       - run: python3 deploy/linux/test_startup_gate.py
       - run: python3 scripts/ci/test-entrypoint.py
+      - name: Install real age before recovery and scheduled contracts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends age
+      - name: Recovery contracts and real Linux crash filesystem checks
+        run: |
+          bash scripts/ci/test-recovery-contracts.sh
+          sudo python3 -B scripts/ci/test-restore-storage-linux.py
+      - name: Encrypted backup with real age
+        run: |
+          bash scripts/tests/test-backup-production.sh
       - run: python3 deploy/linux/test_preflight.py
         env:
           HOMECLOUD_TEST_ROOT: ${{ github.workspace }}
@@ -186,23 +298,28 @@ jobs:
           python3 scripts/tests/test-restore-cleanup.py
           python3 scripts/tests/test-restore-health.py
   secrets:
+    needs: merge-reuse
+    if: github.event_name == 'pull_request' || needs.merge-reuse.outputs.mode == 'full'
     runs-on: ubuntu-24.04
     timeout-minutes: 110
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify excluded audit path without reading it
+        run: python3 scripts/ci/check-excluded-history.py
       - name: Pinned gitleaks; full reachable history, forbidden audit excluded before reading
         shell: bash
         run: |
-          curl --fail --silent --show-error --location https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o "$RUNNER_TEMP/gitleaks.tar.gz"
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          set -euo pipefail
+          sh scripts/ci/install-oci-scanner.sh gitleaks "$RUNNER_TEMP/gitleaks"
           mkdir "$RUNNER_TEMP/gitleaks-evidence"
+          history_opts='--full-history --all --diff-merges=first-parent -- . :(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md'
+          python3 -B scripts/ci/test-gitleaks-merge-history.py --scanner "$RUNNER_TEMP/gitleaks" --log-opts="$history_opts"
           set +e
-          "$RUNNER_TEMP/gitleaks" git --redact=100 --exit-code 42 --report-format json --report-path "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --log-opts="--all -- . :(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md" .
+          "$RUNNER_TEMP/gitleaks" git --redact=100 --exit-code 42 --report-format json --report-path "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --log-opts="$history_opts" .
           scanner_result=$?
           set -e
           python3 scripts/ci/secret-findings.py --report "$RUNNER_TEMP/gitleaks-evidence/raw-redacted.json" --scanner-exit "$scanner_result" --output "$RUNNER_TEMP/gitleaks-evidence/classification.json"
@@ -213,24 +330,301 @@ jobs:
           path: ${{ runner.temp }}/gitleaks-evidence
           if-no-files-found: error
           retention-days: 90
+  recovery-scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify exact PR trees using protected base policy
+        id: classify
+        shell: bash
+        env:
+          GIT_NO_REPLACE_OBJECTS: '1'
+        run: |
+          python3 -I -B - <<'PY_SCOPE'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          event_name = os.environ['GITHUB_EVENT_NAME']
+          event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
+          mode = 'full'
+
+          if event_name == 'push':
+              if event.get('ref') != 'refs/heads/test':
+                  raise SystemExit('Unexpected push branch')
+              mode = 'push'
+          elif event_name == 'pull_request':
+              pr = event['pull_request']
+              base = pr['base']['sha']
+              head = pr['head']['sha']
+
+              if not all(re.fullmatch(r'[a-f0-9]{40}', x)
+                         for x in (base, head)):
+                  raise SystemExit('Invalid candidate SHA')
+
+              actual = subprocess.check_output(
+                  ['git', 'rev-parse', 'HEAD'], text=True
+              ).strip()
+
+              if actual != head:
+                  raise SystemExit('Candidate checkout mismatch')
+
+              repository = os.environ['GITHUB_REPOSITORY'].lower()
+
+              same_repo = all(
+                  pr[key]['repo']['full_name'].lower() == repository
+                  for key in ('base', 'head')
+              )
+
+              if same_repo and pr['base']['ref'] == 'test':
+                  policy = subprocess.run(
+                      ['git', 'show',
+                       base + ':scripts/ci/ci-v3-recovery-scope.py'],
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                  )
+
+                  if policy.returncode == 0:
+                      proof = subprocess.run(
+                          [sys.executable, '-I', '-B', '-', base, head],
+                          input=policy.stdout,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE,
+                      )
+
+                      if proof.returncode == 0:
+                          candidate = proof.stdout.decode('ascii').strip()
+
+                          if candidate in ('ui', 'full'):
+                              mode = candidate
+
+                  # Missing base policy is the bootstrap case.
+                  # Never execute a policy from the candidate checkout.
+              print('Base:', base)
+              print('HEAD:', head)
+          else:
+              raise SystemExit('Unsupported routing event')
+
+          print('Native Recovery route:', mode)
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('mode=' + mode + '\n')
+          PY_SCOPE
+  recovery-qualification:
+    needs: recovery-scope
+    if: github.event_name == 'pull_request' && needs.recovery-scope.outputs.mode == 'full'
+    uses: ./.github/workflows/recovery-native.yml
+    with:
+      source_sha: ${{ github.event.pull_request.head.sha }}
+    permissions:
+      contents: read
   fast-integration-gate:
     name: ci-v2-fast-terminal
     if: always()
-    needs: [pr-fast-backend, backend, frontend, configuration, secrets]
+    needs: [recovery-scope, merge-reuse, pr-fast-backend, backend, frontend, configuration, secrets, recovery-qualification]
     runs-on: ubuntu-24.04
-    timeout-minutes: 2
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      checks: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Require all Fast and Integration jobs
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: python3 scripts/ci/ci-v2-fast-gate.py --results "$RESULTS"
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 scripts/ci/ci-v2-fast-gate.py --event-name "$EVENT_NAME" --results "$RESULTS"
       - name: Require unchanged PR HEAD and base
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/pulls/${{ github.event.pull_request.number }}" > "$RUNNER_TEMP/current-pr.json"
           python3 scripts/ci/ci-v2-candidate.py --event "$GITHUB_EVENT_PATH" --live "$RUNNER_TEMP/current-pr.json" --checkout "$(git rev-parse HEAD)"
+      - name: Require unchanged test branch HEAD
+        if: github.event_name == 'push' && github.ref == 'refs/heads/test'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/branches/test" > "$RUNNER_TEMP/current-test.json"
+          python3 scripts/ci/ci-v2-candidate.py --event "$GITHUB_EVENT_PATH" --live "$RUNNER_TEMP/current-test.json" --checkout "$(git rev-parse HEAD)" --branch test
+      - name: Повторно доказать reuse перед публикацией
+        if: github.event_name == 'push' && needs.merge-reuse.outputs.mode == 'reuse'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base=$(git rev-parse HEAD^1)
+          cmp <(git show "$base:scripts/ci/ci-v2-merge-reuse.py") scripts/ci/ci-v2-merge-reuse.py
+          python3 -I -B scripts/ci/ci-v2-merge-reuse.py \
+            --event "$GITHUB_EVENT_PATH" --base "$base" \
+            --repository "$GITHUB_REPOSITORY" --require-reuse
+  test-image:
+    if: ${{ always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/test' && needs.fast-integration-gate.result == 'success' }}
+    needs: fast-integration-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Bind source to protected test branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/branches/test" > "$RUNNER_TEMP/current-test.json"
+          python3 scripts/ci/ci-v2-candidate.py --event "$GITHUB_EVENT_PATH" --live "$RUNNER_TEMP/current-test.json" --checkout "$(git rev-parse HEAD)" --branch test
+          test "$(python3 -c 'import json,os; print(str(json.load(open(os.environ["RUNNER_TEMP"]+"/current-test.json"))["protected"]).lower())')" = true
+      - id: source
+        run: |
+          git diff --quiet HEAD
+          test -z "$(git ls-files --others --exclude-standard -- backend frontend)"
+          echo "repository=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - id: bases
+        run: |
+          python3 -c 'import json,os; d=json.load(open("scripts/ci/images.lock.json")); f=open(os.environ["GITHUB_OUTPUT"],"a"); [f.write(k+"="+v+"\n") for k,v in d.items()]'
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          version: v0.38.0
+          driver-opts: image=moby/buildkit@sha256:98cc6a3fc46220d00f8224ae483f3274fc874e9be8d7dd1e2e2c5481209228b5
+      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish TEST-only linux/amd64 image with provenance
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        env:
+          BUILDX_GIT_CHECK_DIRTY: 'false'
+          BUILDX_GIT_INFO: 'true'
+          BUILDX_GIT_LABELS: 'false'
+        with:
+          context: ./${{ matrix.component }}
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max,version=v0.2
+          tags: ghcr.io/${{ steps.source.outputs.repository }}/${{ matrix.component }}:test-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ steps.source.outputs.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=test-${{ github.sha }}
+            io.homecloud.role=${{ matrix.component }}
+            io.homecloud.pair=${{ github.sha }}
+          build-args: |
+            NODE_IMAGE=${{ steps.bases.outputs.node }}
+            NGINX_IMAGE=${{ steps.bases.outputs.nginx }}
+      - name: Record exact registry index digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          python3 -c 'import os,re,pathlib; d=os.environ["DIGEST"]; assert re.fullmatch("sha256:[a-f0-9]{64}",d); pathlib.Path("${{ matrix.component }}.digest").write_text(d+"\n")'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-digest-${{ matrix.component }}-${{ github.run_attempt }}
+          path: ${{ matrix.component }}.digest
+          if-no-files-found: error
+          retention-days: 90
+  test-pair:
+    if: ${{ always() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/test' && needs.test-image.result == 'success' }}
+    needs: test-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
+      artifact_id: ${{ steps.publish-manifest.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: test-digest-backend-${{ github.run_attempt }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: test-digest-frontend-${{ github.run_attempt }}
+      - name: Verify current protected source and exact remote provenance pair
+        id: manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/branches/test" > "$RUNNER_TEMP/current-test.json"
+          python3 scripts/ci/ci-v2-candidate.py --event "$GITHUB_EVENT_PATH" --live "$RUNNER_TEMP/current-test.json" --checkout "$(git rev-parse HEAD)" --branch test
+          test "$(python3 -c 'import json,os; print(str(json.load(open(os.environ["RUNNER_TEMP"]+"/current-test.json"))["protected"]).lower())')" = true
+          python3 scripts/ci/test-channel.py create --manifest test-channel.json --commit "$GITHUB_SHA" --repository "${GITHUB_REPOSITORY,,}" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --backend "$(cat backend.digest)" --frontend "$(cat frontend.digest)"
+          python3 scripts/ci/test-channel.py check --manifest test-channel.json
+          echo "sha256=$(python3 -c 'import json; print(json.load(open("test-channel.json"))["manifest_sha256"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: publish-manifest
+        with:
+          name: test-channel-${{ github.run_attempt }}
+          path: test-channel.json
+          if-no-files-found: error
+          retention-days: 90
+
+  test-publication-gate:
+    name: test-publication-terminal
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/test' }}
+    needs: [fast-integration-gate, test-image, test-pair]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Require completed TEST publication and manifest identity
+        env:
+          GATE_RESULT: ${{ needs.fast-integration-gate.result }}
+          IMAGE_RESULT: ${{ needs.test-image.result }}
+          PAIR_RESULT: ${{ needs.test-pair.result }}
+          MANIFEST_SHA256: ${{ needs.test-pair.outputs.manifest_sha256 }}
+          ARTIFACT_ID: ${{ needs.test-pair.outputs.artifact_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for status in "$GATE_RESULT" "$IMAGE_RESULT" "$PAIR_RESULT"; do
+            if [[ "$status" != success ]]; then
+              echo "BLOCKED: incomplete TEST publication: $status" >&2
+              exit 1
+            fi
+          done
+          if [[ ! "$MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "BLOCKED: missing or invalid TEST manifest SHA256" >&2
+            exit 1
+          fi
+          if [[ ! "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "BLOCKED: missing or invalid TEST manifest artifact ID" >&2
+            exit 1
+          fi
+          echo "PASS: complete TEST publication"
+          echo "Manifest SHA256: $MANIFEST_SHA256"
+          echo "Manifest artifact ID: $ARTIFACT_ID"

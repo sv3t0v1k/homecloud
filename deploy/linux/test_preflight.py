@@ -18,7 +18,37 @@ ROOT = Path(os.environ.get('HOMECLOUD_TEST_ROOT', '/opt/homecloud'))
 PROD = Path(os.environ.get('HOMECLOUD_TEST_PROD', str(ROOT / 'docker-compose.production.yml')))
 
 
+class MaintenanceDirectoryTests(unittest.TestCase):
+    def check(self, *, uid=0, gid=0, mode=0o40711,
+              parent_uid=0, parent_mode=0o40755, attributes=None):
+        from unittest.mock import Mock
+        parent = Mock()
+        parent.lstat.return_value = SimpleNamespace(st_mode=parent_mode, st_uid=parent_uid)
+        directory = Mock(parents=[parent])
+        directory.stat.return_value = SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=gid)
+        with patch.object(p, 'ordinary_directory', return_value=directory):
+            with patch.object(p.os, 'listxattr', return_value=attributes or [], create=True):
+                p.check_maintenance_directory('/fixture/maintenance')
+
+    def test_safe_root_owned_state(self):
+        self.check()
+
+    def test_untrusted_parent_or_state_refused(self):
+        for changes in ({'uid': 1001}, {'gid': 1001}, {'mode': 0o40700},
+                        {'parent_uid': 1001}, {'parent_mode': 0o40777},
+                        {'attributes': ['system.posix_acl_access']}):
+            with self.subTest(changes=changes):
+                with self.assertRaises(p.Refusal):
+                    self.check(**changes)
+
+
 class ConfigTests(unittest.TestCase):
+    def setUp(self):
+        # Config fixtures do not provision real root-owned host paths.
+        guard = patch.object(p, 'check_maintenance_directory')
+        guard.start()
+        self.addCleanup(guard.stop)
+
     @classmethod
     def setUpClass(cls):
         # Отдельный synthetic env: реальный checkout .env не читается и не выводится.
@@ -111,6 +141,7 @@ class ConfigTests(unittest.TestCase):
         for role in ('db','backend'):
             mount=next(m for m in config['services'][role]['volumes'] if m['target']=='/run/homecloud/startup.gate')
             mount['source']='/home/hs/homecloud-test/.runtime/startup-'+role+'.gate'
+        self.mount(config, 'backend', '/run/homecloud/maintenance')['source'] = '/home/hs/homecloud-test/.runtime/maintenance'
         with patch.object(p,'check_inventory_layout',return_value='/home/hs/homecloud-test/.runtime'):
             p.check_config(config,self.inventory)
     def test_project_gate_cannot_use_legacy_config_source(self):
@@ -128,7 +159,9 @@ class DiskTests(unittest.TestCase):
 
     def run_disk(self):
         def cmd(*args):
-            if args[0]=='findmnt':return json.dumps({'filesystems':[self.mount]})
+            if args[0]=='findmnt':
+                self.assertEqual(args[1:3], ('--task', '1'))
+                return json.dumps({'filesystems':getattr(self, 'mount_records', [self.mount])})
             if args[0]=='lsblk':
                 # Without explicit --tree lsblk JSON may flatten when NAME is absent.
                 self.assertIn('--tree',args)
@@ -136,10 +169,18 @@ class DiskTests(unittest.TestCase):
             raise AssertionError('Непредусмотренная команда')
         with patch.object(p,'command',side_effect=cmd):
             return p.check_disk(self.spec, getattr(self, 'role', None))
+
+    def test_mount_query_uses_pid_one_namespace(self):
+        with patch.object(p, 'command', return_value='{}') as command:
+            p.host_findmnt('--json', '--list')
+        command.assert_called_once_with('findmnt', '--task', '1', '--json', '--list')
     def test_verified_disk(self):
         self.assertEqual(self.run_disk(),'/dev/fixture')
     def test_missing_mount_existing_directory(self):
         self.mount['target']='/'
+        with self.assertRaises(p.Refusal):self.run_disk()
+    def test_ambiguous_host_mount_refused(self):
+        self.mount_records = [self.mount, copy.deepcopy(self.mount)]
         with self.assertRaises(p.Refusal):self.run_disk()
     def test_wrong_uuid(self):
         self.mount['uuid']='wrong'
@@ -318,7 +359,34 @@ class UnitTests(unittest.TestCase):
     def test_project_uses_wrapper_daemon_without_reading_default_context(self):
         with patch.object(p,'command',side_effect=AssertionError('Default context must not be read')):
             self.assertEqual(p.docker_command_prefix({'project_root':'/home/hs/homecloud-test'}),
-                             ['docker','--host','unix:///var/run/docker.sock'])
+                             ['docker','--config','/etc/homecloud-test/docker','--host','unix:///var/run/docker.sock'])
+    def test_project_docker_commands_use_qualified_config(self):
+        prefix = p.docker_command_prefix(
+            {'project_root': '/home/hs/homecloud-test'}
+        )
+        expected = [
+            'docker', '--config', '/etc/homecloud-test/docker',
+            '--host', 'unix:///var/run/docker.sock'
+        ]
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            return SimpleNamespace(returncode=0, stdout='{}')
+
+        with patch.dict(os.environ, {
+            'HOME': '/untrusted',
+            'DOCKER_CONFIG': '/untrusted/.docker',
+        }):
+            with patch.object(p.subprocess, 'run', side_effect=fake_run):
+                p.command(*prefix, 'info')
+                p.command(*prefix, 'compose', 'config')
+                p.command(*prefix, 'image', 'inspect', 'fixture')
+
+        self.assertEqual(len(calls), 3)
+        for args in calls:
+            self.assertEqual(list(args[:5]), expected)
+
     def test_dedicated_retains_local_context(self):
         with patch.object(p,'command',return_value='unix:///run/docker.sock') as operation:
             self.assertEqual(p.docker_command_prefix({}),['docker'])

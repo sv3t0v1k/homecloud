@@ -32,6 +32,18 @@ describe('ShareDialog', () => {
     render(<ShareDialog onClose={() => undefined} target={{ fileId: 12, name: 'photo.png', isFolder: false }} />)
     const user = userEvent.setup()
     await screen.findByText('Для этого объекта пока нет ссылок.')
+    expect(screen.getByRole('heading', {
+      name: 'Поделиться',
+    })).toBeInTheDocument()
+
+    expect(screen.getByRole('dialog', {
+      name: 'Поделиться photo.png',
+    })).toBeInTheDocument()
+
+    expect(screen.getByText('photo.png')).toHaveAttribute(
+      'title', 'photo.png',
+    )
+
     await user.clear(screen.getByLabelText('Срок действия, дней'))
     await user.type(screen.getByLabelText('Срок действия, дней'), '30')
     await user.type(screen.getByLabelText('Лимит скачиваний (необязательно)'), '4')
@@ -117,6 +129,12 @@ describe('ShareDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Создать ссылку' }))
     await screen.findByText('Ссылка создана.')
     expect(payload).toEqual({ fileId: 91, isFolder: true, allowUpload: false, expiresInDays: 7 })
+    expect(screen.getByRole('dialog', {
+      name: 'Поделиться Docs',
+    })).toBeInTheDocument()
+    expect(screen.getByText('Папка', {
+      exact: true,
+    })).toBeInTheDocument()
   })
 
   it('passes upload permission only for folder links while retaining other options', async () => {

@@ -1,0 +1,339 @@
+## Актуальный ненумерованный final-local-prep — 2026-10-02
+
+**OVERALL_PRODUCTION_READINESS: NOT_READY / NO_GO**. Standalone [операторский пакет](./go-live-checklist.md), единственный [external-input master checklist](./external-input-master-checklist.md), [evidence index](../evidence/README.md). Предыдущие матрицы/команды ниже — исторические checkpoint, не текущий порядок deployment. Текущая последовательность требует prepare всей пары до stop и --pull never при переходе; partial rollback не квалифицирован.
+
+### Consolidated blocker matrix
+
+| Критерий | Класс | Local proof / открытая граница |
+|---|---|---|
+| Build/artifact integrity | LOCALLY_QUALIFIED | Exact source archive/immutable builds; trusted builder, не reproducible/signature claim |
+| Migrations/preflight | LOCALLY_QUALIFIED | Reviewed exact-schema/no-pending guard; target initial/evolving schema требует отдельного решения |
+| Immutable release pair | LOCALLY_QUALIFIED | Full pair rollback/rollforward; один manifest |
+| Registry distribution | PARTIALLY_QUALIFIED | Disposable digest push/pull; real provider/auth/TLS/retention/platform external |
+| TLS/proxy/cert lifecycle | PARTIALLY_QUALIFIED | Local lifecycle/ingress mechanics; public CA/native target qualification отсутствует |
+| Linux/DNS/public CA/native bind | DEFERRED | Обязательный перед GO внешний gate, не PASS |
+| Scheduler/alerts | PARTIALLY_QUALIFIED | Disposable systemd/controlled receiver; target wrapper/human recipient/watchdog external |
+| Backup/offsite/custody | PARTIALLY_QUALIFIED | Encrypted/source-loss/copy-B mechanics; real failure domain/ACL/custodian external |
+| RPO/RTO baseline | LOCALLY_QUALIFIED |128MiB/prebuilt fixture verified31.384–31.543seconds; не8.7hours |
+| Recovery budgets/cadence/window | OWNER_APPROVAL_REQUIRED | Candidate12min только local dataset; production volume/approved policy отсутствуют |
+| Secrets | LOCALLY_QUALIFIED | External-only delivery/rotation mechanics; actual target delivery/human custody external |
+| Rollback/recovery | LOCALLY_QUALIFIED | Full exact-schema pair + verified fixture restore; real host/volume recovery external |
+| Local ingress/browser/operator prep | LOCALLY_QUALIFIED | Fresh exact production template API/browser1440×900/390×844 и standalone operator walkthrough PASS; real host acceptance separate |
+| Real host/browser/operator acceptance | EXTERNAL_INPUT_REQUIRED | Named operator, public endpoint,≥15min observation и owner GO |
+
+RPO/RTO: decimal JSON `*_seconds` подтверждает около31seconds, а не31thousand seconds. Candidate12min математически согласован, но только OWNER_APPROVAL_REQUIRED; см. [точные единицы](../architecture/recovery-objectives.md#единицы-baseline-исправление-интерпретации). Исторические ephemeral raw пути не являются текущими dependencies; см. index.
+
+### Свежий final local acceptance — итог проверок
+
+Исходный HEAD `0d766777a41493e237b77df18f5597901d5f080e`, status только запрещённый audit; audit не читался/менялся/staged. Новая Phase и tag не создаются. Application sources не менялись; исправления ограничены docs/preflight/test harness и небезопасным общим cleanup теста.
+
+- **LOCAL_DEPLOYMENT_PACKAGE: PASS; PREFLIGHT_AGGREGATOR: PASS; OPERATOR_DOCS_EXECUTABLE: PASS.** Standalone package содержит13 шагов и STOP/rollback/recovery; clean-context operator reviewer APPROVE после одного bounded correction cycle. Preflight read-only, codes2/3/4 разделяют local/external/owner gaps;13 meaningful tests PASS, secret sentinel отсутствует. Code0 не разрешает GO.
+- **LOCAL_PRODUCTION_E2E: PASS; LOCAL_BROWSER_ACCEPTANCE: PASS.** [Exact production ingress/API/pair evidence](./evidence/final-prep/local-production-e2e.json), [desktop/narrow](./evidence/final-prep/browser-acceptance.json). Internal health/ready200/200; public operational endpoints404; login/root+nested/create/upload-download bytes/preview/share revoke/trash restore+permanent delete/logout-relogin PASS. Desktop1440×900 и narrow390×844: session reload, folder navigation, PNG upload, preview/context dialogs, Router и CSP header PASS, fatal console errors0. Auth windows разделены61s без ослабления limiter.
+- Production ingress template/upgrade.conf используются с localhost, self-signed certificate и random isolated networks; backend ports не published. Browser ignoreHTTPSErrors означает public trust/SAN/CA **NOT_QUALIFIED**. Этот fresh run не проверял real registry: retained digest distribution qualification остаётся отдельным local mechanics evidence.
+- Current initialHEAD→previous647aa7b→current immutable full pair PASS; live incompatible migration blocked, no-pending3/3, resolved Compose immutable/no-build3/3, rows/schema/storage/quota fingerprints unchanged. Same application/schema trees, не evolving-schema compatibility. Controlled failed deployment detected; down migration не выполнялась.
+- [Fresh gates](./evidence/final-prep/gates.json): release/manifest/registry49/49; encrypted backup34/34; external config11/11; cert10/10; scheduler21 PASS/1 intentional age integration SKIP на macOS fixed PATH; preflight13/13; cleanup regression1/1; source-fixture legacy backup27/27×2, restore validation15 PASS/1 destructive integration SKIP×2. Fresh two production builds из clean initialHEAD archive и actual manifest validation PASS ([manifest](./evidence/final-prep/current-build-manifest.json)). Latest full backend59/702 и frontend12/96 остаются историческими; app sources unchanged, full suites не повторялись.
+- [Fresh cert runtime](./evidence/final-prep/cert-runtime.json):21 healthy requests during reload, rotation/idempotency/mismatch/config/simulated ACME failure retention PASS, key0600. [Fresh offsite](./evidence/final-prep/offsite-recovery.json):128MiB×2, source destroyed, custodyB, rows/file bytes/SHA equal; verified RTO31.372/31.632seconds. Новое evidence сохраняет row fingerprints; старое не дополняется задним числом. Real offsite/human custody остаются external. Все own containers/networks/volumes/synthetic env/private keys удалены, secret scan PASS; qualified image outputs удержаны.
+- Initial invalid setup attempts (sandbox/age/config), browser folderId/route/MIME/auth-window fixtures и minimal ingress/noCSP не приняты как final evidence. Ошибки harness исправлены bounded; final exact-template run EXIT0. Restore cleanup теперь только owned volumes; --skip-integration не вызывает Docker cleanup ([regression](./evidence/final-prep/restore-cleanup-regression.json)).
+- **EVIDENCE_INDEX: PASS; EXTERNAL_INPUT_CHECKLIST: PASS; RPO_RTO_CONSISTENCY: PASS.** Единственный master checklist содержит только real external/owner work; credentials отсутствуют. Baseline about31seconds, кандидат12min scope-limited/unapproved;8.7hours было ошибкой чтения decimal JSON. Ephemeral paths NON_AUTHORITATIVE, stable repo evidence/index доступны без chat context.
+
+Security/ops review: no real secrets в docs/index/manifests; helper не выводит значения; STOP fail-closed, full-pair rollback и закрытый внешний barrier, destructive restore только explicit incident decision, никаких DB down migration рекомендаций. **INDEPENDENT_REVIEW: APPROVE** — [независимый финальный review](../evidence/final-prep/review.md) проверил все шесть критериев, actual diff/evidence и security/ops. **FINAL_LOCAL_PREP: COMPLETE** в локальном scope; итог фиксируется commit операторского пакета. **OVERALL_PRODUCTION_READINESS: NOT_READY / NO_GO**. Внешняя qualification автоматически не запускается.
+
+---
+
+# Production Readiness — Architecture & Release Gate
+
+Дата: 2026-09-30, Asia/Vladivostok. Ненумерованный owner-approved checkpoint после Failure & Security Testing. Исходный HEAD `b77e8162e32c06be949884d69a3a29773d30138c`; status — только запрещённый untracked audit. Audit не читался, не изменялся и не включается в commit.
+
+## Контракт и границы
+
+[Фактическая topology/gap matrix](../architecture/production-topology.md) и [исполняемый порядок release/migration/rollback](./release-and-rollback.md). Поддерживаемый контракт — один backend, один PostgreSQL, постоянный storage, frontend nginx, внешний TLS ingress с maintenance barrier. Redis optional, не runtime/readiness dependency. Zero downtime, HA и previous-version schema compatibility не заявляются.
+
+Production config валидируется ConfigModule до TypeORM initialization: разные access/refresh secrets ≥32 символов; PostgreSQL URL с credential ≥16, совпадение DB_PASSWORD при его наличии; optional metrics token ≥32; абсолютный storage root; явный HTTPS frontend origin. Очевидные placeholders и повторяющиеся secrets отклоняются; это baseline, не измерение entropy. Errors содержат только названия settings. Пустой metrics token означает disabled endpoint. Production startup не требует неиспользуемого Redis; старые development/test validators сохранены.
+
+Release helper имеет независимые режимы config/artifact/migrations/runtime. Он не разрешает public traffic: отдельно blocking build provenance/immutable digests, reviewed migration inventory, consistent backup, rollback inputs, auth/file smoke, acceptance window и go-live TLS/secrets/backup requirements. Artifact проверяет наличие dist и отсутствие tracked diff, а не reproducible build или untracked files; запрещённый audit не читается.
+
+## Проверки
+
+- Focused configuration: 2 suites / 40 tests PASS.
+- Release helper negative/runtime policy: 6 tests PASS.
+- Full backend с disposable PostgreSQL: 58 suites / 674 tests PASS, без skipped integrations.
+- Backend lint: 0 errors / 15 прежних warnings; build и typecheck PASS.
+- Frontend build/typecheck PASS; source/config не менялись, frontend suite не запускался.
+- Compose config quiet PASS, без вывода секретов. Script syntax и diff-check PASS.
+- Backup/restore implementation не менялся; повторные backup safety suites не требуются. Реальный paired restore evidence остаётся в завершённом [Failure/Security checkpoint](../security/failure-security-checkpoint.md).
+
+## Drill
+
+Harness `scripts/tests/release-rollback-runtime.py` использует production mode, чистую временную PostgreSQL, явные synthetic settings, canonical temporary storage и минимальный inherited env; deployment .env не читается. CLI show/apply transaction all исполняются до старта приложения, затем gate подтверждает отсутствие pending migrations. Новый synthetic account получает fixture quota 1 MiB SQL provisioning (default quota нового пользователя 0), загружает поддерживаемый PNG; download сравнивается по точным bytes. Приложение останавливается, контролируемый bad process завершается exit42; возврат того же compiled artifact должен восстановить readiness и неизменные DB snapshot/download bytes. Свой container удаляется.
+
+Это ограниченный same-artifact recovery drill. Не доказывает откат на предыдущую версию, frontend rollback, destructive schema rollback, production TLS или offsite restore. Изначальные harness ошибки TCP readiness race, chunk HTTP201 вместо фактического200, неподдерживаемый text MIME и отсутствие fixture quota исправлены по текущим контрактам; product behavior не менялся.
+
+## Блокеры go-live и следующий блок
+
+OVERALL_PRODUCTION_READINESS: NOT_READY. Внешний TLS/HTTPS redirect и exposure policy отсутствуют; nginx client IP forwarding и backend trust proxy требуют совместного проверенного контракта (сейчас лимитеры видят proxy IP). Production listener frontend ещё 80:80, health/metrics проксируются общим /api/. Не реализованы secret lifecycle/защищённая доставка, encrypted/offsite backup, утверждённые retention/RPO/RTO, backup alerts и scheduler с write barrier. Immutable image manifest — обязательный input будущего deployment, в реальный registry здесь не публиковался. DB restart/recovery policy и storage UID1001 provisioning требуют operator validation. Existing restore стартует app до migrations: внешний traffic barrier обязателен.
+
+Сохранены access JWT до TTL после logout, process-local rate limits/metrics, post-commit unlink orphan risk, optional unused Redis. Phase 11–13, redesign/quota fix, Observability и Failure/Security COMPLETE сохранены. Общий Production Readiness остаётся INCOMPLETE. Новая Phase не создана.
+
+Минимальный следующий owner-approved блок: TLS ingress + sanitised forwarding/trusted proxy + private metrics/health exposure и тест client-IP rate limiting. Автоматически не начинается.
+
+Drill итог: PASS в указанных границах. Evidence `/private/var/folders/mg/0kv7ncvj7x33c4gkz6d9k47r0000gn/T/hc-release-drill-_yzban9v/result.json`: no pending migrations, auth/upload/download, exit42, readiness recovery, unchanged DB+bytes, own container cleanup — true. PNG SHA256 `f3ec9e14b9c085b55edc96155f7bd26b6fdeda2462f02af4e0279d8319b365e3`. Temporary artifacts могут удаляться ОС; воспроизводимый harness сохранён.
+
+## Итоговая классификация
+
+INDEPENDENT_REVIEW: APPROVE. Reviewer проверил фактические diff, scripts, evidence и документы; найденная неоднозначность deployment cwd/.env исправлена одним bounded correction cycle. Неразрешённых MUST_FIX нет.
+
+- PRODUCTION_TOPOLOGY_CONTRACT: PASS
+- MIGRATION_RELEASE_POLICY: PASS
+- CONFIG_VALIDATION_BASELINE: PASS
+- RELEASE_GATE: PASS (детерминированный checklist + узкие helpers; не go-live допуск)
+- ROLLBACK_DRILL: PASS (ограниченный same-artifact recovery)
+- PRODUCTION_READINESS_ARCH_RELEASE_CHECKPOINT: PASS
+- OVERALL_PRODUCTION_READINESS: NOT_READY
+
+
+## Production Readiness — TLS / Proxy Boundary & Private Operational Exposure
+
+Дата: 2026-09-30, Asia/Vladivostok. Следующий ненумерованный owner-approved checkpoint. Исходный HEAD `b82048a3229935b2ab2a634e2d6545574ade9ccd` и status (только запрещённый untracked audit) точно совпали. Audit не читался/не изменялся/не stage/commit. Architecture & Release Gate выше остаётся завершённым историческим checkpoint; его перечисление TLS-пробелов описывает состояние до этого блока. Phase 11–13, redesign/quota fix, Observability и Failure/Security COMPLETE сохранены.
+
+### Исходная network gap matrix
+
+| Проверка | До изменения | Проверенный результат |
+|---|---|---|
+| Public service | frontend `80:80`, без TLS ingress в repo | Отдельный production Compose: только ingress 80/443 |
+| Backend reachability | Без host port, общая bridge network | Без host ports; отдельная internal frontend/backend network, ingress backend не видит |
+| Forwarded authority | nginx только X-Real-IP, остальные headers не очищались | Каждый proxy перезаписывает XFF/XFP/XFH; точные socket peers |
+| Express trust proxy / client IP | Default false, req.ip=frontend socket | Exact TRUSTED_PROXY_IP; нормализованный clientIp, safe fallback |
+| IP rate limits | Один frontend IP для внешних клиентов | Независимые клиентские budgets; spoof rotation не обходит limit |
+| Request logging | IP не логировался, request ID присутствовал | Privacy сохранена; correlation проходит nginx |
+| Health/readiness/metrics | Общий nginx /api пропускал наружу, metrics Bearer | Оба nginx 404; internal readiness200, metrics401/401/200 |
+| Security headers | Backend Helmet, HSTS даже на HTTP; frontend policy отсутствовала | TLS ingress владеет HSTS/CSP/headers, HTTP HSTS отсутствует |
+| HTTP→HTTPS | Не реализовано | Canonical308, HTTPS с чужим Host421 |
+
+Trust model и exposure подробно в [topology](../architecture/production-topology.md). Два перехода: ingress socket `172.29.0.10` → frontend; frontend socket `172.30.0.10` → backend. Backend доверяет только одному literal IP, default no trust; CIDR/true/hop count не используются. Невалидные multi-hop chains сбрасывают forwarded authority. Все IP limiter keys используют один helper, mapped IPv4 и IPv6 canonicalization. IP logging/high-cardinality labels не добавлены. Frontend same-origin API/share URLs; произвольный cross-origin VITE_API_URL production-контракт не поддерживает.
+
+Ingress HTTPS задаёт HSTS без preload/includeSubDomains, nosniff, Referrer-Policy, DENY и CSP frame-ancestors none, минимальный Permissions-Policy. CSP допускает same-origin assets, fonts self+data, inline styles и blob previews. Health/readiness/metrics полностью приватны; отдельный public health route не заявляется. Metrics Bearer остаётся обязательным внутри сети; ingress не пропускает его даже с token. Public external uptime проверяет HTTPS `/`, probes используют private backend.
+
+### Acceptance evidence
+
+- Focused proxy/security/production config: 3 suites / 54 tests PASS. Direct/trusted/untrusted spoof, malformed/multi-hop headers, protocol/host, IPv4/IPv6 normalization, request ID и limiter key regressions покрыты.
+- Full backend: 59 suites / 686 tests PASS, без skipped PostgreSQL integrations, отдельная disposable DB. Backend lint 0 errors / 15 прежних warnings; build и typecheck PASS. Два новых test-style warnings устранены, focused/lint/build повторены; production logic после full gate не менялась.
+- Frontend production build/typecheck PASS; frontend source не менялся, unit suite не запускался. Chromium smoke проверил login/files/fonts без CSP/page errors.
+- Original и standalone production Compose `config --quiet` PASS без вывода secrets. Frontend/ingress `nginx -t` PASS в runtime. Hostname positive/negative boundary tests, shell syntax, Python syntax и `git diff --check` PASS. Release helper tests 6/6 PASS; первоначальный sandbox запрет localhost listener устранён разрешённым тестовым запуском, продукт не менялся.
+- `scripts/tests/tls-proxy-runtime.py`: PASS. Evidence canonical path `/private/var/folders/mg/0kv7ncvj7x33c4gkz6d9k47r0000gn/T/hc-tls-proxy-fl2pazjd/result.json`. HTTP308 с canonical Location и без HSTS; TLS root + headers; 12 JS/CSS/font assets200; private route aliases404; internal metrics401 без token/401 wrong/200 valid; readiness200; trusted client IP/proto/host; два client budgets независимы; direct/ingress spoof rotation ограничена; backend без published port.
+- Actual production-mode backend через два nginx: register/login, files root, chunk upload, complete, download и anonymous share metadata/download PASS, bytes совпали. Request ID `tls-proxy-runtime-938475` сохранён. PNG SHA256 `f3ec9e14b9c085b55edc96155f7bd26b6fdeda2462f02af4e0279d8319b365e3`.
+
+Harness собирает disposable dependencies по текущему lockfile и монтирует текущий compiled backend/dist и frontend/dist. Используется реальный nginx из локального frontend image; это не production image provenance gate. Для IP/protocol наблюдения отдельный test-only Express listener импортирует compiled production trust/limiter helpers; debug endpoint в продукт не добавлен. Browser использовал только подстановку PUBLIC_HOST=localhost в той же ingress template/CSP policy, чтобы не менять системный DNS. Канонический hostname и spoof assertions проверены до подстановки. Self-signed certificate проверяет TLS termination, не public CA provisioning/renewal. Temporary evidence может удаляться ОС; reproducible harness сохранён. Все собственные containers/networks/dependency image удалены; старые containers не изменялись.
+
+### Review и ограниченные исправления
+
+Независимый review product implementation выполнен runtime reviewer, не автором backend/ingress изменений. Его harness отдельно независимо проверен ingress reviewer; основной исполнитель проверил actual diff и result.json. Подтверждённые defects исправлялись по одному bounded cycle: multiline и uppercase canonical hostname validation; Vite data-font CSP; runbook first-start ingress и описание fonts. Harness prerequisites/metrics-token assertions/cleanup исправлены после независимого review. Начальные runtime fixture ошибки stale image dependency, weak synthetic credential, DNS alias/login status/browser mapping не считаются product evidence; финальный успешный consolidated run включает все проверки.
+
+### Остаточные блокеры и границы
+
+Secret lifecycle (доставка/доступ/rotation/revocation/recovery), encrypted/offsite paired backup, retention/RPO/RTO/scheduler/alerts, final production node recovery/acceptance и реальный previous-version rollback остаются незавершёнными. Public CA certificate/key provisioning и renewal, storage UID1001 и node recovery policy требуют operator validation. Maintenance barrier — отдельное обязательное условие перед стартом ingress, а не встроенная функция этого nginx config. Access JWT после logout до TTL, process-local limits/metrics и post-commit unlink orphan risk сохранены. HA/CDN/WAF, auth redesign, secret manager и backup implementation в scope не входили.
+
+Следующий меньший owner-approved блок: Secret Lifecycle — способы доставки/доступа, rotation/revocation/recovery с проверяемым deployment контрактом. Backup Productionization зависит также от lifecycle encryption keys и включает больше recovery/retention задач. Следующий блок автоматически не начинается.
+
+### Итоговая классификация TLS / proxy блока
+
+- TRUST_PROXY: PASS
+- CLIENT_IP_BEHIND_PROXY: PASS
+- TLS_HTTPS_BOUNDARY: PASS (локальный self-signed TLS; public CA lifecycle не проверен)
+- SECURE_HEADERS: PASS
+- HEALTH_METRICS_PRIVATE_EXPOSURE: PASS
+- RATE_LIMIT_PROXY_BEHAVIOR: PASS
+- RUNTIME_PROXY_SMOKE: PASS
+- INDEPENDENT_REVIEW: APPROVE
+- PRODUCTION_READINESS_TLS_PROXY_CHECKPOINT: PASS
+- OVERALL_PRODUCTION_READINESS: NOT_READY
+
+Commits реализации TLS/proxy: `788ada5` — доверенный proxy/client IP; `9e96378` — production ingress/exposure/headers и runtime regressions. Документация checkpoint зафиксирована отдельным последующим commit.
+
+## Production Readiness — Secret Lifecycle
+
+Дата: 2026-09-30, Asia/Vladivostok. Owner-approved ненумерованный блок после TLS/Proxy Boundary. INITIAL_STATE: HEAD `42e1dce180bf6a736ea62c84f1aaa65c2b89355a`, status только запрещённый untracked audit. Audit не читался/не менялся/не stage/commit. Preview и старые containers не использовались. Исторические blockers предыдущих checkpoint описывают состояние на момент их завершения; актуальный status ниже.
+
+[Инвентарь, generation contract, injection, rotation/rollback и leakage boundaries](../security/secret-lifecycle.md). Реальные secrets: access/refresh JWT, DB password/credential URL, optional metrics, optional unused Redis, external TLS private key; backup encryption key отсутствует. Генератор создаёт external-only exclusive0600 hex64 CSPRNG keys, без вывода значений. Production rejects missing/weak/default/predictable credentials и equal JWT keys до DB initialization, optional metrics empty означает disabled. Формат не доказывает entropy. Docker build contexts исключают env/private-key material. Environment injection сохраняет доступ Docker/root администраторам; secret-manager интеграция не добавлена. Optional production Redis использует private runtime config, пароль не в server/healthcheck argv.
+
+### Gates и runtime evidence
+
+- Focused backend config/auth/observability: 8 suites / 106 tests PASS; production-config отдельно39 PASS. Generator regression1 PASS (0600, independent hex64 values, no output, overwrite/repo/symlink refusal).
+- Full backend59 suites / 702 tests PASS, без skipped PostgreSQL integrations; отдельная disposable DB. Lint0 errors / 15 прежних warnings; backend build/typecheck PASS. Frontend source не менялся, tests/build не запускались; изменён только exclusion file.
+- Обе Compose `config --quiet` PASS, syntax Node/Python и `git diff --check` PASS. Найденная YAML quote ошибка Redis healthcheck исправлена одним bounded correction cycle, quiet gate повторён.
+- Final compiled runtime smoke `scripts/tests/secret-lifecycle-runtime.py`: PASS. Sanitized evidence `/private/tmp/homecloud-secret-lifecycle-final-smoke.json`. Production missing/weak startup fails; initial readiness/access/metrics valid; после simultaneous JWT cutover old access403/refresh401, new login/refresh работает; refresh reuse + descendant revocation401. Access-only и refresh-only semantics выведены из unchanged source, отдельно runtime не проверялись.
+- Metrics old401/new200. DB actual ALTER ROLE cutover: old TCP password rejected, new connection/readiness200; rollback: new TCP password rejected, old readiness/login restored. Это single-role maintenance downtime, не overlap/zero-downtime. Все generated secrets/passwords/access/refresh tokens отсутствуют в backend/PostgreSQL logs. Own disposable container/volume и sensitive temporary files удалены. Preview/user data/старые containers не трогались.
+- Optional Redis command smoke PASS: `/private/tmp/homecloud-redis-secret-smoke.json`, authenticated PONG, unauthenticated отказ, config0600, no secret in logs/process argv, cleanup. Actual Compose command исполнен в disposable Redis после Compose dollar-unescape; full topology/Redis rotation не проверены.
+- Это compiled backend localhost + isolated PostgreSQL; production image provenance, ingress/frontend/public deployment, TLS key runtime rotation и external custody recovery не доказаны. TLS mount/build exclusion contract проверен статически; CA provisioning/renewal остаётся отдельным блокером. Temporary evidence может удалить ОС; harness сохранён для воспроизведения.
+
+### Independent review и status
+
+Independent reviewer не автор изменений; inventory audit и фактический diff/generator/runtime/runbook reviewed. INDEPENDENT_REVIEW: APPROVE; reviewer не автор изменений, независимо воспроизвёл generator1/1, quiet production Compose и diff-check, проверил final runtime JSON и ограничения. Secret Lifecycle не объявляется go-live readiness. JWT модель — explicit maintenance invalidation без previous key window; rollback может вернуть допустимость старых unexpired/unrevoked JWT, при compromise запрещён. DB и metrics имеют executable rollback, previous revision custody обязан проверить оператор. Auth/session UX не менялись, vendor lock-in/new Phase/backup encryption/certificate renewal implementation отсутствуют.
+
+OVERALL_PRODUCTION_READINESS: NOT_READY. Остались encrypted/offsite paired backup, retention/RPO/RTO/scheduler/alerts, final node recovery/acceptance и реальный previous-version rollback, public certificate/key provisioning/renewal, storage UID1001 и node recovery operator validation. Access JWT после logout до TTL, process-local limits/metrics и post-commit unlink orphan risk сохраняются. Следующий рекомендуемый блок — encrypted/offsite backup; автоматически не начинается.
+
+Итоговые классификации: SECRET_INVENTORY PASS; PRODUCTION_SECRET_VALIDATION PASS; JWT_SECRET_ROTATION PASS (maintenance invalidation); DB_CREDENTIAL_ROTATION PASS; METRICS_TOKEN_ROTATION PASS; SECRET_LEAKAGE_REVIEW PASS в описанных границах; RUNTIME_ROTATION_SMOKE PASS; INDEPENDENT_REVIEW APPROVE; PRODUCTION_READINESS_SECRET_LIFECYCLE_CHECKPOINT PASS; OVERALL_PRODUCTION_READINESS NOT_READY. Compose negative missing/empty DB_PASSWORD/JWT_SECRET/JWT_REFRESH_SECRET — три отказа без secret values PASS.
+
+## Production Readiness — Backup Productionization
+
+Ненумерованный checkpoint после Secret Lifecycle. [Контракт/runbook](./backup-productionization.md). Legacy v1 backup/restore сохранены; production coordinator шифрует paired bundle стандартным age, атомарно публикует generation directories и проверяет offsite ciphertext size/hash/manifest до production success. External-only recipients/identities, rotation с custody старых ключей, common lock, write barrier acknowledgement, fail-closed wrong-key/corruption и отдельные retention warnings.
+
+Аудит выявил plaintext-only/local-only baseline, отсутствие encryption key lifecycle, retention без full-set verification и sequential publication. Эти gaps закрыты production wrapper; legacy plaintext entry point не объявляется production success. Defaults: count7 и30days на обоих roots; minimum2 verified generations, replacement verified до retention, partial/invalid ignored с warning. Cleanup unlink не обещает secure erase; crash remnants требуют operator inspection.
+
+Реальный disposable drill `scripts/tests/test-backup-production-drill.sh`: PASS. Evidence `/private/tmp/homecloud-backup-dr.c9ipSH/result.json`: local encrypted copy удалена перед recovery; restore получил encrypted artifact из isolated offsite filesystem target. Snapshot users1/folders2/files4/shares1/uploads1 identical; quota/completed uploads consistent; file SHA256 identical; readiness200; secret leakage scan PASS. Собственные containers/volumes и sensitive key/env/backup staging очищены. Retained sanitized evidence и reproducible harness сохранены; temporary evidence может удалить ОС.
+
+Граница: fixture target находится на том же host и проверяет vendor-neutral mounted filesystem transport/recovery. Реальное физическое offsite размещение/mount failure domain, key custody emergency access, scheduler/alert delivery, полный объём и утверждённые RPO/RTO требуют operator validation перед release. Full encrypted backups — выбранный baseline; incremental engine не добавлен. Исторические RPO24h/RTO30min не доказаны этим малым drill; если full backups не укладываются в budgets, нужен owner decision, не scope expansion.
+
+OVERALL_PRODUCTION_READINESS: NOT_READY. Public certificate/key provisioning/renewal, final recovery/acceptance, previous-version rollback и остальные release/operator checks остаются блокерами. Новая Phase не создана. Следующий меньший блок — public certificate lifecycle; автоматически не начинается.
+
+Gates: production focused34PASS0FAIL; legacy backup safety27PASS0FAIL0SKIP; legacy restore safety15PASS0FAIL1SKIP (`--skip-integration`, legacy destructive integration заменена новым реальным disposable end-to-end drill). Прежние suites выполнены в copied project; global legacy cleanup отключён только в temporary test copy, cleanup ограничен dedicated Compose project. Bash/Python syntax и `git diff --check` PASS. Backend product code не менялся, повторный full backend/lint/build не требовался; current backend image построен для реального drill.
+
+INDEPENDENT_REVIEW: APPROVE после одного bounded correction cycle: validation-only отделён от restore completion, same-second retention стабилен, fixed legacy failure reasons проверены. Основной исполнитель независимо повторил focused34 и real drill на окончательном коде. Security/privacy PASS в описанных границах; private identity/credentials не включены в commit, plaintext staging после штатного завершения отсутствует, offsite содержит только ciphertext+несекретный manifest.
+
+BACKUP_ENCRYPTION_AT_REST: PASS; OFFSITE_REPLICATION: PASS (filesystem transport contract); RETENTION_ROTATION: PASS; BACKUP_FAILURE_SIGNALING: PASS; ENCRYPTED_OFFSITE_RESTORE: PASS; REAL_RESTORE_DRILL: PASS; PRODUCTION_READINESS_BACKUP_CHECKPOINT: PASS. Backup Productionization: COMPLETE в границах реализации/isolated qualification; физический production offsite и remaining operator acceptance не объявлены завершёнными.
+
+## Public Certificate Lifecycle — 2026-10-01
+
+Ненумерованный owner-approved checkpoint после Backup Productionization. Исходный HEAD `7c893e927ddc3711cf1b5b490937c34e52d6d9cd`; status только forbidden audit, не читался/не изменялся/не staged. [Контракт/recovery](./certificate-lifecycle.md).
+
+| Исходный gap | Реализация |
+|---|---|
+| Flat PEM без activation | External generations0700/current atomic symlink; read-only whole-root mount; key0600 |
+| Нет issuance/renewal | Certbot standalone bootstrap, HTTP01 webroot renew; DNS01 contract без provider automation |
+| Нет validation/reload | SAN/time/trust/key match/permissions; nginx-test → graceful reload → served fingerprint; rollback/idempotence |
+| HTTP308 блокировал HTTP01 | Token exception, symlink denial, missing404; остальной HTTP308; HSTS только HTTPS |
+| Нет expiry/failure | JSON; check0/1/2/3 OK/warning/critical/invalid; thresholds30/7days; install/renew failure3 |
+| Нет runtime | Native Linux daemon-side read-only bind; local certificates; simulated client result |
+
+Gates: focused10/10 PASS, включая реальный expired2000–2001 fixture; hostname validation, syntax, quiet Compose и diff-check PASS. Backend/frontend source/build path не менялись: full backend/lint/build и frontend build не требовались. Legacy TLS smoke fixture адаптирована к current/ и key0600, полный auth/browser drill не повторялся.
+
+Основной исполнитель повторил runtime: `/private/tmp/hc-cert-runtime-nbsg0jx_/result.json`. Initial install, served fingerprint rotation, expiry45→90days,17 successful health requests during reload, mismatched install, simulated Certbot failure, idempotence, invalid config rollback, HTTP01/redirect/HSTS, key600 PASS. Собственные containers/network/volume/operator image и sensitive fixtures удалены; старые containers не затрагивались.
+
+Docker Desktop/macOS host bind smoke выявил stale symlink после atomic replacement; probe отверг activation. Mac shared bind не поддерживается. Итоговый harness использует native daemon Linux bind из disposable volume mountpoint в ingress read-only, operator volume RW. Это доказывает Linux bind механику, не конечный production host. Docker socket operator root-equivalent trust ограничен controlled CLI.
+
+SECURITY_REVIEW APPROVE. Подтверждённые дефекты corrected bounded cycle: LibreSSL compatibility, current guard до unchanged, fullchain idempotence, served drift reconciliation, external-only state/key. Public CA success не заявляется: ACME protocol не упражнялся.
+
+PUBLIC_CERT_ISSUANCE_CONTRACT: PASS; CERT_RUNTIME_PERMISSIONS: PASS; CERT_RENEWAL_WORKFLOW: PASS; CERT_SAFE_RELOAD: PASS; CERT_EXPIRY_MONITORING: PASS; HTTP01_HSTS_COMPATIBILITY: PASS; CERT_LIFECYCLE_RUNTIME_SMOKE: PASS; INDEPENDENT_REVIEW: APPROVE; PRODUCTION_READINESS_CERT_LIFECYCLE_CHECKPOINT: PASS; OVERALL_PRODUCTION_READINESS: NOT_READY.
+
+Остались public CA/domain qualification, production Linux bind/scheduler/alerts, final recovery/acceptance, previous-version rollback, production offsite/key custody/full-volume RPO/RTO и remaining operator/release checks. Новая Phase не создана; предыдущие COMPLETE сохранены. Следующий рекомендуемый блок — final acceptance/go-live gate, автоматически не начинается.
+
+Independent reviewer (не автор) проверил окончательный harness/diff/native-bind evidence, повторил focused10/10 и diff-check PASS. Public Certificate Lifecycle COMPLETE в ограниченных границах implementation/contract/mechanics.
+
+
+## Final Production Acceptance / Go-Live Gate — 2026-10-01
+
+Ненумерованная финальная кампания; новая Phase не создана. **OVERALL_PRODUCTION_READINESS: NOT_READY**. Fresh backend702/702 и frontend96/96, locked Docker builds, previous-backend compiled rollback и encrypted same-host offsite recovery PASS в явно ограниченных границах. Полный production deployment/TLS E2E остановлен occupied fixed proxy subnets; существующее preview не менялось. Public DNS/CA/target bind, operational scheduler/alert delivery, independent offsite/key custody/approved measured budgets и полный previous backend/frontend immutable-pair/operator acceptance остаются BLOCKING. Исправлен подтверждённый raw-URI/token logging дефект обоих nginx; raw proxy error diagnostics исключены, status/time и backend безопасные logs сохранены. [Матрица, raw evidence, классификации и operator checklist](./final-production-acceptance.md). Предыдущие COMPLETE checkpoints сохранены; запуск не разрешён, следующий workstream автоматически не начинается.
+
+Independent final review: **NO_GO** по raw evidence. Дополнительно unresolved external-only secret input path legacy backup/restore versus checkout .env; workaround не применён. Dependency audit finding/exposure см. final acceptance.
+
+
+## External-only backup/restore config — 2026-10-01
+
+Ненумерованная bounded remediation после React Router; исходный HEAD `647aa7b949698f9b84feee3ce5134cb2a7b542de`, status только запрещённый untracked audit. Audit не читался/не изменялся; чужие containers не затрагивались. Shared loader и [контракт](./backup-productionization.md#единый-внешний-config-для-recovery-helpers): обязательный external absolute env file либо явно выбранный direct environment; exports выше файла, missing/unsafe config fail-closed, no shell execution, no implicit checkout dotenv. DB identifiers проверяются до SQL; Compose file paths абсолютные, project явный, nested calls с `--env-file /dev/null`; reconcile принимает тот же config.
+
+Final disposable smoke evidence: `/private/tmp/homecloud-backup-dr.ldiKuX/result.json`; harness `scripts/tests/test-backup-production-drill.sh`. Actual checkout helpers запускались из disposable CWD, через `env -i` только PATH/HOME/HOMECLOUD_ENV_FILE; repo `.env` не открывался. Custom DB `hc_dr_db`/user `hc_dr_user`; encrypted/offsite-capable generation, удаление local encrypted copy, fetch/decrypt restore после DB/storage mutation, reconciliation и readiness200 PASS. Rows users1/folders2/files4/shares1/uploads1 identical, SHA256 bytes identical, quota/completed upload consistent. Secrets из external config/age identity отсутствуют в captured logs; собственные resources/sensitive inputs очищены. Transport — same-host filesystem fixture, физическая offsite независимость не доказана.
+
+Fresh gates: external contract11/11, production backup34/34, backup safety27/27, restore validation15 PASS/0 FAIL/1 integration SKIP (заменён реальным paired drill выше). Python AST4/4, Bash syntax9/9, local docs references и diff-check PASS. Backend/frontend suites не запускались: app sources не изменены. Независимый review финальных diff/docs/evidence: APPROVE; предварительный evidence gap исправлен повтором с чистым окружением.
+
+CHECKOUT_ENV_DEPENDENCY: RESOLVED. EXTERNAL_CONFIG_CONTRACT: PASS. ARBITRARY_CWD: PASS. SECRET_LEAKAGE: PASS. REAL_BACKUP_RESTORE_EXTERNAL_CONFIG_SMOKE: PASS. PRODUCTION_BLOCKER_EXTERNAL_BACKUP_CONFIG: RESOLVED. Общий **NOT_READY / NO_GO**: real Linux/DNS/public CA/native bind, scheduler/delivered alerts, independent offsite/key custody/measured budgets и immutable release/previous-pair rollback/operator acceptance остаются открыты. Новая Phase не создана; следующая задача автоматически не запущена.
+
+
+## Immutable release manifest / previous pair rollback — 2026-10-01
+
+Ненумерованная bounded remediation; исходный HEAD `37b2eae7f8375a01c0b7207f70317c57ee3ae01d`, status только запрещённый audit. Audit не читался/не менялся; старые containers `29c17227fd0a`, `983714f1deaa` и preview не затрагивались. [Контракт/operator sequence](./release-manifest.md), [сохранённое sanitized evidence](./evidence/immutable-release/qualification.json), [current manifest](./evidence/immutable-release/current-manifest.json), [previous manifest](./evidence/immutable-release/previous-manifest.json).
+
+| Исходный gap | Итог |
+|---|---|
+| Только ручные digest inputs | Machine-readable deterministic manifest связывает пару IDs, commit, source/Compose hashes и schema contract |
+| Compose содержит build contexts | Guarded YAML override с `build: !reset null`, `pull_policy: never`; реальный merged production config не содержит build |
+| Previous rollback только backend | Current → previous → current: оба actual image IDs совпали с выбранной manifest pair |
+| Нет executable schema guard | Exact migrations + entities/data-source hashes + live applied classes; unexpected migration блокирует rollback |
+| Target registry не доказан | Отдельная NOT_QUALIFIED distribution boundary сохранена; local IDs не объявлены RepoDigests |
+
+Current source `37b2eae7f8375a01c0b7207f70317c57ee3ae01d`: backend `sha256:59a609d268e2a3a0370e425a2807fb26044884a5b3f8ea630b1325ced69c35b9`, frontend `sha256:c5e5e47b9cd1b3beea195d786a63f5d44707803cb3493b7610a852d16a5d46a3`. Previous source `647aa7b949698f9b84feee3ce5134cb2a7b542de`: backend `sha256:62fd9b1206373e59c5cb3a71d5f5f80ee564edaa1652b64299817b7cc4f603cd`, frontend `sha256:837d77529cc39b64c7cd04f10dfb4b0bc4d1778d5f8ea36b228e237009c78031`. Оба checkpoint собраны стандартными production Dockerfiles из exact-commit archives, без checkout env/audit. Это retained outputs, не обещание bit-for-bit rebuild: свежие build timestamps/base resolution могут менять IDs.
+
+Previous — known-good checkpoint исправленного React Router. Backend/frontend application trees, 18 migration sources и entities совпадают с current. Это full previous **release artifact pair** qualification; совместимость различных application generations или изменённой схемы не заявляется. Исторический backend-version drill выше остаётся отдельным доказательством. Выбор identical application checkpoint сознательный: older vulnerable frontend не рекомендован для production rollback.
+
+Final raw root `/var/folders/mg/0kv7ncvj7x33c4gkz6d9k47r0000gn/T/hc-pair-drill-uhgs8ns8/`; reproducible harness `scripts/tests/release-pair-runtime.py`. Current migrations applied один раз до app; exact no-pending current/previous/current и actual live extra migration refusal PASS. Controlled app outage не менял DB/storage. Readiness200, ingress root/index+2 referenced assets exact SHA256, bearer file download, representative share/trash API PASS на всех трёх этапах. Все public table row hashes, schema dump, migration table, storage SHA256 tree и quota `136/1048576` совпали. Login отдельно после invariance proof PASS (нормальная запись refresh token не выдаётся за unchanged snapshot). Down migrations не выполнялись. Собственные containers, три networks и storage volume удалены; TLS private keys удалены, operation logs secret scan PASS. Квалифицированные локальные images удержаны как rollback artifacts.
+
+Fixture использует self-signed TLS ingress и случайные сети с dynamic trusted proxy substitution, а не production fixed subnets/public DNS/CA/native target bind. UI artifact HTTP checks не заменяют desktop/mobile browser acceptance. Guard предполагает reviewed migration discipline и trusted builder; manual DDL drift, подписанная provenance и registry/multi-platform pull не квалифицированы. Manifest/JSON evidence не содержит secret values; raw logs в commit не включены.
+
+Gates: release helper6/6, manifest26/26 (включая real Compose reset merge, missing/mutable/mixed/source/ID/nonexistent/schema/applied/unsupported-name/duplicate-class failures), обе пары production builds, production Compose effective configs3/3, migration preflight3/3, final rollback+rollforward, Node/Python syntax и diff-check PASS. Application sources не менялись; full suites не повторялись: latest passing backend59 suites/702 и frontend12 files/96 записаны выше. Первый fixture stop ожидал502 вместо timeout; исправлен test-only критерий outage. Независимая Compose-проверка выявила JSON null merge flaw; заменён явным YAML reset и финальный drill повторён на окончательном коде.
+
+INDEPENDENT_REVIEW: APPROVE. Reviewer не автор: actual final code/docs/raw evidence проверены; focused32/32 и обе actual Docker manifest/source validation PASS, diff-check PASS. Sanitized evidence сверено с raw, оба сохранённых manifest byte-identical originals.
+
+IMMUTABLE_RELEASE_MANIFEST: PASS; CURRENT_PAIR_QUALIFIED: PASS; PREVIOUS_PAIR_QUALIFIED: PASS; SCHEMA_COMPATIBILITY_GUARD: PASS; FULL_PAIR_ROLLBACK: PASS; DATA_PRESERVATION: PASS; REGISTRY_DISTRIBUTION: NOT_QUALIFIED; PRODUCTION_BLOCKER_PREVIOUS_PAIR_ROLLBACK: RESOLVED (локальная full prior release pair mechanics). Общий **NOT_READY / NO_GO**: real Linux/DNS/public CA/native bind, target registry distribution, scheduler/delivered alerts, independent offsite/key custody/approved measured budgets и final browser/operator/host-recovery acceptance остаются открыты. Новая Phase не создана; следующая задача не запущена. Следующий рекомендуемый меньший блок — scheduler и delivered alerts, после выбора target/receiver inputs.
+
+
+## Scheduler / delivered alerts — 2026-10-01
+
+Ненумерованный bounded remediation, исходный HEAD `aa08dca35615080d5d6d4f9dd011678d3608f307`; status только запрещённый audit (не читался/не менялся/не staged). [Контракт](./scheduler-alerting.md), [raw qualification](./evidence/archive/scheduler-alerting/qualification.json), [receiver requests](./evidence/archive/scheduler-alerting/receiver.json), [systemd runtime](./evidence/archive/scheduler-alerting/systemd-runtime.json).
+
+SCHEDULER_CONTRACT: PASS. SYSTEMD_RUNTIME: PASS — disposable Debian/systemd PID1,8 units verify/install,4 active timers, manual+accelerated timer execution, systemctl nonzero14/70/75, safe journal, concurrency block. Persistent=yes inspected; настоящий target reboot/missed-run replay не выполнен. ALERT_DELIVERY_MECHANICS: PASS. ALERT_DEDUP_RECOVERY: PASS — actual loopback HTTP acceptance, repeated failure suppression, time-adjusted escalation, recovery/stale,500/unavailable/timeout retries и nonzero delivery failure.
+
+BACKUP_SCHEDULED_ALERTING: PASS (existing coordinator/real age + controlled legacy fixtures, offsite failure exit14 → receiver → verified success/recovery; actual production maintenance-wrapper ещё не квалифицирован). CERT_SCHEDULED_ALERTING: PASS (actual self-signed isolated check warning/critical/invalid, actual renewal failure; successful/unchanged renewal recovery adapter тестируется mock, ACME/public CA/production nginx этим не доказаны).
+
+Fresh gates: focused22/22 Linux, production backup34/34, external config11/11, cert lifecycle10/10, legacy safety27/27, restore validation15 PASS/1 destructive integration SKIP; Python7/Bash9 syntax,8 systemd units, local docs references и diff-check PASS. Backend/frontend suites не запускались: app sources не изменены. Independent review: **APPROVE**; raw evidence, source hashes и независимый focused запуск проверены, [вердикт](../evidence/archive/scheduler-alerting/review.md).
+
+**SCHEDULER_RUNTIME_QUALIFIED: YES (disposable Linux mechanics). ALERT_DELIVERY_MECHANICS_QUALIFIED: YES (controlled receiver). PRODUCTION_RECIPIENT_DELIVERY_QUALIFIED: NO / NOT_QUALIFIED. PRODUCTION_BLOCKER_SCHEDULER_ALERTS: PARTIALLY_RESOLVED. Общий NOT_READY / NO_GO.**
+
+Оператору нужно предоставить выбранный Linux host/timezone, approved maintenance/RPO и внешний barrier-wrapper, реальный HTTPS alert endpoint с secure external auth config, получателя/канал и подтверждение TEST receipt/acknowledgement/escalation owner. Credentials не передавать в чат/Git. Test receiver не квалифицирует human notification. Остальные blockers: real Linux/DNS/public CA/native bind, registry immutable push/pull/platform, independent offsite/key custody/measured recovery budgets, final browser/operator/host-recovery acceptance. Следующий blocker автоматически не начинается.
+
+## Реальный Linux / DNS / public CA — discovery 2026-10-01
+
+Исходный HEAD `30f13a98a1c312d9e5c11e1811d690c725d04b4d`, исходный status только запрещённый audit, не открывался/не менялся. [Discovery, prerequisites и operator commands](./certificate-lifecycle.md#реальный-linux--dns--public-ca-входы-и-qualification--2026-10-01). Реальные SSH target/public IP/FQDN/timezone/ACME contact/external paths отсутствуют; contract ports80/443, whole-directory bind, /opt/homecloud и root scheduler paths найдены. Example values не являются deployment inputs. Текущий unattended cert renew поддерживает HTTP-01 webroot; DNS-01 требует отдельного plugin flow qualification.
+
+Local cert10/10, scheduler22 tests/1 age integration SKIP, hostname/syntax/quiet Compose PASS. Fresh disposable Linux daemon-side native bind smoke:18 healthy requests during reload; rotation/idempotency/mismatch/config/simulated renewal failure retention и cleanup PASS, raw `/private/tmp/hc-cert-runtime-b35yp793/result.json`. Это прежняя поддерживаемая локальная механика, не production target и не public CA. Application sources не менялись; full app suites не запускались. Target systemd timers не квалифицированы.
+
+| Production classification | Итог |
+|---|---|
+| REAL_LINUX_TARGET | NOT_AVAILABLE |
+| PUBLIC_DNS | NOT_AVAILABLE |
+| PUBLIC_REACHABILITY_80_443 | INCONCLUSIVE |
+| PUBLIC_CA_ISSUANCE | SKIPPED |
+| NATIVE_CERT_BIND_RELOAD | SKIPPED |
+| REAL_RENEWAL_PATH | SKIPPED |
+| PRODUCTION_BLOCKER_LINUX_DNS_CA | DEFERRED_OWNER_INFRASTRUCTURE_INPUT / OPEN |
+
+**OVERALL_PRODUCTION_READINESS: NOT_READY / NO_GO.** Остались actual Linux/DNS/public CA/native bind, registry distribution, scheduler production recipient/target, независимый offsite/key custody/approved measured recovery budgets и final browser/operator/host-recovery acceptance. Минимальные operator inputs перечислены в certificate doc; credentials только target/out-of-band. Новая Phase не создана. Следующий blocker автоматически не начинается.
+
+INDEPENDENT_REVIEW: APPROVE — reviewer не автор; final docs diff, raw runtime JSON, focused10/10 log, discovery и действующие source/mount/nginx/systemd contracts проверены. Подтверждённых дефектов нет, correction cycle не потребовался; production blocker OPEN и общий NOT_READY сохранены. git diff --check PASS.
+
+
+## Отложенные входы Linux / DNS / public CA — 2026-10-01
+
+По решению владельца **LINUX_DNS_CA_OWNER_INPUT: DEFERRED / OPEN; DEFERRED_OWNER_INFRASTRUCTURE_INPUT**. Это не PASS и не устранение blocker. Он не препятствует независимой registry qualification; повторный target/CA drill в этом workstream не выполняется. Перед READY для принятой политики публичного production endpoint все прежние критерии обязательны. Точный неизменённый список SSH/user/IP, FQDN/A/AAAA control, timezone, NAT/firewall/HTTP-01, ACME account/contact и абсолютных external paths сохранён в [certificate prerequisites](./certificate-lifecycle.md#target_input_discovery--operator_inputs_required). Общий **NOT_READY / NO_GO**.
+
+
+## Registry distribution immutable pair — 2026-10-01
+
+Ненумерованный bounded workstream; исходный HEAD `2f6767983d27f8996ccc4f86d254ac2c7e470fd0`, status только запрещённый untracked audit. Audit не открывался/не менялся/не staged; старые containers и preview не затрагивались. **OVERALL_PRODUCTION_READINESS: NOT_READY / NO_GO**. Linux/DNS/CA: **DEFERRED_OWNER_INFRASTRUCTURE_INPUT / OPEN**; точные прежние operator prerequisites сохранены.
+
+| Исходный registry gap | Итог |
+|---|---|
+| Manifest хранит local image_id, repository/tag/digest отсутствуют | registry-digest mode: repository + sha256 digest обеих ролей под одним release_id; прежний schema/source contract сохранён |
+| Local override never, нет pull boundary | prepare загружает всю пару/проверяет provenance до изменения active services; registry default always, переход после prepare с обязательным --pull never |
+| External registry/provider/auth отсутствуют | Disposable HTTP registry:2 и чистый docker:27-dind; EXTERNAL_PRODUCTION_REGISTRY NOT_QUALIFIED |
+| Current/previous outputs удержаны только локально | Оба pairs retag/push без rebuild; pull обеих пар в отдельный daemon, app refs отсутствовали до pull |
+| Registry/config/local IDs смешивались | Push result = Registry API digest = SHA256 raw manifest bytes; platform config digest отдельно сопоставлен с pulled actual Image |
+
+[Registry contract и operator sequence](./release-manifest.md#registry-digest-contract). [Сохранённое evidence](./evidence/registry-distribution/qualification.json), [current registry manifest](./evidence/registry-distribution/current-manifest.json), [previous registry manifest](./evidence/registry-distribution/previous-manifest.json), raw registry/platform manifest bytes и [focused gates](./evidence/registry-distribution/gates.tap). Исходные distributed manifests сохранены byte-identical; embedded manifests в sorted qualification JSON служат только evidence, не operator input.
+
+Чистый nested Docker daemon первоначально image-empty. Затем импортированы только вспомогательные PostgreSQL/nginx/Alpine, чтобы исключить внешний network dependency; ни один app image не импортировался. Все четыре app digest refs отсутствовали перед фактическим pull. Host retained outputs не удалялись и не использовались как deploy identity. Outer registry push исходных qualified IDs и nested pull происходили в разных image stores: Desktop/containerd ID здесь равен OCI manifest digest, nested classic Image — config digest. Оба значения выведены из registry response, не выдуманы из local ID. Конвертация fail closed требует original qualified ID = pulled config ID либо registry digest; same-label иной artifact отвергается. Provenance labels/manifest канал предполагают trusted builder; криптографическая подпись и multi-platform target не заявляются.
+
+Current → previous → current: оба container Config.Image равны manifest repository@digest (asserted harness), actual Image равны expected registry config digests. Production Compose merged3/3 без build, pull_policy:always; отдельная isolated topology с random networks и self-signed ingress развёрнута из resolved refs. Это не запуск public production host. Readiness200, ingress index +2 assets SHA256, bearer download, sharing/public/trash flows и final login PASS. Все public table row hashes, migration table, schema dump, storage tree SHA256 и quota136/1048576 сохранены; no pending migrations3/3. Down migrations не выполнялись. Current/previous application/schema trees совпадают: квалифицированы различные release artifact pairs, не evolving-schema compatibility.
+
+Failures: registry stop, nonexistent digest, malformed digest, previous backend substitution в current, controlled HTTP401 auth denial — отказ prepare, container IDs active pair неизменны, readiness200. Auth denial подтверждён отдельным actual Docker pull stderr; test registry не содержит real secrets. Mutable current tags обоих repositories перемещены на previous content; current digest pulls/deploy stable. Focused tests дополнительно отвергают tag-only refs, mixed metadata, RepoDigests mismatch, identity tampering, unknown credential fields и same-label content substitution. Failed second pull не запускает inspection/deploy. Никаких stop/app update при failed prepare.
+
+Gates: release6 + manifest26 + registry17 = **49/49 PASS**; actual merged Compose3/3, live migration/schema guard, deploy/rollback/rollforward, Node/Python syntax и git diff --check PASS. Production app images не пересобирались: retained qualified outputs доступны. Full application suites не повторялись: app source не менялся. Credentials/account не обнаружены в authoritative registry contract; их поиск/печать не выполнялись. Manifest содержит только repositories/digests/provenance/schema hashes. Runtime logs secret scan PASS; TLS keys, own containers/networks/volumes и outer daemon/registry удалены. Unencrypted daemon API только disposable loopback, operator/root-equivalent trust, без mount Docker socket; auth401 fixture симулирует denial, не реальный provider flow.
+
+**REGISTRY_DISTRIBUTION_MECHANICS: PASS; REGISTRY_MANIFEST_DIGESTS: PASS; REGISTRY_PUSH_PULL_MECHANICS: PASS; CURRENT_PAIR_FROM_REGISTRY: PASS; PREVIOUS_PAIR_ROLLBACK_FROM_REGISTRY: PASS; DIGEST_IMMUTABILITY: PASS. EXTERNAL_PRODUCTION_REGISTRY: NOT_QUALIFIED; PRODUCTION_BLOCKER_REGISTRY_DISTRIBUTION: PARTIALLY_RESOLVED.** Политика запуска не принимает disposable HTTP registry как production target.
+
+Требуемые внешние operator inputs: registry hostname и backend/frontend repositories; auth method и credential helper/DOCKER_CONFIG placement вне repo; TLS/CA trust requirements; retention/GC и immutability policy, сохранение current+previous blobs/digests; target architecture/platform и доступность с deployment host. Credentials в чат/Git не передавать. External auth/TLS/availability/retention ещё не квалифицированы.
+
+Remaining: deferred Linux/DNS/public CA/native bind; внешний registry; target scheduler/maintenance и human alert recipient; independent offsite/key custody/approved measured recovery budgets; final browser/operator/host-recovery acceptance. Следующий blocker автоматически не начинается. **INDEPENDENT_REVIEW: APPROVE.** [Независимый review](../evidence/registry-distribution/review.md): raw digests/byte-identical manifests, clean pull, полный pair transition/data retention и failures проверены; focused17/17 повторены, full49/49 evidence inspected. Замечания о позднем pull, same-label content substitution и historical wording устранены.
+
+## Независимое offsite / custody / measured budgets — 2026-10-02
+
+Ненумерованная bounded remediation: [контракты, operator sequence и recovery objectives](../architecture/recovery-objectives.md), [raw qualification](./evidence/archive/offsite-recovery/qualification.json). Local isolated target не является физическим внешним offsite. Раздельные итоговые статусы и фактические измерения фиксируются в qualification; overall **NOT_READY / NO_GO**. REAL_EXTERNAL_OFFSITE и REAL_CUSTODIAN_PROCESS остаются NOT_QUALIFIED, OWNER_APPROVED_RECOVERY_BUDGETS — NOT_AVAILABLE.
+
+Раздельные итоговые статусы: OFFSITE_FAILURE_DOMAIN_MECHANICS=PASS; REAL_EXTERNAL_OFFSITE=NOT_QUALIFIED; RECOVERY_KEY_CUSTODY_MECHANICS=PASS; REAL_CUSTODIAN_PROCESS=NOT_QUALIFIED; MEASURED_RPO_RTO_BASELINE=PASS; OWNER_APPROVED_RECOVERY_BUDGETS=NOT_AVAILABLE; INDEPENDENT_OFFSITE_RECOVERY_DRILL=PASS; INDEPENDENT_REVIEW=APPROVE; PRODUCTION_BLOCKER_OFFSITE_RECOVERY=PARTIALLY_RESOLVED. Два128MiB прогона: verified RTO31.384/31.543s; подробные component timings, gaps и evidence limits — в recovery objectives. Overall NOT_READY / NO_GO.

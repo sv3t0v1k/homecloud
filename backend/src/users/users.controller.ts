@@ -11,6 +11,7 @@ import { Request as ExpressRequest } from "express";
 import { UsersService } from "./users.service";
 import { JwtGuard } from "../auth/guards/jwt.guard";
 import { UpdateProfileDto } from "./dtos/update-profile.dto";
+import { presentUserProfile } from "./user-profile.presenter";
 
 @Controller("users")
 export class UsersController {
@@ -25,8 +26,7 @@ export class UsersController {
     if (!user) {
       throw new NotFoundException("User not found");
     }
-    const { password: _password, ...safeUser } = user; // eslint-disable-line @typescript-eslint/no-unused-vars
-    return safeUser;
+    return presentUserProfile(user);
   }
 
   @Patch("me")
@@ -36,7 +36,6 @@ export class UsersController {
     @Body() dto: UpdateProfileDto,
   ) {
     const user = await this.usersService.updateProfile(req.user.userId, dto);
-    const { password: _password, ...safeUser } = user; // eslint-disable-line @typescript-eslint/no-unused-vars
-    return safeUser;
+    return presentUserProfile(user);
   }
 }

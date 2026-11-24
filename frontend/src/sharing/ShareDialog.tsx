@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/errors'
+import { Icon } from '../ui/Icon'
+import { LiquidCloseButton } from '../ui/LiquidCloseButton'
+import { QrCodeImage } from '../ui/QrCodeImage'
+import { FileThumbnail } from '../files/FileThumbnail'
 import { useDialogFocus } from '../accessibility/useDialogFocus'
 import { createShare, listShares, publicShareUrl, revokeShare, type OwnerShare, type ShareTarget } from './api'
 
-export function ShareDialog({ target, onClose }: { target: ShareTarget; onClose(): void }) {
+export type ShareDialogTarget = ShareTarget & {
+  mimeType?: string | null
+  updatedAt?: string
+}
+
+export function ShareDialog({ target, onClose }: {
+  target: ShareDialogTarget
+  onClose(): void
+}) {
   const [shares, setShares] = useState<OwnerShare[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -14,6 +26,7 @@ export function ShareDialog({ target, onClose }: { target: ShareTarget; onClose(
   const [password, setPassword] = useState('')
   const [expiresInDays, setExpiresInDays] = useState('7')
   const [maxDownloads, setMaxDownloads] = useState('')
+  const [qrShareId, setQrShareId] = useState<number | null>(null)
   const mutationLock = useRef(false)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useDialogFocus(onClose, closeButtonRef)
@@ -111,18 +124,81 @@ export function ShareDialog({ target, onClose }: { target: ShareTarget; onClose(
     }
   }
 
+  const image = !target.isFolder &&
+    target.mimeType?.startsWith('image/')
+
+  const hasThumbnail = !target.isFolder &&
+    ['image/jpeg', 'image/png', 'image/webp'].includes(
+      target.mimeType ?? '',
+    )
+
+  const targetType = target.isFolder
+    ? 'Папка'
+    : image
+      ? 'Изображение'
+      : target.mimeType?.startsWith('text/')
+        ? 'Текстовый документ'
+        : target.mimeType === 'application/pdf'
+          ? 'Документ PDF'
+          : target.mimeType?.startsWith('video/')
+            ? 'Видео'
+            : target.mimeType?.startsWith('audio/')
+              ? 'Аудио'
+              : 'Файл'
+
   return (
-    <div aria-labelledby="share-title" aria-modal="true" className="dialog-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
-      <div className="dialog-surface share-dialog">
+    <div aria-labelledby="share-title share-target-name" aria-modal="true" className="dialog-overlay liquid-settings-overlay" ref={dialogRef} role="dialog" tabIndex={-1}>
+      <div className="dialog-surface share-dialog liquid-settings-dialog">
         <header className="dialog-header">
-          <div>
-            <p className="eyebrow">Общий доступ</p>
-            <h3 id="share-title">Поделиться: {target.name}</h3>
-            <p className="page-description">Настройте срок действия ссылки и ограничения скачивания.</p>
-          </div>
-          <button aria-label="Закрыть общий доступ" className="button button--ghost" onClick={onClose} ref={closeButtonRef} type="button">Закрыть</button>
+          <h3 id="share-title">Поделиться</h3>
+          <LiquidCloseButton
+            aria-label="Закрыть общий доступ"
+            onClick={onClose}
+            ref={closeButtonRef}
+          />
         </header>
         <div className="dialog-body">
+          <div className="share-target-card">
+            {hasThumbnail ? (
+              <FileThumbnail
+                key={`${target.fileId}:${target.updatedAt ?? ''}`}
+                fileId={target.fileId}
+              />
+            ) : (
+              <span
+                aria-hidden="true"
+                className={`share-target-icon${target.isFolder ? ' is-folder' : ''}`}
+              >
+                <Icon
+                  name={target.isFolder
+                    ? 'folder'
+                    : image
+                      ? 'image'
+                      : target.mimeType?.startsWith('text/')
+                        ? 'text'
+                        : 'file'}
+                />
+              </span>
+            )}
+
+            <div className="share-target-details">
+              <strong
+                id="share-target-name"
+                className="share-target-name"
+                title={target.name}
+              >
+                {target.name}
+              </strong>
+              <span className="share-target-type">
+                {targetType}
+              </span>
+            </div>
+          </div>
+
+          <p className="share-policy-description">
+            Настройте срок действия ссылки и ограничения скачивания.
+          </p>
+
           <form className="share-form" onSubmit={(event) => void submit(event)}>
             <label className="field">Срок действия, дней<input className="input mono" max={36500} min={1} onChange={(event) => setExpiresInDays(event.target.value)} required type="number" value={expiresInDays} /></label>
             <label className="field">Лимит скачиваний (необязательно)<input className="input mono" min={1} onChange={(event) => setMaxDownloads(event.target.value)} placeholder="Без ограничений" type="number" value={maxDownloads} /></label>
@@ -143,7 +219,13 @@ export function ShareDialog({ target, onClose }: { target: ShareTarget; onClose(
                   <p className="share-status">{shareStatus(share)}</p><p className="muted">{share.allowUpload ? 'Загрузка разрешена' : 'Только просмотр и скачивание'}</p>
                   <input aria-label={`Публичная ссылка: ${target.name}`} className="input mono" readOnly value={url} />
                   <p className="muted mono">Скачиваний: {String(share.downloadCount)}{share.maxDownloads === null ? '' : ` из ${String(share.maxDownloads)}`}</p>
-                  <div className="share-actions"><button className="button button--ghost" onClick={() => void copy(share)} type="button">Копировать ссылку</button><button className="button button--ghost" onClick={() => open(share)} type="button">Открыть</button><button className="button button--danger" disabled={busy || !share.isActive} onClick={() => void revoke(share)} type="button">Закрыть доступ</button></div>
+                  <div className="share-actions"><button className="button button--ghost" onClick={() => void copy(share)} type="button">Копировать ссылку</button><button aria-expanded={qrShareId === share.id} className="button button--ghost" onClick={() => setQrShareId((current) => (current === share.id ? null : share.id))} type="button"><Icon name="qr" />QR-код</button><button className="button button--ghost" onClick={() => open(share)} type="button">Открыть</button><button className="button button--danger" disabled={busy || !share.isActive} onClick={() => void revoke(share)} type="button">Закрыть доступ</button></div>
+                  {qrShareId === share.id ? (
+                    <div className="share-qr">
+                      <QrCodeImage label={`QR-код со ссылкой: ${target.name}`} value={url} />
+                      <p className="muted">Наведите камеру телефона, чтобы открыть ссылку.</p>
+                    </div>
+                  ) : null}
                 </li>
               })}
             </ul>

@@ -1,9 +1,17 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 
 import { ApiError } from '../api/errors'
-import { Icon } from '../ui/Icon'
+import { AuthScreen } from './AuthScreen'
 import { useSession } from './SessionContext'
+
+const LOGIN_EXIT_MS = 850
+
+function prefersLoginMotion(): boolean {
+  return window.matchMedia?.(
+    '(prefers-reduced-motion: no-preference)',
+  ).matches === true
+}
 
 export function LoginPage() {
   const session = useSession()
@@ -12,29 +20,53 @@ export function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [closing, setClosing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const returnPath = readReturnPath(location.state)
+  const isClosing = closing && session.status === 'authenticated'
+  const busy = submitting || isClosing
+
+  useEffect(() => {
+    if (!isClosing) return
+
+    const timer = window.setTimeout(() => {
+      navigate(returnPath, { replace: true })
+    }, LOGIN_EXIT_MS)
+
+    return () => window.clearTimeout(timer)
+  }, [isClosing, navigate, returnPath])
 
   if (session.status === 'bootstrapping') {
     return (
-      <main className="auth-page" role="status">
-        Восстанавливаем сеанс…
-      </main>
+      <AuthScreen mode="loading">
+        <p>Восстанавливаем сеанс…</p>
+      </AuthScreen>
     )
   }
 
-  if (session.status === 'authenticated') {
-    return <Navigate to="/files" replace />
+  if (session.status === 'authenticated' && !busy) {
+    return <Navigate to={returnPath} replace />
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (submitting) return
+    if (busy) return
+    setClosing(false)
     setSubmitting(true)
     setError(null)
 
     try {
       await session.login(email, password)
-      navigate(readReturnPath(location.state), { replace: true })
+
+      // Credentials are no longer needed after successful login.
+      setPassword('')
+
+      if (prefersLoginMotion()) {
+        setClosing(true)
+      } else {
+        navigate(returnPath, { replace: true })
+      }
     } catch (caught) {
       setError(
         loginErrorMessage(caught),
@@ -45,12 +77,8 @@ export function LoginPage() {
   }
 
   return (
-    <main className="auth-page">
-      <div className="auth-layout">
-        <div className="auth-card">
-          <h1 className="auth-brand"><Icon name="cloud" height={32} width={32} />HomeCloud</h1>
-          <h2 className="page-heading">Войти</h2>
-          <p className="page-description">Ваши файлы — в одном месте.</p>
+    <AuthScreen mode={isClosing ? "closing" : "form"}>
+      <h2 className="page-heading">Войти</h2>
           {session.status === 'anonymous' && session.notice ? (
             <p className="alert alert--warning" role="status">
               {session.notice}
@@ -67,7 +95,7 @@ export function LoginPage() {
               <input
                 autoComplete="email"
                 className="input"
-                disabled={submitting}
+                disabled={busy}
                 id="email"
                 onChange={(event) => setEmail(event.target.value)}
                 required
@@ -80,7 +108,7 @@ export function LoginPage() {
               <input
                 autoComplete="current-password"
                 className="input"
-                disabled={submitting}
+                disabled={busy}
                 id="password"
                 onChange={(event) => setPassword(event.target.value)}
                 required
@@ -90,15 +118,13 @@ export function LoginPage() {
             </div>
             <button
               className="button button--primary"
-              disabled={submitting}
+              disabled={busy}
               type="submit"
             >
-              {submitting ? 'Входим…' : 'Войти'}
+              {busy ? 'Входим…' : 'Войти'}
             </button>
           </form>
-        </div>
-      </div>
-    </main>
+    </AuthScreen>
   )
 }
 

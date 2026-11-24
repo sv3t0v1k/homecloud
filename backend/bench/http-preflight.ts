@@ -5,7 +5,8 @@ import * as path from "path";
 import { DataSource } from "typeorm";
 import { FileEntity } from "../src/entities/file.entity";
 import { UploadSessionEntity } from "../src/entities/upload-session.entity";
-import { UserEntity } from "../src/entities/user.entity";
+import { UserEntity, UserRole } from "../src/entities/user.entity";
+import * as bcrypt from "bcryptjs";
 
 export type PreflightStage =
   | "AUTH"
@@ -269,6 +270,16 @@ export async function runHttpPreflight(
   dataSource: DataSource,
 ): Promise<PreflightResult> {
   assertSafeTargets(options);
+
+  // A safe URL in the options alone is not enough: the actual
+  // DataSource must target that same explicitly owned fixture DB.
+  if (
+    dataSource.options.type !== "postgres" ||
+    dataSource.options.url !== options.databaseUrl
+  ) {
+    throw new Error("DataSource не соответствует изолированной БД preflight");
+  }
+
   const evidence: StageEvidence[] = [];
   const fetchImpl = options.fetchImpl ?? fetch;
   const suffix = crypto.randomBytes(8).toString("hex");
@@ -284,21 +295,54 @@ export async function runHttpPreflight(
   const expectedQuota = computePreflightQuota(options.payload.length);
 
   try {
+    // Prepare only a uniquely named ordinary fixture account.
+    // No HTTP registration or product account-creation service.
+    const userRepository = dataSource.getRepository(UserEntity);
+
+    const inserted = await userRepository.insert({
+      email,
+      password: await bcrypt.hash(password, 12),
+      name: "HTTP preflight",
+      role: UserRole.USER,
+      isActive: true,
+      sessionVersion: "1",
+      storageUsed: 0,
+      storageQuota: 0,
+    });
+
+    const insertedId: unknown = inserted.identifiers[0]?.id;
+
+    if (
+      typeof insertedId !== "number" ||
+      !Number.isSafeInteger(insertedId) ||
+      insertedId < 1
+    ) {
+      throw new Error("Fixture INSERT не вернул корректный ID");
+    }
+
+    // Record ownership before login so a failed login is also cleaned up.
+    userId = insertedId;
+
     const auth = await request(
       evidence,
       "AUTH",
       fetchImpl,
-      `${options.baseUrl}/api/v1/auth/register`,
+      `${options.baseUrl}/api/v1/auth/login`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password, name: "HTTP preflight" }),
+        body: JSON.stringify({ email, password }),
       },
     );
+
     if (!auth.response.ok) return { label: options.label, sha256, evidence };
-    const userRepository = dataSource.getRepository(UserEntity);
-    const registeredUser = await userRepository.findOneByOrFail({ email });
-    userId = registeredUser.id;
+
+    const preparedUser = await userRepository.findOneByOrFail({ email });
+
+    if (preparedUser.id !== userId) {
+      throw new Error("Fixture account identity mismatch");
+    }
+
     await userRepository.update(userId, { storageQuota: expectedQuota });
     const user = await userRepository.findOneByOrFail({ id: userId });
     const reloadedQuota = exactSafeInteger(user.storageQuota, "storageQuota");

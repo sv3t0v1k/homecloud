@@ -11,6 +11,36 @@ export async function downloadOriginalFile(file: Pick<FileItem, 'id' | 'name' | 
   handOffToBrowser(result.downloadPath)
 }
 
+/** Бинарный предпросмотр (PDF, аудио) не должен тянуть в память огромные файлы. */
+export const MAX_BINARY_PREVIEW_BYTES = 50 * 1024 * 1024
+
+export class BinaryPreviewTooLargeError extends Error {
+  constructor() {
+    super('File exceeds the binary preview limit')
+    this.name = 'BinaryPreviewTooLargeError'
+  }
+}
+
+/**
+ * Загружает файл в память для предпросмотра PDF/аудио через тот же
+ * одноразовый native-download capability, что и обычное скачивание.
+ */
+export async function fetchFileBlob(
+  file: Pick<FileItem, 'id' | 'name' | 'size'>,
+  mimeType: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const size = Number(file.size)
+  if (!Number.isSafeInteger(size) || size < 0) throw new RangeError('Invalid file size')
+  if (size > MAX_BINARY_PREVIEW_BYTES) throw new BinaryPreviewTooLargeError()
+  const result = await apiRequest<{ downloadPath: string }>({ method: 'POST', url: `/native-downloads/${file.id}/prepare`, withCredentials: true, signal })
+  if (result.downloadPath !== `/native-downloads/${file.id}`) throw new Error('Invalid download endpoint')
+  const response = await fetch(nativeDownloadUrl(result.downloadPath), { signal })
+  if (!response.ok) throw new Error(`Binary preview download failed with status ${response.status}`)
+  const buffer = await response.arrayBuffer()
+  return new Blob([buffer], { type: mimeType })
+}
+
 export type ArchiveSelection = { kind: 'file' | 'folder'; id: number }
 
 export async function downloadSelectionArchive(items: ArchiveSelection[]): Promise<void> {

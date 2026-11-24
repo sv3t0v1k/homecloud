@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   AxiosError,
@@ -53,7 +53,37 @@ describe('authentication UX', () => {
     expect(screen.getByRole('dialog', { name: 'Корзина' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Удалить «old.txt» навсегда?' })).not.toBeInTheDocument()
     expect(remove).toHaveFocus()
-    await user.keyboard('{Escape}')
+
+    await user.click(remove)
+
+    const nested = screen.getByRole('dialog', {
+      name: 'Удалить «old.txt» навсегда?',
+    })
+
+    const surface = nested.querySelector('.dialog-surface')!
+
+    // Starting inside and releasing outside is not
+    // an intentional backdrop click.
+    fireEvent.pointerDown(surface, { button: 0 })
+    fireEvent.pointerUp(nested, { button: 0 })
+    fireEvent.click(nested, { button: 0, detail: 1 })
+
+    expect(nested).toBeInTheDocument()
+
+    await user.click(nested)
+
+    expect(nested).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', {
+      name: 'Корзина',
+    })).toBeInTheDocument()
+    expect(remove).toHaveFocus()
+
+    const trash = screen.getByRole('dialog', {
+      name: 'Корзина',
+    })
+
+    await user.click(trash.closest('.dialog-overlay')!)
+
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
@@ -69,20 +99,23 @@ describe('authentication UX', () => {
     const account = await screen.findByRole('button', { name: 'Открыть аккаунт: Owner' })
     // Safari pointer clicks do not natively focus buttons.
     act(() => account.click())
-    expect(screen.getByRole('dialog', { name: 'Аккаунт и хранилище' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Настройки HomeCloud' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Хранилище' }))
     expect(await screen.findByText(/Использовано 25 Б/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Профиль' }))
     expect(screen.getByLabelText('Имя')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Безопасность' }))
     expect(screen.getByLabelText('Текущий пароль')).toHaveAttribute('autocomplete', 'current-password')
     expect(screen.getByLabelText('Новый пароль')).toHaveAttribute('autocomplete', 'new-password')
     expect(screen.getByLabelText('Повторите новый пароль')).toHaveAttribute('autocomplete', 'new-password')
     await user.keyboard('{Escape}')
-    expect(screen.queryByRole('dialog', { name: 'Аккаунт и хранилище' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Настройки HomeCloud' })).not.toBeInTheDocument()
     expect(account).toHaveFocus()
     expect(screen.queryByRole('button', { name: 'Аккаунт' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Выйти' })).not.toBe(account)
     for (const key of ['{Enter}', ' ']) {
       await user.keyboard(key)
-      expect(screen.getByRole('dialog', { name: 'Аккаунт и хранилище' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Настройки HomeCloud' })).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: 'Закрыть' }))
       expect(account).toHaveFocus()
     }
@@ -271,6 +304,16 @@ describe('authentication UX', () => {
     expect(tokenStorage.getAccessToken()).toBeNull()
     expect(tokenStorage.getRefreshToken()).toBeNull()
     expect(refreshCalls).toBe(2)
+  })
+})
+
+describe('not found page', () => {
+  it('renders a styled 404 with a link back to files', () => {
+    renderApp('/definitely-not-a-route')
+    expect(screen.getByRole('heading', { name: 'Страница не найдена' })).toBeInTheDocument()
+    expect(screen.getByText(/Такого адреса в HomeCloud нет/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'К моим файлам' })).toHaveAttribute('href', '/files')
+    expect(document.querySelector('.not-found-page .empty-state svg')).toBeInTheDocument()
   })
 })
 

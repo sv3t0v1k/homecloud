@@ -47,6 +47,43 @@ export class HttpExceptionFilter implements ExceptionFilter {
       typeof details === "object" && details !== null && "checks" in details
         ? (details as { checks: unknown }).checks
         : undefined;
+    // Forward only explicitly approved status/code combinations.
+    // Never forward arbitrary metadata, credentials or internal codes.
+    const allowedCodes: Readonly<Record<number, readonly string[]>> = {
+      [HttpStatus.BAD_REQUEST]: ["VALIDATION_ERROR", "INVALID_QUOTA"],
+      [HttpStatus.UNAUTHORIZED]: ["UNAUTHORIZED"],
+      [HttpStatus.FORBIDDEN]: ["REGISTRATION_DISABLED", "ADMIN_REQUIRED"],
+      [HttpStatus.NOT_FOUND]: ["USER_NOT_FOUND"],
+      [HttpStatus.CONFLICT]: [
+        "EMAIL_ALREADY_EXISTS",
+        "QUOTA_BELOW_COMMITMENTS",
+        "LAST_ACTIVE_ADMIN",
+        "CANNOT_DELETE_SELF",
+        "USER_RECOVERY_REQUIRED",
+        "USER_STORAGE_OPERATIONS_ACTIVE",
+      ],
+      [HttpStatus.SERVICE_UNAVAILABLE]: ["STORAGE_ACCOUNTING_UNAVAILABLE"],
+    };
+
+    const adminUserRequest =
+      /^\/api\/v1\/admin\/users(?:\/|$)/i.test(request.path ?? "");
+
+    const requestedCode =
+      typeof details === "object" &&
+      details !== null &&
+      "code" in details &&
+      typeof details.code === "string"
+        ? details.code
+        : undefined;
+
+    const safeCode =
+      requestedCode !== undefined &&
+      allowedCodes[status]?.includes(requestedCode)
+        ? requestedCode
+        : adminUserRequest && status === HttpStatus.UNAUTHORIZED
+          ? "UNAUTHORIZED"
+          : undefined;
+
     const safeChecks =
       checks && typeof checks === "object"
         ? Object.fromEntries(
@@ -62,10 +99,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     response.status(status).json({
       statusCode: status,
+      ...(safeCode ? { code: safeCode } : {}),
       ...(safeChecks ? { checks: safeChecks } : {}),
       message,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      // Administrative query parameters may contain user-supplied
+      // search terms or unexpected fields. Do not reflect them.
+      path: adminUserRequest ? request.path : request.url,
     });
   }
 }

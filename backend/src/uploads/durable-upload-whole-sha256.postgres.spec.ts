@@ -39,7 +39,11 @@ postgres("Durable SHA256 admission and production SSD journal contract", () => {
       .filter(
         (name) =>
           /^\d{13}-.*\.ts$/.test(name) &&
-          Number(name.slice(0, 13)) < 1746825200000,
+          // Historical pre-SHA fixture, plus the copy-journal migration:
+          // текущая финализация SSD читает file_copy_operations через
+          // storage-accounting, поэтому таблица обязана существовать.
+          (Number(name.slice(0, 13)) < 1746825200000 ||
+            name.startsWith("1792831300000-")),
       )
       .sort();
     const migrations = await Promise.all(

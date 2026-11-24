@@ -1,7 +1,6 @@
 import {
   Injectable,
   UnauthorizedException,
-  ConflictException,
   Logger,
   OnModuleInit,
   OnModuleDestroy,
@@ -9,17 +8,25 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, EntityManager, LessThan } from "typeorm";
 import { UserEntity } from "../entities/user.entity";
+import { normalizeUserEmail } from "../users/user-email";
+import {
+  isSessionVersion,
+  sessionVersionMatches,
+  parseRefreshSessionClaims,
+  RefreshSessionClaims,
+  refreshTokenDigest,
+} from "./session-token";
+import {
+  lockSessionUser,
+  revokeLockedUserSessions,
+} from "./session-revocation";
 import { RefreshTokenEntity } from "../entities/refresh-token.entity";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { ConfigService } from "@nestjs/config";
 
-export interface JwtPayload {
-  sub: number;
-  email: string;
-  jti?: string;
-}
+export type JwtPayload = RefreshSessionClaims;
 
 export interface Tokens {
   accessToken: string;
@@ -73,52 +80,68 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async register(
-    email: string,
-    password: string,
-    name?: string,
-  ): Promise<Tokens> {
-    const existing = await this.userRepository.findOne({ where: { email } });
-    if (existing) {
-      throw new ConflictException("User with this email already exists");
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 12);
-    const user = this.userRepository.create({
+  async login(email: string, password: string): Promise<Tokens> {
+    const canonicalEmail = await normalizeUserEmail(
+      this.userRepository.manager,
       email,
-      password: hashedPassword,
-      name: name || email.split("@")[0],
+    );
+
+    const snapshot = await this.userRepository.findOne({
+      where: { email: canonicalEmail },
     });
 
-    await this.userRepository.save(user);
-    return this.generateTokens(user.id, user.email);
-  }
-
-  async login(email: string, password: string): Promise<Tokens> {
-    const user = await this.userRepository.findOne({ where: { email } });
-    if (!user || !user.isActive) {
+    if (!snapshot || !snapshot.isActive) {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
+    const valid = await bcrypt.compare(password, snapshot.password);
+
+    if (!valid) {
       throw new UnauthorizedException("Invalid credentials");
     }
 
-    return this.generateTokens(user.id, user.email);
+    return this.refreshTokenRepository.manager.transaction(
+      async (manager) => {
+        const user = await lockSessionUser(manager, snapshot.id);
+
+        if (
+          !user ||
+          !user.isActive ||
+          user.email !== snapshot.email ||
+          user.password !== snapshot.password ||
+          !sessionVersionMatches(
+            snapshot.sessionVersion,
+            user.sessionVersion,
+          )
+        ) {
+          throw new UnauthorizedException("Invalid credentials");
+        }
+
+        return this.generateTokens(manager, user);
+      },
+    );
   }
 
   async refresh(userId: number, refreshToken: string): Promise<Tokens> {
+    const verified = await this.verifyRefreshToken(refreshToken);
+
+    if (verified.sub !== userId) {
+      throw new UnauthorizedException("Invalid refresh token");
+    }
+
     const result = await this.refreshTokenRepository.manager.transaction(
       async (manager: EntityManager): Promise<RefreshTransactionResult> => {
-        const user = await manager.findOne(UserEntity, {
-          where: { id: userId },
-        });
-        if (!user || !user.isActive) {
-          throw new UnauthorizedException("Invalid user");
-        }
+        const user = await lockSessionUser(manager, userId);
 
-        if (!refreshToken) {
+        // Expiration is checked again after waiting for the row lock.
+        const claims = await this.verifyRefreshToken(refreshToken);
+
+        if (
+          !user ||
+          !user.isActive ||
+          claims.sub !== user.id ||
+          !sessionVersionMatches(claims.sv, user.sessionVersion)
+        ) {
           throw new UnauthorizedException("Invalid refresh token");
         }
 
@@ -132,28 +155,19 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
           throw new UnauthorizedException("Invalid refresh token");
         }
 
-        if (storedToken.expiresAt < new Date()) {
+        if (storedToken.expiresAt.getTime() <= Date.now()) {
           throw new UnauthorizedException("Refresh token expired");
         }
 
         if (storedToken.revoked) {
-          await this.revokeAllUserTokensInTransaction(manager, userId);
+          await revokeLockedUserSessions(manager, user);
           return { reused: true };
         }
 
-        const payload: JwtPayload = { sub: user.id, email: user.email };
-        const refreshPayload: JwtPayload & { jti: string } = {
-          jti: randomUUID(),
-          sub: user.id,
-          email: user.email,
-        };
-        const newRefreshToken = this.jwtService.sign(refreshPayload, {
-          secret: this.configService.get("JWT_REFRESH_SECRET"),
-          expiresIn: this.configService.get("JWT_REFRESH_EXPIRES_IN") || "7d",
-        });
-        const newTokenHash = await bcrypt.hash(newRefreshToken, 10);
+        const issued = await this.issueTokens(user);
+        const newTokenHash = refreshTokenDigest(issued.tokens.refreshToken);
 
-        const updateResult = await manager.update(
+        const updated = await manager.update(
           RefreshTokenEntity,
           { id: storedToken.id, revoked: false },
           {
@@ -163,57 +177,24 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
           },
         );
 
-        if (updateResult.affected === 0) {
-          await this.revokeAllUserTokensInTransaction(manager, userId);
+        if (updated.affected !== 1) {
+          await revokeLockedUserSessions(manager, user);
           return { reused: true };
         }
 
-        const expiresIn =
-          this.configService.get("JWT_REFRESH_EXPIRES_IN") || "7d";
-        const expiresAt = new Date();
-        const match = expiresIn.match(/(\d+)([smhd])/);
-        if (match) {
-          const value = parseInt(match[1], 10);
-          const unit = match[2];
-          switch (unit) {
-            case "s":
-              expiresAt.setSeconds(expiresAt.getSeconds() + value);
-              break;
-            case "m":
-              expiresAt.setMinutes(expiresAt.getMinutes() + value);
-              break;
-            case "h":
-              expiresAt.setHours(expiresAt.getHours() + value);
-              break;
-            case "d":
-              expiresAt.setDate(expiresAt.getDate() + value);
-              break;
-            default:
-              expiresAt.setDate(expiresAt.getDate() + 7);
-          }
-        } else {
-          expiresAt.setDate(expiresAt.getDate() + 7);
-        }
-
-        const newTokenEntity = manager.create(RefreshTokenEntity, {
+        const entity = manager.create(RefreshTokenEntity, {
           tokenHash: newTokenHash,
-          expiresAt,
+          expiresAt: issued.expiresAt,
           userId,
         });
-        await manager.save(newTokenEntity);
 
-        const accessToken = this.jwtService.sign(payload, {
-          secret: this.configService.get("JWT_SECRET"),
-          expiresIn: this.configService.get("JWT_EXPIRES_IN") || "15m",
-        });
+        await manager.save(entity);
 
-        return {
-          reused: false,
-          tokens: { accessToken, refreshToken: newRefreshToken },
-        };
+        return { reused: false, tokens: issued.tokens };
       },
     );
 
+    // Reuse revocation must commit before returning an authentication error.
     if (result.reused) {
       throw new UnauthorizedException("Refresh token was reused");
     }
@@ -221,10 +202,24 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     return result.tokens;
   }
 
-  async logout(userId: number, refreshToken: string): Promise<void> {
+  async logout(
+    userId: number,
+    refreshToken: string,
+    sessionVersion: string,
+  ): Promise<void> {
     if (!refreshToken) return;
 
     await this.refreshTokenRepository.manager.transaction(async (manager) => {
+      const user = await lockSessionUser(manager, userId);
+
+      if (
+        !user ||
+        !user.isActive ||
+        !sessionVersionMatches(sessionVersion, user.sessionVersion)
+      ) {
+        throw new UnauthorizedException();
+      }
+
       const initialToken = await this.findAndLockRefreshToken(
         manager,
         userId,
@@ -232,9 +227,10 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       );
 
       if (!initialToken) return;
-      let storedToken: RefreshTokenEntity = initialToken;
 
+      let storedToken: RefreshTokenEntity = initialToken;
       const visitedHashes = new Set<string>();
+
       while (storedToken.replacedBy) {
         if (visitedHashes.has(storedToken.replacedBy)) return;
         visitedHashes.add(storedToken.replacedBy);
@@ -242,10 +238,11 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
         const replacement: RefreshTokenEntity | null = await manager.findOne(
           RefreshTokenEntity,
           {
-          where: { tokenHash: storedToken.replacedBy, userId },
-          lock: { mode: "pessimistic_write" },
+            where: { tokenHash: storedToken.replacedBy, userId },
+            lock: { mode: "pessimistic_write" },
           },
         );
+
         if (!replacement) return;
         storedToken = replacement;
       }
@@ -261,12 +258,17 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   async revokeAllUserTokens(userId: number): Promise<void> {
-    await this.refreshTokenRepository
-      .createQueryBuilder()
-      .update()
-      .set({ revoked: true, revokedAt: new Date() })
-      .where("userId = :userId AND revoked = false", { userId })
-      .execute();
+    await this.refreshTokenRepository.manager.transaction(
+      async (manager) => {
+        const user = await lockSessionUser(manager, userId);
+
+        if (!user) {
+          throw new UnauthorizedException();
+        }
+
+        await revokeLockedUserSessions(manager, user);
+      },
+    );
   }
 
   private async findAndLockRefreshToken(
@@ -274,58 +276,81 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     userId: number,
     refreshToken: string,
   ): Promise<RefreshTokenEntity | null> {
-    const candidates = await manager.find(RefreshTokenEntity, {
-      where: { userId },
+    return manager.findOne(RefreshTokenEntity, {
+      where: {
+        userId,
+        tokenHash: refreshTokenDigest(refreshToken),
+      },
+      lock: { mode: "pessimistic_write" },
     });
-
-    for (const candidate of candidates) {
-      if (await bcrypt.compare(refreshToken, candidate.tokenHash)) {
-        return manager.findOne(RefreshTokenEntity, {
-          where: { id: candidate.id },
-          lock: { mode: "pessimistic_write" },
-        });
-      }
-    }
-
-    return null;
-  }
-
-  private async revokeAllUserTokensInTransaction(
-    manager: EntityManager,
-    userId: number,
-  ): Promise<void> {
-    await manager
-      .createQueryBuilder()
-      .update(RefreshTokenEntity)
-      .set({ revoked: true, revokedAt: new Date() })
-      .where("userId = :userId AND revoked = false", { userId })
-      .execute();
   }
 
   async changePassword(
     userId: number,
     oldPassword: string,
     newPassword: string,
+    sessionVersion: string,
   ): Promise<void> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) throw new UnauthorizedException("User not found");
+    const snapshot = await this.userRepository.findOne({
+      where: { id: userId },
+    });
 
-    const isValid = await bcrypt.compare(oldPassword, user.password);
-    if (!isValid)
+    if (
+      !snapshot ||
+      !snapshot.isActive ||
+      !sessionVersionMatches(sessionVersion, snapshot.sessionVersion)
+    ) {
+      throw new UnauthorizedException();
+    }
+
+    const valid = await bcrypt.compare(oldPassword, snapshot.password);
+
+    if (!valid) {
       throw new UnauthorizedException("Current password is incorrect");
+    }
 
     const hashedPassword = await bcrypt.hash(newPassword, 12);
-    user.password = hashedPassword;
-    await this.userRepository.save(user);
 
-    await this.revokeAllUserTokens(userId);
+    await this.refreshTokenRepository.manager.transaction(
+      async (manager) => {
+        const user = await lockSessionUser(manager, userId);
+
+        if (
+          !user ||
+          !user.isActive ||
+          user.password !== snapshot.password ||
+          !sessionVersionMatches(sessionVersion, user.sessionVersion)
+        ) {
+          throw new UnauthorizedException();
+        }
+
+        const updated = await manager.update(
+          UserEntity,
+          { id: user.id },
+          { password: hashedPassword },
+        );
+
+        if (updated.affected !== 1) {
+          throw new Error("Password update failed");
+        }
+
+        await revokeLockedUserSessions(manager, user);
+      },
+    );
   }
 
   async validateUser(
     email: string,
     password: string,
   ): Promise<UserEntity | null> {
-    const user = await this.userRepository.findOne({ where: { email } });
+    const canonicalEmail = await normalizeUserEmail(
+      this.userRepository.manager,
+      email,
+    );
+
+    const user = await this.userRepository.findOne({
+      where: { email: canonicalEmail },
+    });
     if (!user || !user.isActive) return null;
 
     const isValid = await bcrypt.compare(password, user.password);
@@ -370,74 +395,80 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     return { valid: true, message: "JWT_REFRESH_SECRET is strong." };
   }
 
-  private async storeRefreshToken(
-    userId: number,
-    refreshToken: string,
-  ): Promise<void> {
-    const tokenHash = await bcrypt.hash(refreshToken, 10);
-    const expiresIn = this.configService.get("JWT_REFRESH_EXPIRES_IN") || "7d";
-    const expiresAt = new Date();
-    const match = expiresIn.match(/(\d+)([smhd])/);
-    if (match) {
-      const value = parseInt(match[1], 10);
-      const unit = match[2];
-      switch (unit) {
-        case "s":
-          expiresAt.setSeconds(expiresAt.getSeconds() + value);
-          break;
-        case "m":
-          expiresAt.setMinutes(expiresAt.getMinutes() + value);
-          break;
-        case "h":
-          expiresAt.setHours(expiresAt.getHours() + value);
-          break;
-        case "d":
-          expiresAt.setDate(expiresAt.getDate() + value);
-          break;
-        default:
-          expiresAt.setDate(expiresAt.getDate() + 7);
-      }
-    } else {
-      expiresAt.setDate(expiresAt.getDate() + 7);
+  private async issueTokens(
+    user: UserEntity,
+  ): Promise<{ tokens: Tokens; expiresAt: Date }> {
+    if (!isSessionVersion(user.sessionVersion)) {
+      throw new Error("Invalid stored session version");
     }
 
-    const entity = this.refreshTokenRepository.create({
-      tokenHash,
-      expiresAt,
-      user: { id: userId } as UserEntity,
-      userId,
-    });
-    await this.refreshTokenRepository.save(entity);
-  }
-
-  private async generateTokens(userId: number, email: string): Promise<Tokens> {
-    const payload: JwtPayload = { sub: userId, email };
-
-    const accessToken = this.jwtService.sign(payload, {
-      secret: this.configService.get("JWT_SECRET"),
-      expiresIn: this.configService.get("JWT_EXPIRES_IN") || "15m",
-    });
-
-    const refreshTokenPayload: JwtPayload & { jti: string } = {
-      jti: randomUUID(),
-      ...payload,
+    const identity = {
+      sub: user.id,
+      email: user.email,
+      sv: user.sessionVersion,
     };
-    const refreshToken = this.jwtService.sign(refreshTokenPayload, {
-      secret: this.configService.get("JWT_REFRESH_SECRET"),
-      expiresIn: this.configService.get("JWT_REFRESH_EXPIRES_IN") || "7d",
-    });
 
-    await this.storeRefreshToken(userId, refreshToken);
+    const accessToken = this.jwtService.sign(
+      { ...identity, tokenUse: "access" },
+      {
+        secret: this.configService.get("JWT_SECRET"),
+        expiresIn: this.configService.get("JWT_EXPIRES_IN") || "15m",
+        algorithm: "HS256",
+      },
+    );
 
-    return { accessToken, refreshToken };
+    const refreshToken = this.jwtService.sign(
+      {
+        ...identity,
+        tokenUse: "refresh",
+        jti: randomUUID(),
+      },
+      {
+        secret: this.configService.get("JWT_REFRESH_SECRET"),
+        expiresIn: this.configService.get("JWT_REFRESH_EXPIRES_IN") || "7d",
+        algorithm: "HS256",
+      },
+    );
+
+    const claims = await this.verifyRefreshToken(refreshToken);
+
+    return {
+      tokens: { accessToken, refreshToken },
+      expiresAt: new Date(claims.exp * 1000),
+    };
   }
 
-  async verifyRefreshToken(token: string): Promise<JwtPayload> {
+  private async generateTokens(
+    manager: EntityManager,
+    user: UserEntity,
+  ): Promise<Tokens> {
+    const issued = await this.issueTokens(user);
+
+    const entity = manager.create(RefreshTokenEntity, {
+      tokenHash: refreshTokenDigest(issued.tokens.refreshToken),
+      expiresAt: issued.expiresAt,
+      userId: user.id,
+    });
+
+    await manager.save(entity);
+
+    return issued.tokens;
+  }
+
+  async verifyRefreshToken(token: string): Promise<RefreshSessionClaims> {
     try {
-      const payload = this.jwtService.verify(token, {
+      const payload: unknown = this.jwtService.verify(token, {
         secret: this.configService.get("JWT_REFRESH_SECRET"),
+        algorithms: ["HS256"],
       });
-      return payload as JwtPayload;
+
+      const claims = parseRefreshSessionClaims(payload);
+
+      if (!claims) {
+        throw new UnauthorizedException("Invalid refresh token");
+      }
+
+      return claims;
     } catch {
       throw new UnauthorizedException("Invalid refresh token");
     }

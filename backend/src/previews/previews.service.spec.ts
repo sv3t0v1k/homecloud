@@ -1,5 +1,6 @@
 import { ConfigService } from "@nestjs/config";
 import * as os from "os";
+import { execFile } from "node:child_process";
 import { PreviewsService } from "./previews.service";
 import { FileEntity } from "../entities/file.entity";
 import { StorageService } from "../storage/storage.service";
@@ -11,10 +12,16 @@ import sharp from "sharp";
 jest.mock("sharp", () => ({
   __esModule: true,
   default: jest.fn(() => ({
+    rotate: jest.fn().mockReturnThis(),
     resize: jest.fn().mockReturnThis(),
     png: jest.fn().mockReturnThis(),
+    timeout: jest.fn().mockReturnThis(),
     toBuffer: jest.fn().mockResolvedValue(Buffer.from("fake-thumbnail")),
   })),
+}));
+
+jest.mock("node:child_process", () => ({
+  execFile: jest.fn(),
 }));
 
 describe("PreviewsService - Post-Review Fixes", () => {
@@ -26,8 +33,23 @@ describe("PreviewsService - Post-Review Fixes", () => {
     mockFileRepository = {
       findOne: jest.fn(),
     };
+    mockFileRepository.manager = {
+      transaction: async (run: (manager: any) => Promise<any>) =>
+        run({
+          findOne: mockFileRepository.findOne,
+          query: async () => [{ id: 1, visible: true }],
+        }),
+    };
     mockStorageService = {
       resolveFilePath: jest.fn((file) => file.storagePath),
+      openReadOnlyFileSecure: jest.fn((absolute: string) =>
+        fs.openSync(
+          absolute,
+          fs.constants.O_RDONLY |
+            fs.constants.O_NOFOLLOW |
+            fs.constants.O_NONBLOCK,
+        ),
+      ),
       placementForPath: jest.fn((storagePath: string) => ({ storagePath, storageLocationId: "f2f5c4b0-8d57-4c49-9f8c-0d095b344601", relativeObjectKey: storagePath.replace(/^\/storage\//, "") })),
       fileExists: jest.fn(),
     };
@@ -45,8 +67,9 @@ describe("PreviewsService - Post-Review Fixes", () => {
   describe("getThumbnail - memory safety", () => {
     it("should reject large image before reading into memory", async () => {
       const tempFile = path.join("/tmp", `large-${Date.now()}.jpg`);
-      const largeSize = 10 * 1024 * 1024;
-      fs.writeFileSync(tempFile, Buffer.alloc(largeSize));
+      const largeSize = 40 * 1024 * 1024;
+      fs.writeFileSync(tempFile, Buffer.alloc(0));
+      fs.truncateSync(tempFile, largeSize);
 
       mockFileRepository.findOne.mockResolvedValue({
         id: 1,
@@ -65,7 +88,13 @@ describe("PreviewsService - Post-Review Fixes", () => {
 
     it("should accept small valid image", async () => {
       const tempFile = path.join("/tmp", `small-${Date.now()}.jpg`);
-      fs.writeFileSync(tempFile, Buffer.alloc(1024));
+      fs.writeFileSync(
+        tempFile,
+        Buffer.concat([
+          Buffer.from([0xff, 0xd8, 0xff]),
+          Buffer.alloc(1021),
+        ]),
+      );
 
       mockFileRepository.findOne.mockResolvedValue({
         id: 1,
@@ -80,6 +109,54 @@ describe("PreviewsService - Post-Review Fixes", () => {
       expect(result.length).toBeGreaterThan(0);
 
       fs.rmSync(tempFile, { force: true });
+    });
+  });
+
+  describe("getPreview - visibility boundary", () => {
+    it("rejects a deleted file before opening storage", async () => {
+      mockFileRepository.findOne.mockResolvedValue({
+        id: 1,
+        userId: 1,
+        isDeleted: true,
+        isFolder: false,
+        parentId: null,
+        mimeType: "text/plain",
+        storagePath: "/storage/deleted.txt",
+      });
+
+      await expect(service.getPreview(1, 1))
+        .rejects.toBeInstanceOf(NotFoundException);
+
+      expect(mockStorageService.openReadOnlyFileSecure)
+        .not.toHaveBeenCalled();
+    });
+
+    it("rejects an invisible ancestor before opening storage", async () => {
+      mockFileRepository.findOne.mockResolvedValue({
+        id: 1,
+        userId: 1,
+        isDeleted: false,
+        isFolder: false,
+        parentId: 42,
+        mimeType: "text/plain",
+        storagePath: "/storage/hidden.txt",
+      });
+
+      mockFileRepository.manager.transaction = async (
+        run: (manager: any) => Promise<any>,
+      ) => run({
+        findOne: mockFileRepository.findOne,
+        query: async (sql: string) =>
+          sql.includes("WITH RECURSIVE ancestor_chain")
+            ? [{ visible: false }]
+            : [{ id: 1 }],
+      });
+
+      await expect(service.getPreview(1, 1))
+        .rejects.toBeInstanceOf(NotFoundException);
+
+      expect(mockStorageService.openReadOnlyFileSecure)
+        .not.toHaveBeenCalled();
     });
   });
 
@@ -106,6 +183,150 @@ describe("PreviewsService - Post-Review Fixes", () => {
   });
 });
 
+describe("PreviewsService - video preview", () => {
+  let service: PreviewsService;
+  let mockFileRepository: any;
+  let mockStorageService: any;
+  let mockExecFile: jest.Mock;
+
+  beforeEach(() => {
+    mockExecFile = execFile as unknown as jest.Mock;
+    mockExecFile.mockImplementation((_file, _args, _options, callback) => {
+      callback(null, { stdout: Buffer.from([137, 80, 78, 71]), stderr: "" });
+    });
+
+    mockFileRepository = {
+      findOne: jest.fn(),
+    };
+    mockFileRepository.manager = {
+      transaction: async (run: (manager: any) => Promise<any>) =>
+        run({
+          findOne: mockFileRepository.findOne,
+          query: async () => [{ id: 1, visible: true }],
+        }),
+    };
+    mockStorageService = {
+      resolveFilePath: jest.fn((file) => file.storagePath),
+      openReadOnlyFileSecure: jest.fn((absolute: string) =>
+        fs.openSync(
+          absolute,
+          fs.constants.O_RDONLY |
+            fs.constants.O_NOFOLLOW |
+            fs.constants.O_NONBLOCK,
+        ),
+      ),
+      placementForPath: jest.fn((storagePath: string) => ({ storagePath, storageLocationId: "f2f5c4b0-8d57-4c49-9f8c-0d095b344601", relativeObjectKey: storagePath.replace(/^\/storage\//, "") })),
+      fileExists: jest.fn(),
+    };
+
+    service = new PreviewsService(
+      mockFileRepository,
+      mockStorageService,
+    );
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("extracts a single PNG frame from a valid MP4 video", async () => {
+    const tempFile = path.join("/tmp", `video-${Date.now()}.mp4`);
+    fs.writeFileSync(tempFile, Buffer.concat([
+      Buffer.alloc(4, 0),
+      Buffer.from([102, 116, 121, 112]), // "ftyp" at offset 4
+      Buffer.alloc(1024),
+    ]));
+
+    mockFileRepository.findOne.mockResolvedValue({
+      id: 1,
+      userId: 1,
+      storagePath: tempFile,
+      mimeType: "video/mp4",
+    });
+
+    const result = await (service as any).generateVideoPreview(tempFile);
+    expect(result).toBeInstanceOf(Buffer);
+    expect(mockExecFile).toHaveBeenCalledWith(
+      "ffmpeg",
+      expect.arrayContaining(["-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1", "-i", tempFile, "-frames:v", "1", "-f", "image2", "-"]),
+      expect.objectContaining({ timeout: 30000, maxBuffer: 5 * 1024 * 1024 }),
+      expect.any(Function),
+    );
+
+    fs.rmSync(tempFile, { force: true });
+  });
+
+  it("rejects video larger than 5 MiB", async () => {
+    const tempFile = path.join("/tmp", `large-video-${Date.now()}.mp4`);
+    fs.writeFileSync(tempFile, Buffer.alloc(0));
+    fs.truncateSync(tempFile, 6 * 1024 * 1024);
+
+    mockFileRepository.findOne.mockResolvedValue({
+      id: 1,
+      userId: 1,
+      storagePath: tempFile,
+      mimeType: "video/mp4",
+    });
+
+    await expect((service as any).generateVideoPreview(tempFile))
+      .rejects.toThrow(BadRequestException);
+
+    fs.rmSync(tempFile, { force: true });
+  });
+
+  it("retries with -ss 0 when first seek fails for short video", async () => {
+    const tempFile = path.join("/tmp", `short-video-${Date.now()}.mp4`);
+    fs.writeFileSync(tempFile, Buffer.concat([
+      Buffer.alloc(4, 0),
+      Buffer.from([102, 116, 121, 112]),
+      Buffer.alloc(1024),
+    ]));
+
+    mockExecFile
+      .mockImplementationOnce((_file, _args, _options, callback) => {
+        callback(new Error("ffmpeg exit code 1"), undefined);
+      })
+      .mockImplementation((_file, _args, _options, callback) => {
+        callback(null, { stdout: Buffer.from([137, 80, 78, 71]), stderr: "" });
+      });
+
+    mockFileRepository.findOne.mockResolvedValue({
+      id: 1,
+      userId: 1,
+      storagePath: tempFile,
+      mimeType: "video/mp4",
+    });
+
+    const result = await (service as any).generateVideoPreview(tempFile);
+    expect(result).toBeInstanceOf(Buffer);
+    expect(mockExecFile).toHaveBeenCalledTimes(2);
+    const secondCall = mockExecFile.mock.calls[1];
+    expect(secondCall[1]).toContain("-ss");
+    expect(secondCall[1]).toContain("0");
+
+    fs.rmSync(tempFile, { force: true });
+  });
+
+  it("rejects non-video MIME type in getPreview", async () => {
+    mockFileRepository.findOne.mockResolvedValue({
+      id: 1,
+      userId: 1,
+      isDeleted: false,
+      isFolder: false,
+      parentId: null,
+      mimeType: "application/pdf",
+      storagePath: "/storage/doc.pdf",
+    });
+
+    await expect(service.getPreview(1, 1))
+      .resolves.toMatchObject({
+        type: "unsupported",
+        mimeType: "text/plain",
+      });
+  });
+});
+
+
 
 describe("PreviewsService logical placement with real storage resolver", () => {
   let root: string;
@@ -113,15 +334,34 @@ describe("PreviewsService logical placement with real storage resolver", () => {
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(),"hc-preview-placement-"));
     storage = new StorageService(new ConfigService({STORAGE_PATH:root}));
+    jest.spyOn(storage, "openReadOnlyFileSecure")
+      .mockImplementation((absolute: string) =>
+        fs.openSync(
+          absolute,
+          fs.constants.O_RDONLY |
+            fs.constants.O_NOFOLLOW |
+            fs.constants.O_NONBLOCK,
+        ),
+      );
   });
   afterEach(() => fs.rmSync(root,{recursive:true,force:true}));
   it("reads text preview and thumbnail from the logical object, rejecting mismatched bridge", async () => {
     const target=path.join(root,"text.txt"); fs.writeFileSync(target,"logical preview");
     const file={id:1,userId:1,mimeType:"text/plain",...storage.placementForPath(target)};
-    const repo={findOne:jest.fn().mockResolvedValue(file)};
+    const findOne=jest.fn().mockResolvedValue(file);
+    const repo={
+      findOne,
+      manager: {
+        transaction: async (run: (manager: any) => Promise<any>) =>
+          run({ findOne, query: async () => [{ id: 1, visible: true }] }),
+      },
+    };
     const service=new PreviewsService(repo as any,storage);
     expect(await service.getPreview(1,1)).toMatchObject({content:"logical preview",type:"text"});
     file.mimeType="image/png";
+    fs.writeFileSync(target, Buffer.from([
+      137, 80, 78, 71, 13, 10, 26, 10,
+    ]));
     expect(await service.getThumbnail(1,1)).toEqual(Buffer.from("fake-thumbnail"));
     file.storagePath=path.join(root,"other.txt"); fs.writeFileSync(file.storagePath,"wrong");
     await expect(service.getPreview(1,1)).rejects.toBeInstanceOf(NotFoundException);

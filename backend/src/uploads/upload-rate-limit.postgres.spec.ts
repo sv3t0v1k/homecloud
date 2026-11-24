@@ -10,8 +10,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { FileCopyAdmission1792831300000 } from "../migrations/1792831300000-FileCopyAdmission";
 import { DataSource } from "typeorm";
 import { JwtGuard } from "../auth/guards/jwt.guard";
+import { JwtStrategy } from "../auth/jwt.strategy";
+import {
+  lockSessionUser,
+  revokeLockedUserSessions,
+} from "../auth/session-revocation";
 import { applySecurityMiddleware } from "../common/security.config";
 import { FileEntity } from "../entities/file.entity";
 import { FolderEntity } from "../entities/folder.entity";
@@ -75,8 +81,21 @@ postgres(
       await database.initialize();
     await database.getRepository(StorageLocationEntity).save(LEGACY_STORAGE_LOCATION);
     await database.getRepository(UploadWorkspaceEntity).save(LEGACY_UPLOAD_WORKSPACE);
+    const migrationRunner = database.createQueryRunner();
+    await migrationRunner.connect();
+    try {
+      await migrationRunner.startTransaction();
+      await new FileCopyAdmission1792831300000().up(migrationRunner);
+      await migrationRunner.commitTransaction();
+    } finally {
+      if (migrationRunner.isTransactionActive) {
+        await migrationRunner.rollbackTransaction();
+      }
+      await migrationRunner.release();
+    }
       const config = new ConfigService({
         NODE_ENV: "test",
+        JWT_SECRET: "upload-rate-postgres-test-no-production-credentials",
         STORAGE_PATH: root,
         MAX_FILE_SIZE: 10,
         MAX_TOTAL_SIZE: 10,
@@ -114,6 +133,7 @@ postgres(
         controllers: [UploadsController],
         providers: [
           JwtGuard,
+          { provide: JwtStrategy, useValue: new JwtStrategy(database.getRepository(UserEntity), config) },
           UploadRateLimitService,
           UploadRateLimitInterceptor,
           IngressFileCleanupInterceptor,
@@ -127,6 +147,7 @@ postgres(
       jest.spyOn(limiter, "now").mockReturnValue(Date.now());
       applySecurityMiddleware(app, config, {
         jwtService: jwt,
+        jwtStrategy: module.get(JwtStrategy),
         uploads: limiter,
       });
       app.setGlobalPrefix("api/v1");
@@ -173,8 +194,18 @@ postgres(
         10,
         1,
       );
-      const auth = `Bearer ${jwt.sign({ sub: owner.id, email: owner.email })}`;
-      const otherAuth = `Bearer ${jwt.sign({ sub: other.id, email: other.email })}`;
+      const auth = `Bearer ${jwt.sign({
+        sub: owner.id,
+        email: owner.email,
+        sv: "1",
+        tokenUse: "access",
+      }, { expiresIn: "15m" })}`;
+      const otherAuth = `Bearer ${jwt.sign({
+        sub: other.id,
+        email: other.email,
+        sv: "1",
+        tokenUse: "access",
+      }, { expiresIn: "15m" })}`;
       const base = `/api/v1/uploads/session/${session.uploadId}`;
       const unpublished = storage.generateFinalPath(
         owner.id,
@@ -268,7 +299,45 @@ postgres(
         10,
         1,
       );
-      await service.abortUpload(owner.id, replacement.uploadId);
+      // The ordinary global rate budget is already exhausted.
+      // A stale, correctly signed JWT must not bypass it.
+      await database.transaction(async (manager) => {
+        const locked = await lockSessionUser(manager, owner.id);
+
+        if (!locked) throw new Error("Test user not found");
+
+        await revokeLockedUserSessions(manager, locked);
+      });
+
+      const replacementPath =
+        `/api/v1/uploads/session/${replacement.uploadId}`;
+
+      await request(app.getHttpServer())
+        .delete(replacementPath)
+        .set("Authorization", auth)
+        .expect(429);
+
+      expect(
+        (await database.getRepository(UploadSessionEntity)
+          .findOneByOrFail({ id: replacement.id })).status,
+      ).toBe("pending");
+
+      const freshAuth = `Bearer ${jwt.sign({
+        sub: owner.id,
+        email: owner.email,
+        sv: "2",
+        tokenUse: "access",
+      }, { expiresIn: "15m" })}`;
+
+      await request(app.getHttpServer())
+        .delete(replacementPath)
+        .set("Authorization", freshAuth)
+        .expect(200);
+
+      expect(
+        (await database.getRepository(UploadSessionEntity)
+          .findOneByOrFail({ id: replacement.id })).status,
+      ).toBe("aborted");
     }, 30000);
   },
 );

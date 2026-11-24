@@ -11,6 +11,10 @@ import { UserEntity } from "../entities/user.entity";
 import { FolderEntity } from "../entities/folder.entity";
 import { FileEntity } from "../entities/file.entity";
 import { StorageService } from "../storage/storage.service";
+import {
+  canAddStorageBytes,
+  readStorageCommitments,
+} from "../storage/storage-accounting";
 import { PreparedSsdWorkspace } from "./prepared-ssd-workspace";
 import { SecureFilesystem } from "./secure-filesystem";
 import { IngressChunkFile, parseMaxChunkSize } from "./chunk-ingress";
@@ -144,14 +148,34 @@ export class SsdUploadsService {
     try {
       await this.capacity(capability.root, totalSize);
       const uploadId = randomUUID();
-      session = await this.db.transaction(async (manager) => {
+      session = await this.db.transaction("READ COMMITTED", async (manager) => {
         await this.durable(manager);
         const user = await manager.findOne(UserEntity, { where: { id: userId }, lock: { mode: "pessimistic_write" } });
-        if (!user) throw new ForbiddenException("User not found");
-        const [reservation] = await manager.query(`SELECT COALESCE(SUM("totalSize"),0)::text bytes FROM upload_sessions WHERE "userId"=$1 AND status IN ('pending','uploading')`, [userId]);
-        const active = BigInt(reservation.bytes);
-        if (BigInt(user.storageUsed) + active + BigInt(totalSize) > BigInt(user.storageQuota)) throw new BadRequestException("Storage quota exceeded");
-        if (this.maxTotalSize && active + BigInt(totalSize) > BigInt(this.maxTotalSize)) throw new BadRequestException("Active upload limit exceeded");
+        if (!user || user.isActive !== true) {
+          throw new ForbiddenException("User not found");
+        }
+
+        // Keep the same owner lock and native capacity/fence
+        // checks; only unify logical storage accounting.
+        const accounting = await readStorageCommitments(
+          manager,
+          userId,
+        );
+
+        const requested = BigInt(totalSize);
+
+        if (!canAddStorageBytes(accounting, requested)) {
+          throw new BadRequestException("Storage quota exceeded");
+        }
+
+        if (
+          this.maxTotalSize &&
+          accounting.uploadBytes + requested >
+            BigInt(this.maxTotalSize)
+        ) {
+          throw new BadRequestException("Active upload limit exceeded");
+        }
+
         if (parentId && !(await manager.findOne(FolderEntity, { where: { id: parentId, userId, isDeleted: false } }))) throw new ForbiddenException("Target folder unavailable");
         return manager.save(manager.create(UploadSessionEntity, { userId, uploadId, filename, totalSize, chunkSize, totalChunks: Math.ceil(totalSize / chunkSize), uploadedSize: 0, uploadedCount: 0, accountingInitialized: true, workspaceId: SSD_UPLOAD_WORKSPACE.id, tempPath: path.join(capability.root, uploadId), expectedSha256, parentId: parentId ?? null, status: "pending", expiresAt: new Date(Date.now() + this.ttlMs) }));
       });

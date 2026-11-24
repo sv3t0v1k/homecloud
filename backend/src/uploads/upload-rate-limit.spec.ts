@@ -15,6 +15,7 @@ import * as http from "node:http";
 import { randomUUID } from "node:crypto";
 import { AddressInfo } from "node:net";
 import { JwtGuard } from "../auth/guards/jwt.guard";
+import { JwtStrategy } from "../auth/jwt.strategy";
 import {
   applySecurityMiddleware,
   getGlobalRateLimitOptions,
@@ -95,6 +96,7 @@ describe("authenticated upload rate policy (HTTP)", () => {
       controllers: [UploadsController],
       providers: [
         JwtGuard,
+        { provide: JwtStrategy, useValue: { validate: async (payload: { sub: number; email: string }) => ({ userId: payload.sub, email: payload.email }) } },
         UploadRateLimitService,
         UploadRateLimitInterceptor,
         IngressFileCleanupInterceptor,
@@ -112,6 +114,7 @@ describe("authenticated upload rate policy (HTTP)", () => {
     jest.spyOn(limiter, "now").mockImplementation(() => clock);
     applySecurityMiddleware(app, new ConfigService({ NODE_ENV: "test" }), {
       jwtService: jwt,
+      jwtStrategy: module.get(JwtStrategy),
       uploads: limiter,
     });
     app.setGlobalPrefix("api/v1");
@@ -134,7 +137,13 @@ describe("authenticated upload rate policy (HTTP)", () => {
   });
 
   const token = (userId = 1, extra: Record<string, unknown> = {}) =>
-    jwt.sign({ sub: userId, email: `${userId}@example.test`, ...extra });
+    jwt.sign({
+      sub: userId,
+      email: `${userId}@example.test`,
+      sv: "1",
+      tokenUse: "access",
+      ...extra,
+    }, { expiresIn: "15m" });
   const chunk = (uploadId = FIRST, userId = 1, chunkIndex = 0) =>
     request(app.getHttpServer())
       .post(`/api/v1/uploads/session/${uploadId}/chunk`)

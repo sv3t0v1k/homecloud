@@ -1,18 +1,28 @@
 import { parseDatabaseSize } from "../common/database-size";
 import {
   Injectable,
+  Optional,
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ServiceUnavailableException,
   Logger,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository, In, QueryRunner } from "typeorm";
+import * as fs from "node:fs";
 import { FileEntity } from "../entities/file.entity";
 import { FolderEntity } from "../entities/folder.entity";
 import { StorageService } from "../storage/storage.service";
 import { UsersService } from "../users/users.service";
 import { allocateNamespaceName } from "./namespace-name";
+import { searchQuery } from "./search-input";
+import { assertVisibleAncestors } from "./file-visibility";
+import { FileCopyAdmissionService } from "./file-copy-admission.service";
+import {
+  canAddStorageBytes,
+  readStorageCommitments,
+} from "../storage/storage-accounting";
 
 @Injectable()
 export class FilesService {
@@ -25,6 +35,8 @@ export class FilesService {
     private folderRepository: Repository<FolderEntity>,
     private storageService: StorageService,
     private usersService: UsersService,
+    @Optional()
+    private readonly fileCopyAdmission?: FileCopyAdmissionService,
   ) {}
 
   private validateDisplayName(name: string): string {
@@ -68,7 +80,23 @@ export class FilesService {
     parentId?: number,
     search?: string,
     includeDeleted = false,
+    limit = 20,
+    offset = 0,
   ) {
+    if (search !== undefined) {
+      const result = await this.searchPage(
+        userId,
+        searchQuery(search, 1),
+        limit,
+        offset,
+        { parentId: parentId ?? null },
+      );
+      return result.files.map((file) => ({
+        ...file,
+        isFolder: false,
+        isDeleted: false,
+      }));
+    }
     let query = this.fileRepository
       .createQueryBuilder("file")
       .where("file.userId = :userId", { userId })
@@ -84,12 +112,6 @@ export class FilesService {
       query = query.andWhere("file.parentId = :parentId", { parentId });
     } else {
       query = query.andWhere("file.parentId IS NULL");
-    }
-
-    if (search) {
-      query = query.andWhere("file.name ILIKE :search", {
-        search: `%${search}%`,
-      });
     }
 
     query.orderBy("file.isFolder", "DESC").addOrderBy("file.name", "ASC");
@@ -133,6 +155,70 @@ export class FilesService {
       }
       return { ...folder, shareFileId };
     });
+  }
+
+  /**
+   * Authorize a content read while the owner lock is held.
+   * The caller must open the secure file descriptor inside access().
+   * The transaction releases its lock after access() finishes.
+   */
+  async withVisibleContentFile<T>(
+    userId: number,
+    id: number,
+    access: (
+      file: FileEntity,
+      manager: import("typeorm").EntityManager,
+    ) => Promise<T> | T,
+  ): Promise<T> {
+    if (
+      !Number.isSafeInteger(userId) ||
+      userId <= 0 ||
+      !Number.isSafeInteger(id) ||
+      id <= 0 ||
+      id > 2147483647
+    ) {
+      throw new NotFoundException("File not found");
+    }
+
+    return this.fileRepository.manager
+      .transaction(async (manager) => {
+        await manager.query("SET LOCAL lock_timeout = '1500ms'");
+        await manager.query("SET LOCAL statement_timeout = '2500ms'");
+
+        const owners: Array<{ id: number }> = await manager.query(
+          'SELECT id FROM users WHERE id=$1 AND "isActive"=TRUE FOR SHARE',
+          [userId],
+        );
+        if (owners.length !== 1) {
+          throw new NotFoundException("File not found");
+        }
+
+        const file = await manager.findOne(FileEntity, {
+          where: { id, userId, isDeleted: false },
+        });
+        if (!file || file.isDeleted || file.isFolder || !file.storagePath) {
+          throw new NotFoundException("File not found");
+        }
+
+        await assertVisibleAncestors(manager, userId, file.parentId ?? null);
+
+        return access(file, manager);
+      })
+      .catch((error: unknown) => {
+        const databaseError = error as {
+          code?: unknown;
+          driverError?: { code?: unknown };
+        } | null;
+        const code = databaseError?.driverError?.code ?? databaseError?.code;
+
+        if (code === "55P03" || code === "57014") {
+          throw new ServiceUnavailableException(
+            "Content database wait timed out",
+          );
+        }
+
+        throw error;
+      });
   }
 
   async findOne(userId: number, id: number) {
@@ -183,21 +269,51 @@ export class FilesService {
       throw new ForbiddenException("User not found");
     }
 
+    const bytes = parseDatabaseSize(size, "Invalid file size metadata");
+
     await this.assertFolderOwnership(userId, parentId);
 
     const queryRunner =
       this.fileRepository.manager.connection.createQueryRunner();
     await queryRunner.connect();
-    await queryRunner.startTransaction();
+    await queryRunner.startTransaction("READ COMMITTED");
 
     try {
-      await queryRunner.manager.query(`SELECT id FROM users WHERE id=$1 FOR UPDATE`, [userId]);
+      await queryRunner.manager.query(
+        `SELECT id FROM users WHERE id=$1 FOR UPDATE`,
+        [userId],
+      );
+
+      // The owner row is locked above. Direct creation charges new
+      // bytes immediately, so admission must cover every existing
+      // obligation: used storage plus active upload and copy
+      // reservations. A plain storageUsed guard would ignore those
+      // reservations and could silently overcommit the quota.
+      const accounting = await readStorageCommitments(
+        queryRunner.manager,
+        userId,
+      );
+
+      if (accounting.isActive !== true) {
+        throw new ForbiddenException("User not found");
+      }
+
+      if (!canAddStorageBytes(accounting, BigInt(bytes))) {
+        throw new ForbiddenException("Storage quota exceeded");
+      }
+
       const chosenName = await allocateNamespaceName(
-        queryRunner.manager, userId, parentId, displayName, "file",
+        queryRunner.manager,
+        userId,
+        parentId,
+        displayName,
+        "file",
       );
       const file = queryRunner.manager.create(FileEntity, {
         name: chosenName,
-        ...this.storageService.placementForPath(this.storageService.generatePath(userId, safeName)),
+        ...this.storageService.placementForPath(
+          this.storageService.generatePath(userId, safeName),
+        ),
         size,
         mimeType,
         isFolder: false,
@@ -242,7 +358,11 @@ export class FilesService {
         [userId],
       );
       const chosenName = await allocateNamespaceName(
-        queryRunner.manager, userId, parentId, name, "folder",
+        queryRunner.manager,
+        userId,
+        parentId,
+        name,
+        "folder",
       );
       const folder = queryRunner.manager.create(FolderEntity, {
         name: chosenName,
@@ -281,8 +401,10 @@ export class FilesService {
     id: number,
     data: { name?: string; parentId?: number | null },
   ) {
-    const name = data.name === undefined ? undefined : this.validateDisplayName(data.name);
-    if (data.parentId !== undefined) await this.assertFolderOwnership(userId, data.parentId);
+    const name =
+      data.name === undefined ? undefined : this.validateDisplayName(data.name);
+    if (data.parentId !== undefined)
+      await this.assertFolderOwnership(userId, data.parentId);
     return this.changeFilePlacement(userId, id, name, data.parentId, false);
   }
 
@@ -298,13 +420,19 @@ export class FilesService {
       await runner.connect();
       await runner.startTransaction();
       // Owner writers take the user lock before object and destination locks.
-      await runner.manager.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [userId]);
+      await runner.manager.query(
+        "SELECT id FROM users WHERE id=$1 FOR UPDATE",
+        [userId],
+      );
       const file = await runner.manager.findOne(FileEntity, {
         where: { id, userId },
         lock: { mode: "pessimistic_write" },
       });
       if (!file) throw new NotFoundException("File not found");
-      if (file.isFolder) throw new BadRequestException("Cannot update folder via files endpoint");
+      if (file.isFolder)
+        throw new BadRequestException(
+          "Cannot update folder via files endpoint",
+        );
 
       let destination = parentId === undefined ? file.parentId : parentId;
       if (restore && destination != null) {
@@ -320,7 +448,12 @@ export class FilesService {
         destination !== file.parentId
       ) {
         file.name = await allocateNamespaceName(
-          runner.manager, userId, destination, name ?? file.name, "file", { fileId: id },
+          runner.manager,
+          userId,
+          destination,
+          name ?? file.name,
+          "file",
+          { fileId: id },
         );
       }
       file.parentId = destination ?? null;
@@ -363,7 +496,10 @@ export class FilesService {
       await queryRunner.startTransaction();
       transactionStarted = true;
 
-      await queryRunner.manager.query(`SELECT id FROM users WHERE id=$1 FOR UPDATE`, [userId]);
+      await queryRunner.manager.query(
+        `SELECT id FROM users WHERE id=$1 FOR UPDATE`,
+        [userId],
+      );
       const folder = await queryRunner.manager.findOne(FolderEntity, {
         where: { id, userId },
         lock: { mode: "pessimistic_write" },
@@ -380,12 +516,17 @@ export class FilesService {
         throw new NotFoundException("Folder mirror not found");
       }
 
-      const destination = data.parentId !== undefined ? data.parentId : folder.parentId;
+      const destination =
+        data.parentId !== undefined ? data.parentId : folder.parentId;
       if (data.parentId != null) await this.assertNoCycle(id, data.parentId);
       const requested = data.name && data.name.trim() ? data.name : folder.name;
       if (requested !== folder.name || destination !== folder.parentId) {
         folder.name = await allocateNamespaceName(
-          queryRunner.manager, userId, destination, requested, "folder",
+          queryRunner.manager,
+          userId,
+          destination,
+          requested,
+          "folder",
           { folderId: id, fileId: mirror.id },
         );
         folder.parentId = destination;
@@ -428,16 +569,52 @@ export class FilesService {
   }
 
   async removeFile(userId: number, id: number) {
-    const file = await this.findOne(userId, id);
-    if (file.isFolder) {
-      throw new BadRequestException("Cannot delete folder via files endpoint");
+    const runner = this.fileRepository.manager.connection.createQueryRunner();
+    let transactionStarted = false;
+
+    try {
+      await runner.connect();
+      await runner.startTransaction();
+      transactionStarted = true;
+
+      // All owner writers acquire the user lock before file locks.
+      // This conflicts with thumbnail/preview readers' FOR SHARE.
+      const owner: Array<{ id: number }> = await runner.manager.query(
+        "SELECT id FROM users WHERE id=$1 FOR UPDATE",
+        [userId],
+      );
+      if (owner.length !== 1) {
+        throw new NotFoundException("File not found");
+      }
+
+      const file = await runner.manager.findOne(FileEntity, {
+        where: { id, userId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!file) {
+        throw new NotFoundException("File not found");
+      }
+      if (file.isFolder) {
+        throw new BadRequestException(
+          "Cannot delete folder via files endpoint",
+        );
+      }
+
+      file.isDeleted = true;
+      file.deletedAt = new Date();
+      await runner.manager.save(file);
+
+      await runner.commitTransaction();
+      transactionStarted = false;
+      return { message: "File moved to trash" };
+    } catch (error) {
+      if (transactionStarted) {
+        await runner.rollbackTransaction();
+      }
+      throw error;
+    } finally {
+      await runner.release();
     }
-
-    file.isDeleted = true;
-    file.deletedAt = new Date();
-    await this.fileRepository.save(file);
-
-    return { message: "File moved to trash" };
   }
 
   async removeFolder(userId: number, id: number) {
@@ -449,7 +626,10 @@ export class FilesService {
       await queryRunner.connect();
       await queryRunner.startTransaction();
       transactionStarted = true;
-      await queryRunner.manager.query(`SELECT id FROM users WHERE id=$1 FOR UPDATE`, [userId]);
+      await queryRunner.manager.query(
+        `SELECT id FROM users WHERE id=$1 FOR UPDATE`,
+        [userId],
+      );
       const folder = await queryRunner.manager.findOne(FolderEntity, {
         where: { id, userId },
         lock: { mode: "pessimistic_write" },
@@ -498,7 +678,10 @@ export class FilesService {
       await queryRunner.connect();
       await queryRunner.startTransaction();
       transactionStarted = true;
-      await queryRunner.manager.query(`SELECT id FROM users WHERE id=$1 FOR UPDATE`, [userId]);
+      await queryRunner.manager.query(
+        `SELECT id FROM users WHERE id=$1 FOR UPDATE`,
+        [userId],
+      );
       const folder = await queryRunner.manager.findOne(FolderEntity, {
         where: { id, userId },
         lock: { mode: "pessimistic_write" },
@@ -526,7 +709,11 @@ export class FilesService {
 
       if (folder.isDeleted) {
         folder.name = await allocateNamespaceName(
-          queryRunner.manager, userId, folder.parentId, folder.name, "folder",
+          queryRunner.manager,
+          userId,
+          folder.parentId,
+          folder.name,
+          "folder",
           { folderId: id, fileId: mirror.id },
         );
         mirror.name = folder.name;
@@ -559,7 +746,10 @@ export class FilesService {
     let fileToDelete: FileEntity | null = null;
 
     try {
-      await queryRunner.manager.query(`SELECT id FROM users WHERE id=$1 FOR UPDATE`, [userId]);
+      await queryRunner.manager.query(
+        `SELECT id FROM users WHERE id=$1 FOR UPDATE`,
+        [userId],
+      );
       const file = await queryRunner.manager.findOne(FileEntity, {
         where: { id, userId },
       });
@@ -582,7 +772,9 @@ export class FilesService {
       // Physical deletion AFTER successful commit — safe from rollback
       if (fileToDelete.storagePath) {
         try {
-          await this.storageService.deleteFile(this.storageService.resolveFilePath(fileToDelete, true));
+          await this.storageService.deleteFile(
+            this.storageService.resolveFilePath(fileToDelete, true),
+          );
         } catch {
           this.logger.error("Failed to delete physical file");
         }
@@ -607,7 +799,10 @@ export class FilesService {
       await queryRunner.connect();
       await queryRunner.startTransaction("SERIALIZABLE");
       transactionStarted = true;
-      await queryRunner.manager.query(`SELECT id FROM users WHERE id=$1 FOR UPDATE`, [userId]);
+      await queryRunner.manager.query(
+        `SELECT id FROM users WHERE id=$1 FOR UPDATE`,
+        [userId],
+      );
       const folder = await queryRunner.manager.findOne(FolderEntity, {
         where: { id, userId },
         lock: { mode: "pessimistic_write" },
@@ -699,7 +894,9 @@ export class FilesService {
       for (const file of physicalFilesToDelete) {
         if (file.storagePath) {
           try {
-            await this.storageService.deleteFile(this.storageService.resolveFilePath(file, true));
+            await this.storageService.deleteFile(
+              this.storageService.resolveFilePath(file, true),
+            );
           } catch {
             this.logger.error("Failed to delete physical file");
           }
@@ -741,7 +938,10 @@ export class FilesService {
       await queryRunner.connect();
       await queryRunner.startTransaction("SERIALIZABLE");
       transactionStarted = true;
-      await queryRunner.manager.query(`SELECT id FROM users WHERE id=$1 FOR UPDATE`, [userId]);
+      await queryRunner.manager.query(
+        `SELECT id FROM users WHERE id=$1 FOR UPDATE`,
+        [userId],
+      );
       const folderRows: { id: number }[] = await queryRunner.manager.query(
         `
         WITH RECURSIVE trash_folders AS (
@@ -823,7 +1023,9 @@ export class FilesService {
       for (const file of physicalFilesToDelete) {
         if (file.storagePath) {
           try {
-            await this.storageService.deleteFile(this.storageService.resolveFilePath(file, true));
+            await this.storageService.deleteFile(
+              this.storageService.resolveFilePath(file, true),
+            );
           } catch {
             this.logger.error("Failed to delete physical file");
           }
@@ -841,43 +1043,182 @@ export class FilesService {
     }
   }
 
-  async copyFile(userId: number, id: number, targetParentId?: number) {
-    const source = await this.findOne(userId, id);
-    const user = await this.usersService.findById(userId);
-    if (!user) {
-      throw new ForbiddenException("User not found");
+  /** Validate the destination and every ancestor inside the owner transaction. */
+  private async assertCopyTargetVisible(
+    manager: import("typeorm").EntityManager,
+    userId: number,
+    targetParentId?: number,
+  ): Promise<void> {
+    if (targetParentId == null) return;
+    if (!Number.isSafeInteger(targetParentId) || targetParentId <= 0) {
+      throw new ForbiddenException("Target folder unavailable");
     }
 
-    await this.assertFolderOwnership(userId, targetParentId);
+    const folder = await manager.findOne(FolderEntity, {
+      where: { id: targetParentId, userId, isDeleted: false },
+    });
+    if (!folder) throw new ForbiddenException("Target folder unavailable");
 
-    const size = parseDatabaseSize(source.size, "Invalid file size metadata");
-    if (!Number.isSafeInteger(size) || size < 0) {
-      throw new BadRequestException("Invalid file size metadata");
+    const mirror = await manager.findOne(FileEntity, {
+      where: {
+        folderId: targetParentId,
+        userId,
+        isFolder: true,
+        isDeleted: false,
+      },
+    });
+    if (!mirror || mirror.parentId !== folder.parentId) {
+      throw new ForbiddenException("Target folder mirror unavailable");
     }
 
-    const displayName = this.validateDisplayName(source.name);
-    const safeName = this.storageService.generateSafeFilename(displayName);
-    const targetPath = this.storageService.generatePath(userId, safeName);
+    await assertVisibleAncestors(manager, userId, folder.parentId ?? null);
+  }
 
-    await this.storageService.copyFile(this.storageService.resolveFilePath(source), targetPath);
-
-    let queryRunner: QueryRunner | undefined;
-    let copy: FileEntity | undefined;
-    let transactionStarted = false;
-    let commitAttempted = false;
-    const cleanupDestination = async () => {
-      try {
-        await this.storageService.deleteFile(targetPath);
-      } catch {
-        this.logger.error("Failed to clean up copied file");
+  async copyFile(
+    userId: number,
+    id: number,
+    targetParentId?: number,
+    signal?: AbortSignal,
+  ) {
+    const assertNotAborted = () => {
+      if (signal?.aborted) {
+        throw new ServiceUnavailableException("File copy cancelled");
       }
     };
+    if (
+      !Number.isSafeInteger(userId) ||
+      userId <= 0 ||
+      !Number.isSafeInteger(id) ||
+      id <= 0 ||
+      id > 2147483647
+    ) {
+      throw new NotFoundException("File not found");
+    }
+
+    const admission = this.fileCopyAdmission;
+    if (!admission) {
+      throw new ServiceUnavailableException(
+        "File copy admission unavailable",
+      );
+    }
+
+    assertNotAborted();
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new ForbiddenException("User not found");
+
+    let operationId: string | undefined;
+    let targetPath: string | undefined;
+    let sourceFd: number | undefined;
+    let lease: { cleanup(): void; release(): void } | undefined;
+    let runner: QueryRunner | undefined;
+    let transactionStarted = false;
+    let commitAttempted = false;
+    let copy: FileEntity | undefined;
 
     try {
-      queryRunner = this.fileRepository.manager.connection.createQueryRunner();
-      copy = queryRunner.manager.create(FileEntity, {
+      // The source must be active, undeleted and visible. Acquire its
+      // immutable descriptor while the PostgreSQL owner lock is held.
+      const source = await this.withVisibleContentFile(
+        userId,
+        id,
+        async (file, manager) => {
+          assertNotAborted();
+          await this.assertCopyTargetVisible(manager, userId, targetParentId);
+          assertNotAborted();
+          const sourcePath = this.storageService.resolveFilePath(file);
+          sourceFd = this.storageService.openReadOnlyFileSecure(sourcePath);
+          assertNotAborted();
+          return file;
+        },
+      );
+
+      assertNotAborted();
+      const size = parseDatabaseSize(source.size, "Invalid file size metadata");
+      if (!Number.isSafeInteger(size) || size < 0) {
+        throw new BadRequestException("Invalid file size metadata");
+      }
+
+      const displayName = this.validateDisplayName(source.name);
+      const safeName = this.storageService.generateSafeFilename(displayName);
+      targetPath = this.storageService.generatePath(userId, safeName);
+      const placement = this.storageService.placementForPath(targetPath);
+
+      // Reserve quota and a global slot before creating destination bytes.
+      // No database row locks remain held during physical I/O.
+      assertNotAborted();
+      operationId = await admission.reserve({
+        userId,
+        sourceFileId: id,
+        storageLocationId: placement.storageLocationId,
+        relativeObjectKey: placement.relativeObjectKey,
+        bytes: size,
+        signal,
+      });
+      assertNotAborted();
+
+      // No pathname-based copy. No long-lived database lock during I/O.
+      lease = await this.storageService.copyOpenedFileSecure(
+        sourceFd!,
+        size,
+        targetPath,
+        signal,
+      );
+      assertNotAborted();
+
+      runner = this.fileRepository.manager.connection.createQueryRunner();
+      await runner.connect();
+      await runner.startTransaction();
+      transactionStarted = true;
+      assertNotAborted();
+
+      await runner.manager.query("SET LOCAL lock_timeout = '1500ms'");
+      await runner.manager.query("SET LOCAL statement_timeout = '2500ms'");
+
+      // Revalidate the owner and source after copying, before publication.
+      const owners: Array<{ id: number }> = await runner.manager.query(
+        'SELECT id FROM users WHERE id=$1 AND "isActive"=TRUE FOR UPDATE',
+        [userId],
+      );
+      if (owners.length !== 1) {
+        throw new NotFoundException("File not found");
+      }
+
+      assertNotAborted();
+      const current = await runner.manager.findOne(FileEntity, {
+        where: { id, userId, isDeleted: false },
+      });
+
+      if (
+        !current ||
+        current.isDeleted ||
+        current.isFolder ||
+        !current.storagePath ||
+        current.storagePath !== source.storagePath ||
+        current.storageLocationId !== source.storageLocationId ||
+        current.relativeObjectKey !== source.relativeObjectKey ||
+        current.parentId !== source.parentId ||
+        parseDatabaseSize(current.size, "Invalid file size metadata") !== size
+      ) {
+        throw new NotFoundException(
+          "Copy source changed or became unavailable",
+        );
+      }
+
+      await assertVisibleAncestors(
+        runner.manager,
+        userId,
+        current.parentId ?? null,
+      );
+      await this.assertCopyTargetVisible(
+        runner.manager,
+        userId,
+        targetParentId,
+      );
+
+      assertNotAborted();
+      copy = runner.manager.create(FileEntity, {
         name: displayName,
-        ...this.storageService.placementForPath(targetPath),
+        ...placement,
         size,
         mimeType: source.mimeType,
         isFolder: false,
@@ -885,90 +1226,260 @@ export class FilesService {
         userId,
         user,
       });
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
-      transactionStarted = true;
-      await this.usersService.updateStorageUsed(
-        userId,
-        size,
-        queryRunner.manager,
-      );
+
+      await this.usersService.updateStorageUsed(userId, size, runner.manager);
       copy.name = await allocateNamespaceName(
-        queryRunner.manager, userId, targetParentId, displayName, "file",
+        runner.manager,
+        userId,
+        targetParentId,
+        displayName,
+        "file",
       );
-      await queryRunner.manager.save(copy);
+
+      await runner.manager.save(copy);
+      await admission.markCommitted(
+        runner.manager, operationId, userId, copy.id,
+      );
+      assertNotAborted();
       commitAttempted = true;
-      await queryRunner.commitTransaction();
+      await runner.commitTransaction();
+      transactionStarted = false;
+
+      return copy;
     } catch (error) {
-      if (commitAttempted) {
+      let rollbackUncertain = false;
+      if (
+        transactionStarted &&
+        runner &&
+        (!commitAttempted || runner.isTransactionActive)
+      ) {
         try {
-          if (!copy?.id) {
-            throw new Error("Copy record identity is unavailable");
-          }
-          const persistedCopy = await this.fileRepository.findOne({
-            where: { id: copy.id, userId, storageLocationId: copy.storageLocationId!, relativeObjectKey: copy.relativeObjectKey! },
-          });
-          if (!persistedCopy) {
-            await cleanupDestination();
-          }
+          await runner.rollbackTransaction();
         } catch {
+          rollbackUncertain = true;
+          this.logger.error("Failed to roll back copied file transaction");
+        }
+      }
+
+      // The durable journal fences cleanup against a concurrent COMMIT.
+      // If publication committed, cleanup is denied. If it rolled back,
+      // the owned inode may be safely removed and the slot released.
+      if (
+        operationId &&
+        targetPath &&
+        !rollbackUncertain
+      ) {
+        const destination = targetPath;
+        try {
+          await admission.releaseAfterOwnedCleanup(
+            operationId,
+            userId,
+            () => {
+              if (lease) {
+                lease.cleanup();
+              } else {
+                // The physical copy attempt has already settled.
+                // Prove absence under the immutable native root.
+                this.storageService.confirmCopyDestinationAbsent(
+                  destination,
+                );
+              }
+            },
+          );
+        } catch {
+          // Preserve cleanup_required/reserved. Recovery must inspect
+          // the exact journal placement before releasing quota.
           this.logger.error(
-            "Failed to reconcile copied file after ambiguous commit",
+            "Copy cleanup uncertain; reservation retained",
           );
         }
-      } else {
-        if (transactionStarted && queryRunner) {
-          try {
-            await queryRunner.rollbackTransaction();
-          } catch {
-            this.logger.error("Failed to roll back copied file transaction");
-          }
-        }
-        await cleanupDestination();
       }
+
+      if (commitAttempted) {
+        this.logger.warn(
+          "Copy COMMIT failed; durable journal reconciliation attempted",
+        );
+      }
+
       throw error;
     } finally {
-      if (queryRunner) {
+      if (runner) {
         try {
-          await queryRunner.release();
+          await runner.release();
         } catch {
           this.logger.error("Failed to release copied file transaction");
         }
       }
+      if (lease) {
+        try {
+          lease.release();
+        } catch {
+          this.logger.error("Failed to release secure copy descriptor");
+        }
+      }
+      if (sourceFd !== undefined) {
+        try {
+          fs.closeSync(sourceFd);
+        } catch {
+          this.logger.error("Failed to close secure copy source descriptor");
+        }
+      }
     }
-
-    return copy;
   }
 
   async moveFile(userId: number, id: number, targetParentId?: number) {
     await this.assertFolderOwnership(userId, targetParentId);
     const current = await this.findOne(userId, id);
     if (current.isFolder) {
-      if (current.folderId == null) throw new NotFoundException("Folder not found");
-      return this.updateFolder(userId, current.folderId, { parentId: targetParentId ?? null });
+      if (current.folderId == null)
+        throw new NotFoundException("Folder not found");
+      return this.updateFolder(userId, current.folderId, {
+        parentId: targetParentId ?? null,
+      });
     }
-    return this.changeFilePlacement(userId, id, undefined, targetParentId ?? null, false);
+    return this.changeFilePlacement(
+      userId,
+      id,
+      undefined,
+      targetParentId ?? null,
+      false,
+    );
   }
 
-  async search(userId: number, query: string) {
-    const files = await this.fileRepository
-      .createQueryBuilder("file")
-      .where("file.userId = :userId", { userId })
-      .andWhere("file.isDeleted = :isDeleted", { isDeleted: false })
-      .andWhere("file.name ILIKE :query", { query: `%${query}%` })
-      .orderBy("file.isFolder", "DESC")
-      .addOrderBy("file.name", "ASC")
-      .getMany();
+  async search(userId: number, query: string, limit = 20, offset = 0) {
+    return this.searchPage(userId, searchQuery(query), limit, offset);
+  }
 
-    const folders = await this.folderRepository
-      .createQueryBuilder("folder")
-      .where("folder.userId = :userId", { userId })
-      .andWhere("folder.isDeleted = :isDeleted", { isDeleted: false })
-      .andWhere("folder.name ILIKE :query", { query: `%${query}%` })
-      .orderBy("folder.name", "ASC")
-      .getMany();
-
-    return { files, folders };
+  private async searchPage(
+    userId: number,
+    query: string,
+    limit: number,
+    offset: number,
+    scope?: { parentId: number | null },
+  ) {
+    if (
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 50 ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset > 10000
+    ) {
+      throw new BadRequestException("Invalid search pagination");
+    }
+    const pattern = `%${query.replace(/[!%_]/g, (char) => `!${char}`)}%`;
+    type SearchRow = {
+      kind: "file" | "folder";
+      id: number;
+      name: string;
+      parentId: number | null;
+      size: string | null;
+      mimeType: string | null;
+      isStarred: boolean | null;
+      shareFileId: number | null;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    let rows: SearchRow[];
+    try {
+      rows = await this.fileRepository.manager.transaction(async (manager) => {
+        await manager.query("SET LOCAL statement_timeout = '2000ms'");
+        return manager.query(
+          `WITH RECURSIVE visible_folders AS (
+         SELECT root.id FROM folders root
+         WHERE root."userId" = $1 AND NOT root."isDeleted"
+           AND root."parentId" IS NULL
+           AND EXISTS (
+             SELECT 1 FROM files mirror
+             WHERE mirror."folderId" = root.id
+               AND mirror."userId" = $1
+               AND mirror."isFolder" AND NOT mirror."isDeleted"
+           )
+         UNION ALL
+         SELECT child.id FROM folders child
+         JOIN visible_folders parent ON child."parentId" = parent.id
+         WHERE child."userId" = $1 AND NOT child."isDeleted"
+           AND EXISTS (
+             SELECT 1 FROM files mirror
+             WHERE mirror."folderId" = child.id
+               AND mirror."userId" = $1
+               AND mirror."isFolder" AND NOT mirror."isDeleted"
+           )
+       ), matches AS (
+         SELECT 'folder' AS kind, folder.id, folder.name,
+                folder."parentId", NULL::bigint AS size,
+                NULL::varchar AS "mimeType", mirror.id AS "shareFileId",
+                NULL::boolean AS "isStarred",
+                folder."createdAt", folder."updatedAt"
+         FROM folders folder
+         JOIN visible_folders visible ON visible.id = folder.id
+         JOIN LATERAL (
+           SELECT id FROM files
+           WHERE "folderId" = folder.id AND "userId" = $1
+             AND "isFolder" AND NOT "isDeleted"
+           ORDER BY id LIMIT 1
+         ) mirror ON true
+         WHERE folder.name ILIKE $2 ESCAPE '!'
+         UNION ALL
+         SELECT 'file' AS kind, file.id, file.name,
+                file."parentId", file.size, file."mimeType",
+                NULL::integer AS "shareFileId", file."isStarred", file."createdAt", file."updatedAt"
+         FROM files file
+         WHERE file."userId" = $1 AND NOT file."isDeleted" AND NOT file."isFolder"
+           AND (file."parentId" IS NULL OR file."parentId" IN (SELECT id FROM visible_folders))
+           AND file.name ILIKE $2 ESCAPE '!'
+       )
+       SELECT * FROM matches
+       WHERE ($5::boolean = false OR (kind = 'file' AND "parentId" IS NOT DISTINCT FROM $6::integer))
+       ORDER BY CASE kind WHEN 'folder' THEN 0 ELSE 1 END, name, id
+       LIMIT $3 OFFSET $4`,
+          [
+            userId,
+            pattern,
+            limit + 1,
+            offset,
+            scope !== undefined,
+            scope?.parentId ?? null,
+          ],
+        );
+      });
+    } catch (error) {
+      if (
+        (error as { driverError?: { code?: string } })?.driverError?.code ===
+        "57014"
+      ) {
+        throw new ServiceUnavailableException("Search temporarily unavailable");
+      }
+      throw error;
+    }
+    const page = rows.slice(0, limit);
+    return {
+      files: page
+        .filter((row) => row.kind === "file")
+        .map((row) => ({
+          id: row.id,
+          name: row.name,
+          parentId: row.parentId,
+          size: row.size,
+          mimeType: row.mimeType,
+          isStarred: row.isStarred,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        })),
+      folders: page
+        .filter((row) => row.kind === "folder")
+        .map((row) => ({
+          id: row.id,
+          name: row.name,
+          parentId: row.parentId,
+          shareFileId: row.shareFileId,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        })),
+      limit,
+      offset,
+      hasMore: rows.length > limit,
+    };
   }
 
   async getStorageInfo(userId: number) {
@@ -976,6 +1487,14 @@ export class FilesService {
     if (!user) {
       throw new ForbiddenException("User not found");
     }
+
+    // Informational snapshot. The user sees every obligation,
+    // including bytes still reserved by active uploads and copies,
+    // so the displayed free space matches admission decisions.
+    const accounting = await readStorageCommitments(
+      this.fileRepository.manager,
+      userId,
+    );
 
     const fileCount = await this.fileRepository.count({
       where: { userId, isDeleted: false, isFolder: false },
@@ -988,6 +1507,10 @@ export class FilesService {
     return {
       storageQuota: user.storageQuota,
       storageUsed: user.storageUsed,
+      storageReserved: (
+        accounting.uploadBytes + accounting.copyBytes
+      ).toString(),
+      storageAvailable: accounting.remainingBytes.toString(),
       fileCount,
       folderCount,
     };

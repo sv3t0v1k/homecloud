@@ -150,7 +150,7 @@ function retryWithCurrentToken(
 function isRefreshEligible(config: InternalAxiosRequestConfig): boolean {
   if (config.skipAuth || config.skipRefresh) return false
   const url = config.url || ''
-  return !['/auth/login', '/auth/register', '/auth/refresh'].some((path) =>
+  return !['/auth/login', '/auth/refresh'].some((path) =>
     url.endsWith(path),
   )
 }

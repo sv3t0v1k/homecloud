@@ -69,6 +69,12 @@ postgres(
       // Owner selector depends on Stage 1 metadata; keep this rollback fixture
       // otherwise pinned to the historical journal migration under test.
       await db.query(`ALTER TABLE upload_sessions ADD COLUMN origin varchar(6) NOT NULL DEFAULT 'owner'`);
+      // The shared storage accounting helper also aggregates copy reservations.
+      // The pinned historical snapshot predates that table; add the minimal
+      // shape the accounting read requires.
+      await db.query(
+        `CREATE TABLE IF NOT EXISTS "file_copy_operations" (id serial PRIMARY KEY, "userId" integer NOT NULL, state varchar(32) NOT NULL, bytes bigint NOT NULL DEFAULT 0)`,
+      );
       store = new PostgresSsdFinalizationStore(db);
       uploadId = randomUUID();
       operationId = randomUUID();
@@ -199,6 +205,30 @@ postgres(
         )[0].count,
       ).toBe(2);
       expect((await store.commit(operationId)).id).toBe(file.id);
+      expect(
+        (await db.query(`SELECT "storageUsed" FROM users WHERE id=1`))[0]
+          .storageUsed,
+      ).toBe("16");
+    });
+    it("counts copy reservations against the shared quota guard at commit", async () => {
+      await published();
+      // used=10 + own session reservation=6 + copy reservation=1000 > quota=1000
+      await db.query(
+        `INSERT INTO "file_copy_operations" ("userId", state, bytes) VALUES (1, 'reserved', 1000)`,
+      );
+      await expect(store.commit(operationId)).rejects.toThrow(
+        "Finalization quota exceeded",
+      );
+      expect(await state()).toEqual({ state: "published", fileId: null });
+      expect(
+        (await db.query(`SELECT "storageUsed" FROM users WHERE id=1`))[0]
+          .storageUsed,
+      ).toBe("10");
+      await db.query(
+        `DELETE FROM "file_copy_operations" WHERE "userId"=1 AND state='reserved'`,
+      );
+      const file = await store.commit(operationId);
+      expect(file.size).toBe(6);
       expect(
         (await db.query(`SELECT "storageUsed" FROM users WHERE id=1`))[0]
           .storageUsed,
