@@ -216,7 +216,7 @@ describe('UpdatesSection', () => {
     )
 
     expect(screen.getByText(
-      'Заявка передана хосту; обработка начнётся автоматически.',
+      'Заявка передана хосту; установка начнётся автоматически.',
     )).toBeInTheDocument()
   })
 
@@ -375,7 +375,7 @@ describe('UpdatesSection', () => {
     await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
       method: 'POST', url: '/updates/installations', data: { manifestSha256: hash },
     })))
-    expect(await screen.findByText('Заявка передана хосту; обработка начнётся автоматически.')).toBeInTheDocument()
+    expect(await screen.findByText('Заявка передана хосту; установка начнётся автоматически.')).toBeInTheDocument()
   })
 
   it('allows a fresh attempt only after a preparation refusal is archived', async () => {

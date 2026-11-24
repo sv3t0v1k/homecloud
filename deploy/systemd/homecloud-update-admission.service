@@ -1,7 +1,9 @@
 [Unit]
-Description=HomeCloud request-only admission; update installation is NOT enabled
+Description=HomeCloud TEST update admission; starts one verified UI installation
 StartLimitIntervalSec=60
 StartLimitBurst=3
+# admission.path is a persistent single-slot listener, not an open maintenance
+# window. It reacts only to a validated inbox request and starts one install job.
 OnSuccess=homecloud-update-install.service
 
 [Service]

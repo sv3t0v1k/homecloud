@@ -224,11 +224,15 @@ GHCR: ранее опубликованные образы остаются по
 pull'иться; новые сборки пойдут под `ghcr.io/sv3t0v1k/homecloud/*` —
 проверки дайджестов умеют оба имени.
 
-## 9. Закрытие окна
+## 9. Закрытие окна перехода
 
-```bash
-sudo systemctl disable --now homecloud-update-admission.path
-```
+Операторское окно trusted-перехода закрывается финальными проверками и
+фиксацией evidence; штатный `homecloud-update-admission.path` при этом **не
+выключается**, если на стенде используется self-service TEST update. Path
+остаётся single-slot listener и готов принять следующую явную UI-заявку.
+Отдельное `systemctl disable --now homecloud-update-admission.path` требуется
+только при явном отказе от self-service или при несовместимом изменении
+контракта admission/install.
 
 Финальный отчёт владельцу: исходное/конечное состояние (checkout.head,
 anchors.sha256 до/после), результаты кампании, решения по замечаниям.
