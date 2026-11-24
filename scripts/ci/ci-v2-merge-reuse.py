@@ -14,8 +14,12 @@ RUN_URL = re.compile(
     r'https://github\.com/[^/]+/[^/]+/actions/runs/([1-9][0-9]*)/job/[1-9][0-9]*\Z'
 )
 REPOSITORY = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z')
-CONTROL_PREFIXES = ('.github/workflows/', 'scripts/ci/', 'deploy/')
-REQUIRED_CHECKS = ('ci-v2-fast-terminal', 'qualify', 'phase3-host-drills')
+CONTROL_ROOTS = ('.github/workflows', 'scripts/ci', 'deploy')
+REQUIRED_CHECKS = {
+    'ci-v2-fast-terminal': '.github/workflows/ci-v2-fast.yml',
+    'qualify': '.github/workflows/frontend-runtime-qualification.yml',
+    'phase3-host-drills': '.github/workflows/phase3-host-drills.yml',
+}
 
 
 class ReuseRefused(Exception):
@@ -48,12 +52,13 @@ def evaluate(data, repository):
                 for value in (after, checkout)), 'invalid merge SHA')
 
     pulls = data.get('pulls')
-    require(isinstance(pulls, list) and len(pulls) == 1,
-            'merge does not have exactly one associated PR')
-    pr = pulls[0]
+    require(isinstance(pulls, list), 'invalid associated PR evidence')
+    merged = [pr for pr in pulls
+              if isinstance(pr, dict) and pr.get('merge_commit_sha') == after]
+    require(len(merged) == 1, 'merge does not have exactly one exact merged PR')
+    pr = merged[0]
     require(pr.get('state') == 'closed' and pr.get('merged_at'),
             'associated PR is not merged')
-    require(pr.get('merge_commit_sha') == after, 'PR merge commit mismatch')
     require(pr.get('base', {}).get('ref') == 'test', 'PR base is not test')
     require(pr.get('base', {}).get('repo', {}).get('full_name', '').lower()
             == repository.lower(), 'PR base repository mismatch')
@@ -83,13 +88,14 @@ def evaluate(data, repository):
     changed = data.get('changed_paths')
     require(isinstance(changed, list)
             and all(isinstance(path, str) for path in changed), 'invalid changed paths')
-    require(not any(path.startswith(CONTROL_PREFIXES) for path in changed),
+    require(not any(path == root or path.startswith(root + '/')
+                    for path in changed for root in CONTROL_ROOTS),
             'CI or trusted control files changed; full push CI required')
 
     checks = data.get('checks')
     require(isinstance(checks, dict), 'missing check evidence')
     proof = {}
-    for name in REQUIRED_CHECKS:
+    for name, workflow_path in REQUIRED_CHECKS.items():
         item = checks.get(name, {})
         check = item.get('check', {})
         run = item.get('run', {})
@@ -100,6 +106,7 @@ def evaluate(data, repository):
                 f'required check is not green: {name}')
         expected_run = run_id(check.get('details_url'))
         require(run.get('id') == expected_run, f'check/run identity mismatch: {name}')
+        require(run.get('path') == workflow_path, f'check workflow mismatch: {name}')
         require(run.get('event') == 'pull_request', f'check is not from PR: {name}')
         require(run.get('status') == 'completed' and run.get('conclusion') == 'success',
                 f'workflow run is not green: {name}')
@@ -157,6 +164,27 @@ def api(path):
         raise ReuseRefused('invalid GitHub API evidence') from error
 
 
+def collect_checks(checks_raw, repository):
+    require(isinstance(checks_raw, dict), 'invalid check evidence')
+    require(checks_raw.get('total_count') == len(checks_raw.get('check_runs', [])),
+            'check evidence pagination required')
+    by_name = {}
+    for check in checks_raw.get('check_runs', []):
+        by_name.setdefault(check.get('name'), []).append(check)
+
+    checks = {}
+    for name, workflow_path in REQUIRED_CHECKS.items():
+        matches = []
+        for check in by_name.get(name, []):
+            run = api(f'repos/{repository}/actions/runs/{run_id(check.get("details_url"))}')
+            if run.get('path') == workflow_path:
+                matches.append({'check': check, 'run': run})
+        require(len(matches) == 1,
+                f'required check workflow is missing or ambiguous: {name}')
+        checks[name] = matches[0]
+    return checks
+
+
 def collect(event_path, expected_base, repository):
     require(REPOSITORY.fullmatch(repository), 'invalid repository')
     event = json.loads(Path(event_path).read_text())
@@ -170,15 +198,7 @@ def collect(event_path, expected_base, repository):
             'protected base differs from first parent')
     head = merge['parents'][1]['sha'] if len(merge.get('parents', [])) == 2 else '0' * 40
     checks_raw = api(f'repos/{repository}/commits/{head}/check-runs?filter=latest&per_page=100')
-    require(checks_raw.get('total_count') == len(checks_raw.get('check_runs', [])),
-            'check evidence pagination required')
-    by_name = {check.get('name'): check for check in checks_raw.get('check_runs', [])}
-    checks = {}
-    for name in REQUIRED_CHECKS:
-        check = by_name.get(name)
-        require(check is not None, f'missing required check: {name}')
-        run = api(f'repos/{repository}/actions/runs/{run_id(check.get("details_url"))}')
-        checks[name] = {'check': check, 'run': run}
+    checks = collect_checks(checks_raw, repository)
     ancestor = git('merge-base', '--is-ancestor', expected_base, head, check=False).returncode == 0
     changed_output = git('diff', '--name-only', '--no-renames', expected_base, head,
                          '--', '.github/workflows', 'scripts/ci', 'deploy').stdout
@@ -201,7 +221,7 @@ def collect(event_path, expected_base, repository):
 def outcome(event_path, expected_base, repository, require_reuse=False):
     try:
         evidence = collect(event_path, expected_base, repository)
-    except (ReuseRefused, OSError, KeyError, IndexError, TypeError,
+    except (ReuseRefused, OSError, KeyError, IndexError, TypeError, AttributeError,
             ValueError, subprocess.SubprocessError, json.JSONDecodeError) as error:
         evidence = {'mode': 'full', 'reason': str(error) or type(error).__name__}
     if require_reuse and evidence['mode'] != 'reuse':

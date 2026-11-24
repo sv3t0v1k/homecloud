@@ -44,6 +44,7 @@ class MergeReuseTests(unittest.TestCase):
                 },
                 'run': {
                     'id': index,
+                    'path': reuse.REQUIRED_CHECKS[name],
                     'event': 'pull_request',
                     'status': 'completed',
                     'conclusion': 'success',
@@ -84,6 +85,15 @@ class MergeReuseTests(unittest.TestCase):
         self.assertEqual(evidence['pr'], 87)
         self.assertEqual(evidence['head'], self.head)
         self.assertEqual(set(evidence['checks']), set(reuse.REQUIRED_CHECKS))
+
+    def test_unrelated_open_associated_pr_does_not_block_exact_merge(self):
+        unrelated = copy.deepcopy(self.data['pulls'][0])
+        unrelated['number'] = 88
+        unrelated['state'] = 'open'
+        unrelated['merged_at'] = None
+        unrelated['merge_commit_sha'] = 'e' * 40
+        self.data['pulls'].append(unrelated)
+        self.assertEqual(self.check()['pr'], 87)
 
     def test_direct_push_and_ambiguous_pr_block(self):
         for pulls in ([], [self.data['pulls'][0], self.data['pulls'][0]]):
@@ -148,6 +158,9 @@ class MergeReuseTests(unittest.TestCase):
             '.github/workflows/ci-v2-fast.yml',
             'scripts/ci/ci-v2-merge-reuse.py',
             'deploy/linux/test-channel.py',
+            '.github/workflows',
+            'scripts/ci',
+            'deploy',
         ):
             with self.subTest(path=path):
                 self.data['changed_paths'] = [path]
@@ -181,6 +194,7 @@ class MergeReuseTests(unittest.TestCase):
             ('event', 'push'), ('status', 'in_progress'),
             ('conclusion', 'failure'), ('head_sha', 'e' * 40),
             ('head_branch', 'other'),
+            ('path', '.github/workflows/ingress-runtime-qualification.yml'),
         )
         for field, value in mutations:
             with self.subTest(field=field):
@@ -190,16 +204,62 @@ class MergeReuseTests(unittest.TestCase):
         self.data['checks']['qualify']['run']['head_repository']['full_name'] = 'fork/homecloud'
         self.refused()
 
+    def test_duplicate_check_names_select_exact_workflow(self):
+        checks = [item['check'] for item in self.data['checks'].values()]
+        runs = {item['run']['id']: item['run'] for item in self.data['checks'].values()}
+        expected_id = self.data['checks']['qualify']['check']['id']
+
+        wrong_check = copy.deepcopy(self.data['checks']['qualify']['check'])
+        wrong_check['id'] = 999
+        wrong_check['details_url'] = (
+            'https://github.com/sv3t0v1k/homecloud/actions/runs/999/job/1999'
+        )
+        wrong_run = copy.deepcopy(self.data['checks']['qualify']['run'])
+        wrong_run['id'] = 999
+        wrong_run['path'] = '.github/workflows/ingress-runtime-qualification.yml'
+        checks.append(wrong_check)
+        runs[999] = wrong_run
+
+        def fake_api(path):
+            return runs[int(path.rsplit('/', 1)[1])]
+
+        raw = {'total_count': len(checks), 'check_runs': checks}
+        with patch.object(reuse, 'api', side_effect=fake_api):
+            selected = reuse.collect_checks(raw, 'sv3t0v1k/homecloud')
+        self.assertEqual(selected['qualify']['check']['id'], expected_id)
+
+        duplicate_check = copy.deepcopy(self.data['checks']['qualify']['check'])
+        duplicate_check['id'] = 1000
+        duplicate_check['details_url'] = (
+            'https://github.com/sv3t0v1k/homecloud/actions/runs/1000/job/2000'
+        )
+        duplicate_run = copy.deepcopy(self.data['checks']['qualify']['run'])
+        duplicate_run['id'] = 1000
+        checks.append(duplicate_check)
+        runs[1000] = duplicate_run
+        raw['total_count'] = len(checks)
+        with patch.object(reuse, 'api', side_effect=fake_api):
+            with self.assertRaises(reuse.ReuseRefused):
+                reuse.collect_checks(raw, 'sv3t0v1k/homecloud')
+
     def test_api_failure_falls_back_to_full_and_required_reuse_blocks(self):
-        with patch.object(reuse, 'collect', side_effect=reuse.ReuseRefused('API unavailable')):
-            status, evidence = reuse.outcome('event', self.base, 'sv3t0v1k/homecloud')
-            self.assertEqual(status, 0)
-            self.assertEqual(evidence['mode'], 'full')
-            status, evidence = reuse.outcome(
-                'event', self.base, 'sv3t0v1k/homecloud', require_reuse=True
-            )
-            self.assertEqual(status, 1)
-            self.assertEqual(evidence['mode'], 'full')
+        errors = (
+            reuse.ReuseRefused('API unavailable'),
+            AttributeError("'NoneType' object has no attribute 'get'"),
+        )
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                with patch.object(reuse, 'collect', side_effect=error):
+                    status, evidence = reuse.outcome(
+                        'event', self.base, 'sv3t0v1k/homecloud'
+                    )
+                    self.assertEqual(status, 0)
+                    self.assertEqual(evidence['mode'], 'full')
+                    status, evidence = reuse.outcome(
+                        'event', self.base, 'sv3t0v1k/homecloud', require_reuse=True
+                    )
+                    self.assertEqual(status, 1)
+                    self.assertEqual(evidence['mode'], 'full')
 
     def test_workflow_reuse_is_limited_to_repeated_push_jobs(self):
         workflow = (ROOT / '.github/workflows/ci-v2-fast.yml').read_text()
