@@ -89,11 +89,47 @@ env-путей inbox/status/installed-lock, непустой
 - `deploy/linux/test_preflight.py` — режим `release_updates`, реальный
   трёхфайловый compose merge.
 - `deploy/user/test_generate.py` — контракт провижининга worker-артефактов.
+- `deploy/user/test_bootstrap.py` — 13 сценариев: подписанный happy path,
+  отказ при подмене исходника/подписи/тега, `--ref` без подписи,
+  защита распаковки от traversal. Требуется `HOMECLOUD_OPENSSL` (openssl 3).
 - Backend jest и frontend vitest — submit с `manifestSha256`, кнопка и
   статусы для release-канала.
 
 Живой прогон (чистая Linux x86_64 машина, опубликованные подписанные
 образы) фиксируется отдельным чекпоинтом evidence.
+
+## Установка одной командой (bootstrap по URL)
+
+Репозиторий клонировать не нужно — bootstrap сам скачивает и проверяет
+копию, раскладывает её в фиксированный системный каталог (по умолчанию
+`/opt/homecloud/repo` — рядом с данными; не текущий каталог терминала:
+на путь ссылаются compose-проект и worker обновлений, он должен быть
+стабильным) и запускает установщик:
+
+```bash
+# интерактивно (сохранить скрипт — чтобы работали вопросы с умолчаниями)
+curl -fsSL https://raw.githubusercontent.com/sv3t0v1k/homecloud/main/deploy/user/bootstrap.sh \
+  -o /tmp/homecloud-bootstrap.sh && sudo sh /tmp/homecloud-bootstrap.sh
+
+# полностью автоматически (по pipe — все ответы по умолчанию)
+curl -fsSL https://raw.githubusercontent.com/sv3t0v1k/homecloud/main/deploy/user/bootstrap.sh | sudo sh
+
+# конкретный подписанный релиз вместо «последнего»
+... | sudo sh -s -- --tag v0.4.2
+# test-канал (без проверки подписи, предупреждение в выводе)
+... | sudo sh -s -- --ref test --channel test
+```
+
+Доверие: релизный тег резолвится из GitHub Releases, затем
+`bootstrap.py` скачивает `release-lock.json` + подпись, проверяет
+подпись Ed25519 ключом релизов и **хэши всех исходников по подписанному
+lock** (включая файлы установщика — они входят в `SOURCE_PATHS`
+`scripts/ci/release.py`), и только после этого распаковывает архив и
+запускает установку. Образы для release-канала берутся из подписанного
+lock автоматически (вопрос про `--images` не задаётся). Сами
+`bootstrap.sh`/`bootstrap.py` при запуске по pipe доставляются по HTTPS и
+являются единственной TOFU-точкой. Для `--ref` (test-канал) проверка
+подписи невозможна — выводится явное предупреждение.
 
 ## Границы этапа (осознанно не входит)
 

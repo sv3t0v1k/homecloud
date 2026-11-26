@@ -34,6 +34,15 @@ SOURCE_PATHS = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-c
                 'scripts/ci/skopeo-closure.py', 'scripts/ci/ci-gate.py',
                 'scripts/ci/test-routing.py', 'scripts/ci/audit-domains.py',
                 'deploy/user/release-public.b64',
+                'deploy/user/install.sh', 'deploy/user/probe.py', 'deploy/user/generate.py',
+                'deploy/user/update-worker.py', 'deploy/user/bootstrap.py',
+                'deploy/user/bootstrap.sh',
+                'deploy/user/systemd/homecloud-user-update.path',
+                'deploy/user/systemd/homecloud-user-update.service',
+                'deploy/user/systemd/homecloud-user-update-archive.service',
+                'deploy/user/systemd/homecloud-user-update-archive.timer',
+                'deploy/linux/preflight.py',
+                'docker-compose.production-updates.yml',
                 'docs/image-security-policy.md')
 RUNTIME = {'backend', 'frontend', 'postgres', 'ingress'}
 BUILD = {'backend-deps', 'backend-builder', 'frontend-deps', 'frontend-builder', 'buildkit'}
