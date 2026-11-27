@@ -126,8 +126,9 @@ curl -fsSL https://raw.githubusercontent.com/sv3t0v1k/homecloud/main/deploy/user
   sudo sh /tmp/homecloud-bootstrap.sh --interactive
 ```
 
-Для полностью автоматической установки необходимо явно передать
-`--defaults` и, если требуется, файл `--answers`.
+Для автоматического выбора параметров установки используйте
+`--defaults` или файл `--answers`.
+Создание первого администратора остаётся интерактивным и требует TTY.
 Канал TEST требует явного `--channel test`, `--ref` и проверенной
 пары TEST-образов через `--images` или ввод установщика.
 

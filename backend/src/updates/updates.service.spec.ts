@@ -162,20 +162,19 @@ describe("updates discovery", () => {
       throw new Error(`Unexpected URL ${url}`);
     }) as typeof fetch;
     const result = await service.check();
-    if (!withChanges) {
-      expect(result.status).toBe("current");
-      expect(result.available).toBeNull();
-    } else {
-      expect(result.status).toBe("available");
-      expect(result.available).toMatchObject({
-        version: "v0.9.1-beta.1",
-        gitSha: newSha,
-        manifestSha256: candidate.manifest_sha256,
-        backendDigest: digest,
-        frontendDigest: digest,
-        changes: "Подготовлены подписанный манифест и проверенная пара образов HomeCloud v0.9.1-beta.1.",
-      });
-    }
+    const expectedStatus = withChanges ? "available" : "current";
+    const expectedAvailable = withChanges ? {
+      version: "v0.9.1-beta.1",
+      gitSha: newSha,
+      manifestSha256: candidate.manifest_sha256,
+      backendDigest: digest,
+      frontendDigest: digest,
+      compatibility: "exact-migrations",
+      changes: "Подготовлены подписанный манифест и проверенная пара образов HomeCloud v0.9.1-beta.1.",
+    } : null;
+
+    expect(result.status).toBe(expectedStatus);
+    expect(result.available).toEqual(expectedAvailable);
   });
 
   it("accepts a signed final release without the prerelease flag", async () => {
