@@ -91,9 +91,15 @@ class ReleaseTests(unittest.TestCase):
             r.verify_tag('v0.9.1-beta.1', self.commit)
 
     def test_invalid_semver_and_shell_input_blocked(self):
-        for tag in ('v1.0.0', 'v0.09.1-beta.1', 'v0.9.1-beta.0', 'v0.9.1-beta.1;false'):
+        for tag in ('v0.09.1-beta.1', 'v0.9.1-beta.0', 'v0.9.1-beta.1;false'):
             with self.assertRaises(ValueError):
                 r.verify_tag(tag, self.commit)
+
+    def test_wellformed_unknown_tag_blocked(self):
+        # Финальный тег разрешён форматом (versions.ts принимает стабильные
+        # версии), но обязан существовать как annotated tag — git отказывает.
+        with self.assertRaises(subprocess.CalledProcessError):
+            r.verify_tag('v1.0.0', self.commit)
 
     def qualification(self):
         def image(role):
@@ -192,6 +198,95 @@ class ReleaseTests(unittest.TestCase):
                     else:
                         with contextlib.redirect_stdout(io.StringIO()):
                             r.verify_qualified(args)
+
+    def test_user_deployment_contract_contains_all_runtime_inputs(self):
+        expected = {
+            'docker-compose.yml',
+            'docker-compose.production.yml',
+            'docker-compose.production-updates.yml',
+            'deploy/user/install.sh',
+            'deploy/user/probe.py',
+            'deploy/user/generate.py',
+            'deploy/user/update-worker.py',
+            'deploy/user/bootstrap.py',
+            'deploy/user/bootstrap.sh',
+            'deploy/user/release-public.b64',
+            'deploy/user/systemd/homecloud-user-update.path',
+            'deploy/user/systemd/homecloud-user-update.service',
+            'deploy/user/systemd/homecloud-user-update-archive.service',
+            'deploy/user/systemd/homecloud-user-update-archive.timer',
+            'deploy/linux/preflight.py',
+            'deploy/linux/startup-gate.sh',
+            'deploy/ingress/19-validate-public-host.sh',
+            'deploy/ingress/default.conf.template',
+            'deploy/ingress/upgrade.conf',
+        }
+
+        self.assertEqual(set(r.USER_DEPLOYMENT_PATHS), expected)
+        self.assertEqual(len(r.USER_DEPLOYMENT_PATHS), len(expected))
+        self.assertEqual(len(r.SOURCE_PATHS), len(set(r.SOURCE_PATHS)))
+        self.assertTrue(expected.issubset(r.SOURCE_PATHS))
+
+        checkout = Path(__file__).resolve().parents[2]
+
+        for name in expected:
+            with self.subTest(name=name):
+                target = checkout / name
+                self.assertTrue(target.is_file())
+                self.assertFalse(target.is_symlink())
+                self.assertEqual(target.resolve(), target)
+
+    def test_bootstrap_deployment_contract_matches_ci(self):
+        import ast
+
+        checkout = Path(__file__).resolve().parents[2]
+        source = (checkout / 'deploy/user/bootstrap.py').read_text()
+
+        tree = ast.parse(source)
+
+        actual = next(
+            ast.literal_eval(node.value)
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == 'USER_DEPLOYMENT_PATHS'
+                for target in node.targets
+            )
+        )
+
+        self.assertEqual(actual, r.USER_DEPLOYMENT_PATHS)
+
+        worker_tree = ast.parse(
+            (checkout / 'deploy/user/update-worker.py').read_text())
+
+        worker_paths = next(
+            ast.literal_eval(node.value)
+            for node in worker_tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == 'USER_DEPLOYMENT_PATHS'
+                for target in node.targets
+            )
+        )
+
+        self.assertEqual(worker_paths, r.USER_DEPLOYMENT_PATHS)
+
+    def test_every_user_deployment_input_is_mandatory(self):
+        for name in r.USER_DEPLOYMENT_PATHS:
+            with self.subTest(missing=name):
+                candidate = self.manifest()
+                del candidate['source_files'][name]
+
+                # Recompute checksum to ensure the missing source
+                # contract itself causes refusal.
+                candidate['manifest_sha256'] = r.identity(candidate)
+
+                with self.assertRaisesRegex(
+                    ValueError, 'incomplete user deployment contract'
+                ):
+                    r.shape(candidate)
 
     def test_valid_candidate(self):
         r.shape(self.manifest())

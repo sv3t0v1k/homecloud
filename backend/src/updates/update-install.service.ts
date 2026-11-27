@@ -95,18 +95,16 @@ export class UpdateInstallService {
     }
     const paths = this.configuredPaths();
     if (!paths) throw new ServiceUnavailableException("Update installation is disabled");
-    // Phase 1: TEST only. RELEASE installation has a separate, unqualified contract.
-    if (this.config.get<string>("UPDATE_CHANNEL") !== "test") {
-      throw new ServiceUnavailableException("Only TEST request admission is supported");
-    }
     const current = await this.status();
     if (current.status !== "NO_JOB") {
       throw new ConflictException("Previous update must be reconciled first");
     }
+    // Канал определяется конфигурацией хоста; кандидат обязан быть свежепроверенным.
     const check = await this.updates.check();
-    if (check.channel !== "test" || check.status !== "available" || !check.available ||
-        !("manifestSha256" in check.available) || check.available.manifestSha256 !== manifestSha256) {
-      throw new ConflictException("No verified matching TEST build");
+    const candidate = check.available;
+    if (check.status !== "available" || !candidate ||
+        !("manifestSha256" in candidate) || candidate.manifestSha256 !== manifestSha256) {
+      throw new ConflictException("No verified matching update candidate");
     }
     // Do not create the directory. It must be provisioned on the host.
     let directory;
@@ -120,7 +118,7 @@ export class UpdateInstallService {
     let handle: import("fs/promises").FileHandle | undefined;
     try {
       handle = await open(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-      const body = JSON.stringify({ format: REQUEST_FORMAT, channel: "test", manifestSha256 }) + "\n";
+      const body = JSON.stringify({ format: REQUEST_FORMAT, channel: check.channel, manifestSha256 }) + "\n";
       await handle.writeFile(body);
       await handle.sync();
       await handle.close();

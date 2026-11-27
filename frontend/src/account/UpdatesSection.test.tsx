@@ -378,6 +378,35 @@ describe('UpdatesSection', () => {
     expect(await screen.findByText('Заявка передана хосту; установка начнётся автоматически.')).toBeInTheDocument()
   })
 
+  it('offers and sends the verified RELEASE manifest after confirmation', async () => {
+    const hash = 'b'.repeat(64)
+    vi.mocked(apiRequest).mockImplementation(async (config) => {
+      if (config.url === '/updates/access') return { admin: true }
+      if (config.url === '/updates') return {
+        channel: 'release', installed: { version: 'v0.9.0', gitSha: '1'.repeat(40) },
+        status: 'available', available: { version: 'v0.9.1', gitSha: '2'.repeat(40),
+          manifestSha256: hash, changes: '', compatibility: 'exact-migrations' },
+      }
+      if (config.url === '/updates/installations/current') return {
+        status: 'NO_JOB', manifestSha256: null, phase: null, updatedAt: null,
+      }
+      if (config.method === 'POST') return {
+        status: 'QUEUED', manifestSha256: hash, phase: null, updatedAt: null,
+      }
+      throw new Error('unexpected request')
+    })
+    render(<UpdatesSection />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Установить v0.9.1' }))
+    expect(screen.getByText(/Установить обновление v0\.9\.1\?/)).toBeInTheDocument()
+    expect(apiRequest).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'POST' }))
+    await user.click(screen.getByRole('button', { name: 'Подтвердить установку' }))
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'POST', url: '/updates/installations', data: { manifestSha256: hash },
+    })))
+    expect(await screen.findByText('Заявка передана хосту; установка начнётся автоматически.')).toBeInTheDocument()
+  })
+
   it('allows a fresh attempt only after a preparation refusal is archived', async () => {
     vi.useFakeTimers()
     const state = mockUpdateLifecycle()
