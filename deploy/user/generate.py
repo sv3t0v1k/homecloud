@@ -4,8 +4,8 @@
 Produces exactly what the operator runbooks currently create by hand:
 runtime.env with fresh secrets, host-disks inventory, startup gates,
 volume markers, directory tree with service ownership and a self-signed
-TLS certificate. Fail-closed: invalid answers are refused, nothing is
-written partially in apply mode (artifacts staged in memory, then flushed).
+TLS certificate. Fail-closed: existing installation artifacts are refused before writes.
+A failed apply may leave partial artifacts; automatic resume is forbidden.
 
 Modes:
   plan  — print the artifact map as JSON with secret values redacted;
@@ -17,6 +17,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import secrets
+import stat
 import subprocess
 import sys
 
@@ -320,41 +321,107 @@ def redact_plan(plan):
             'generated_keys': plan['generated_keys']}
 
 
-def write_file(path, content, mode, owner):
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
-    descriptor = os.open(path, flags, mode)
-    try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
-            handle.write(content)
-    finally:
+def assert_fresh_install(plan):
+    """Read-only admission: never overwrite an existing installation."""
+    targets = (
+        set(plan['dirs'])
+        | set(plan['files'])
+        | {plan['tls']['cert'], plan['tls']['key']}
+    )
+
+    for value in sorted(targets):
+        path = Path(value)
+        require(path.is_absolute(), 'install target must be absolute')
+        require(str(path) == value and '..' not in path.parts,
+                'install target must be canonical')
+
+        for parent in reversed(path.parents):
+            try:
+                info = parent.lstat()
+            except FileNotFoundError:
+                continue
+
+            require(stat.S_ISDIR(info.st_mode),
+                    'unsafe install parent: ' + str(parent))
+
         try:
-            os.close(descriptor)
-        except OSError:
-            pass
-    os.chmod(path, mode, follow_symlinks=False)
-    os.chown(path, owner[0], owner[1], follow_symlinks=False)
+            path.lstat()
+        except FileNotFoundError:
+            continue
+
+        raise Refusal(
+            'existing installation artifact; refusing overwrite: '
+            + str(path)
+        )
+
+
+def write_file(path, content, mode, owner):
+    # Never truncate or replace an existing file, even after admission.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    descriptor = os.open(path, flags, mode)
+
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+        os.fchown(handle.fileno(), owner[0], owner[1])
+        os.fchmod(handle.fileno(), mode)
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def apply_plan(plan):
     created = []
+
+    # Validate every managed target before the first persistent write.
+    assert_fresh_install(plan)
+
+    require(ETC in plan['dirs'], 'missing installation admission directory')
+
     try:
+        # Atomic reservation. A second installer cannot acquire it.
+        # Failure after this point deliberately requires manual recovery.
+        mode, owner = plan['dirs'][ETC]
+        os.mkdir(ETC, mode)
+        os.chown(ETC, owner[0], owner[1])
+        os.chmod(ETC, mode)
+        created.append(ETC)
+
         for path, (mode, owner) in sorted(plan['dirs'].items()):
-            os.makedirs(path, mode=mode, exist_ok=True)
-            os.chmod(path, mode)
+            if path == ETC:
+                continue
+
+            # Existing ancestors are not chmod/chown targets.
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+            # Never accept an existing managed directory.
+            os.mkdir(path, mode)
             os.chown(path, owner[0], owner[1])
+            os.chmod(path, mode)
             created.append(path)
+
         for path, item in plan['files'].items():
             parent = os.path.dirname(path)
+
             if parent and not os.path.isdir(parent):
                 raise Refusal('parent directory missing: ' + parent)
-            write_file(path, item['content'], item['mode'], item['owner'])
+
+            write_file(
+                path,
+                item['content'],
+                item['mode'],
+                item['owner'],
+            )
             created.append(path)
+
     except OSError as error:
-        raise Refusal('apply failed: ' + str(error))
+        raise Refusal('apply failed; manual review required: ' + str(error))
+
     return created
 
 
 def create_tls(tls):
+    for name in ('cert', 'key'):
+        require(not os.path.lexists(tls[name]),
+                'existing TLS artifact; refusing overwrite')
     san = ['IP:' + ip for ip in tls['san_ip']] + ['DNS:' + dns for dns in tls['san_dns']]
     require(bool(san), 'TLS: нужен хотя бы один SAN')
     command = ['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-sha256', '-nodes',

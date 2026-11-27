@@ -8,6 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
     'generate', Path(__file__).with_name('generate.py'))
@@ -713,6 +714,225 @@ py() {
                 result = self.run_installer(answers)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("SELECTED_CHANNEL=", result.stdout)
+
+
+class FreshInstallationTests(unittest.TestCase):
+    """Проверка сохранности существующих файлов и каталогов."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+
+        self.root = Path(directory.name).resolve()
+        self.etc = self.root / "etc-homecloud"
+        self.data = self.root / "storage"
+        self.db = self.root / "postgres"
+        self.tls = self.root / "tls"
+        self.marker = self.root / ".homecloud-backend"
+        self.runtime = self.etc / "runtime.env"
+
+        self.owner = (os.getuid(), os.getgid())
+
+        self.plan = {
+            "dirs": {
+                str(self.etc): (0o700, self.owner),
+                str(self.data): (0o700, self.owner),
+                str(self.db): (0o700, self.owner),
+                str(self.tls): (0o700, self.owner),
+            },
+            "files": {
+                str(self.runtime): {
+                    "content": "DB_PASSWORD=original-secret\n",
+                    "mode": 0o600,
+                    "owner": self.owner,
+                },
+                str(self.marker): {
+                    "content": "homecloud-v1 backend test-uuid\n",
+                    "mode": 0o400,
+                    "owner": self.owner,
+                },
+            },
+            "tls": {
+                "cert": str(self.tls / "fullchain.pem"),
+                "key": str(self.tls / "privkey.pem"),
+            },
+        }
+
+        patcher = mock.patch.object(
+            generate, "ETC", str(self.etc)
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_fresh_apply_and_second_apply_refused(self):
+        generate.apply_plan(self.plan)
+
+        self.assertEqual(
+            self.runtime.read_text(),
+            "DB_PASSWORD=original-secret\n",
+        )
+
+        self.plan["files"][str(self.runtime)]["content"] = (
+            "DB_PASSWORD=replacement-secret\n"
+        )
+
+        with self.assertRaises(generate.Refusal):
+            generate.apply_plan(self.plan)
+
+        self.assertEqual(
+            self.runtime.read_text(),
+            "DB_PASSWORD=original-secret\n",
+        )
+
+    def test_existing_config_preserved(self):
+        self.etc.mkdir(mode=0o700)
+        self.runtime.write_text("existing-secret\n")
+        original = self.runtime.stat()
+
+        with self.assertRaises(generate.Refusal):
+            generate.apply_plan(self.plan)
+
+        self.assertEqual(
+            self.runtime.read_text(), "existing-secret\n"
+        )
+        self.assertEqual(
+            self.runtime.stat().st_ino, original.st_ino
+        )
+        self.assertEqual(
+            self.runtime.stat().st_mode, original.st_mode
+        )
+        self.assertFalse(self.data.exists())
+        self.assertFalse(self.marker.exists())
+
+    def test_existing_data_refused_before_config_write(self):
+        for directory in (self.data, self.db):
+            with self.subTest(directory=directory):
+                directory.mkdir(mode=0o755)
+
+                existing = directory / "important-data"
+                existing.write_bytes(b"user-data")
+
+                original = directory.stat()
+
+                with self.assertRaises(generate.Refusal):
+                    generate.apply_plan(self.plan)
+
+                self.assertFalse(self.etc.exists())
+                self.assertFalse(self.marker.exists())
+                self.assertEqual(
+                    existing.read_bytes(), b"user-data"
+                )
+                self.assertEqual(
+                    directory.stat().st_mode, original.st_mode
+                )
+
+                existing.unlink()
+                directory.rmdir()
+
+    def test_existing_empty_managed_directory_refused(self):
+        self.data.mkdir()
+
+        with self.assertRaises(generate.Refusal):
+            generate.apply_plan(self.plan)
+
+        self.assertFalse(self.etc.exists())
+
+    def test_existing_marker_refused(self):
+        self.marker.write_text("old-volume-marker\n")
+
+        with self.assertRaises(generate.Refusal):
+            generate.apply_plan(self.plan)
+
+        self.assertEqual(
+            self.marker.read_text(), "old-volume-marker\n"
+        )
+        self.assertFalse(self.etc.exists())
+
+    def test_existing_tls_artifact_refused(self):
+        self.tls.mkdir()
+        key = self.tls / "privkey.pem"
+        key.write_bytes(b"existing-private-key")
+
+        with self.assertRaises(generate.Refusal):
+            generate.apply_plan(self.plan)
+
+        self.assertEqual(
+            key.read_bytes(), b"existing-private-key"
+        )
+        self.assertFalse(self.etc.exists())
+
+        # Проверяем непосредственно TLS boundary:
+        # openssl не должен быть запущен.
+        with mock.patch.object(
+            generate.subprocess, "run"
+        ) as run:
+            with self.assertRaises(generate.Refusal):
+                generate.create_tls(self.plan["tls"])
+            run.assert_not_called()
+
+    def test_symlink_parent_refused(self):
+        real = self.root / "real"
+        real.mkdir()
+
+        link = self.root / "linked"
+        link.symlink_to(real, target_is_directory=True)
+
+        self.plan["dirs"][str(link / "data")] = (
+            0o700, self.owner
+        )
+
+        with self.assertRaises(generate.Refusal):
+            generate.apply_plan(self.plan)
+
+        self.assertFalse(self.etc.exists())
+        self.assertFalse((real / "data").exists())
+
+    def test_dangling_symlink_target_refused(self):
+        self.data.symlink_to(self.root / "missing")
+
+        with self.assertRaises(generate.Refusal):
+            generate.apply_plan(self.plan)
+
+        self.assertTrue(self.data.is_symlink())
+        self.assertFalse(self.etc.exists())
+
+    def test_existing_file_never_truncated(self):
+        self.marker.write_text("original\n")
+
+        with self.assertRaises(FileExistsError):
+            generate.write_file(
+                str(self.marker),
+                "replacement\n",
+                0o600,
+                self.owner,
+            )
+
+        self.assertEqual(
+            self.marker.read_text(), "original\n"
+        )
+
+    def test_concurrent_reservation_refused(self):
+        # Имитируем появление ETC сразу после read-only admission.
+        original_check = generate.assert_fresh_install
+
+        def competing_installer(plan):
+            original_check(plan)
+            self.etc.mkdir(mode=0o700)
+            self.runtime.write_text("other-installer\n")
+
+        with mock.patch.object(
+            generate,
+            "assert_fresh_install",
+            side_effect=competing_installer,
+        ):
+            with self.assertRaises(generate.Refusal):
+                generate.apply_plan(self.plan)
+
+        self.assertEqual(
+            self.runtime.read_text(), "other-installer\n"
+        )
+        self.assertFalse(self.data.exists())
+        self.assertFalse(self.marker.exists())
 
 
 if __name__ == '__main__':
