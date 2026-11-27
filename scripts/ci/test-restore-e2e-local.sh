@@ -700,7 +700,7 @@ command("stop", "backend")
 passed("live backend stopped before operator bootstrap")
 
 
-def bootstrap(first, second, expected_status=None):
+def bootstrap(attempts, expected_status):
     # A real terminal is required by the production CLI.
     # Passwords never enter Docker arguments or environment.
     master, slave = pty.openpty()
@@ -730,6 +730,7 @@ def bootstrap(first, second, expected_status=None):
 
     transcript = bytearray()
     stage = 0
+    cursor = 0
     deadline = time.monotonic() + 120
 
     try:
@@ -754,19 +755,20 @@ def bootstrap(first, second, expected_status=None):
                     "unexpectedly large bootstrap output",
                 )
 
-                if (
-                    stage == 0
-                    and b"New administrator password: " in transcript
-                ):
-                    os.write(master, first.encode() + b"\n")
-                    stage = 1
-
-                if (
-                    stage == 1
-                    and b"Repeat administrator password: " in transcript
-                ):
-                    os.write(master, second.encode() + b"\n")
-                    stage = 2
+                unread = transcript[cursor:]
+                if stage < len(attempts) * 2:
+                    prompt = (b"New administrator password: " if stage % 2 == 0
+                              else b"Repeat administrator password: ")
+                    if prompt in unread:
+                        if stage > 0 and stage % 2 == 0:
+                            require(
+                                sql("SELECT count(*) FROM public.users;") == "0",
+                                "rejected password created an account",
+                            )
+                        answer = attempts[stage // 2][stage % 2]
+                        os.write(master, answer.encode() + b"\n")
+                        stage += 1
+                        cursor = len(transcript)
 
             elif proc.poll() is not None:
                 break
@@ -792,27 +794,27 @@ def bootstrap(first, second, expected_status=None):
     output = transcript.decode("utf-8", errors="replace")
 
     require(
-        first not in output and second not in output,
+        all(first not in output and second not in output
+            for first, second in attempts),
         "interactive password was echoed",
     )
 
     require(
-        stage == 2,
-        "both password prompts were not reached",
+        stage == len(attempts) * 2,
+        "expected password prompts were not reached",
     )
+
+    if len(attempts) > 1:
+        require(
+            "Passwords do not match; try again." in output
+            and "Password must be 12 or more characters" in output,
+            "rejected passwords lacked retry diagnostics",
+        )
 
     require(
         "PASS: HomeCloud startup disk gate" in output,
         "operator container did not prove startup gate",
     )
-
-    if expected_status is None:
-        require(code != 0, "mismatched passwords accepted")
-        require(
-            "BOOTSTRAP_PASSWORD_MISMATCH" in output,
-            "unexpected bootstrap rejection",
-        )
-        return None
 
     require(code == 0, "bootstrap command failed")
 
@@ -848,16 +850,17 @@ def bootstrap(first, second, expected_status=None):
     return result["userId"]
 
 
-bootstrap(password, mismatch)
-
-require(
-    sql("SELECT count(*) FROM public.users;") == "0",
-    "mismatched password created an account",
+user_id = bootstrap(
+    [(password, mismatch), ("short", "short"), (password, password)],
+    "created",
 )
 
-passed("real installed gate + TTY mismatch rejected without password echo")
+require(
+    sql("SELECT count(*) FROM public.users;") == "1",
+    "password retry did not create exactly one account",
+)
 
-user_id = bootstrap(password, password, "created")
+passed("real installed gate + TTY retries rejected passwords without echo")
 
 row = sql(
     'SELECT id,email,role,"isActive","sessionVersion",'
@@ -888,11 +891,7 @@ before = account_digest()
 
 # Use a different password on retry: an idempotent bootstrap must
 # not replace the existing administrator password or any other field.
-retry_id = bootstrap(
-    retry_password,
-    retry_password,
-    "already-configured",
-)
+retry_id = bootstrap([(retry_password, retry_password)], "already-configured")
 
 require(retry_id == user_id, "bootstrap retry changed identity")
 require(account_digest() == before, "bootstrap retry mutated account")
