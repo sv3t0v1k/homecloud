@@ -42,6 +42,7 @@ CHANNEL=release
 CHANNEL_GIVEN=0
 IMAGES_GIVEN=0
 LOCAL_BOOTSTRAP=0
+NO_START=0
 
 # Обрабатываем только исходные аргументы.
 # Аргументы install.sh добавляются в конец "$@".
@@ -96,6 +97,7 @@ while [ "$remaining" -gt 0 ]; do
       LOCAL_BOOTSTRAP=1
       ;;
     --defaults|--interactive|--no-start)
+      [ "$opt" != --no-start ] || NO_START=1
       set -- "$@" "$opt"
       ;;
     *)
@@ -137,6 +139,11 @@ fi
 
 # Install.sh не должен повторно спрашивать канал.
 set -- "$@" --channel "$CHANNEL"
+
+# Refuse before downloading a repository that a first-admin run cannot use.
+if [ "$NO_START" = 0 ] && ! ( : </dev/tty ) 2>/dev/null; then
+  fail 'для создания первого администратора нужен интерактивный терминал'
+fi
 
 clean_path=/usr/sbin:/usr/bin:/sbin:/bin
 py() { env -i HOME=/root PATH="$clean_path" /usr/bin/python3 -I -B "$@"; }

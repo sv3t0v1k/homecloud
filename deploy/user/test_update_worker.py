@@ -153,6 +153,7 @@ def make_lock(tag='v1.2.0', migrations=('20260101000000Init',),
 def github_routes(payload, signature_b64, extra_releases=()):
     releases = list(extra_releases) + [{
         'draft': False,
+        'tag_name': json.loads(payload)['tag'],
         'assets': [
             {'name': 'release-lock.json',
              'url': 'https://api.github.com/repos/' + REPO + '/releases/assets/111'},
@@ -823,6 +824,19 @@ class InstallTests(WorkerCase):
         self.assertIn(OLD_BACKEND + '\n', self.read_env())
         self.assertEqual(deps.compose_calls, [])
 
+    def test_missing_signature_asset_rejected(self):
+        self.write_env()
+        self.write_installed_lock(tag='v1.1.0')
+        _, payload, deps = self.candidate_deps()
+        url = 'https://api.github.com/repos/' + REPO + '/releases?per_page=20'
+        releases = json.loads(deps.routes[url][2])
+        releases[0]['assets'] = releases[0]['assets'][:1]
+        deps.routes[url] = (200, {}, json.dumps(releases).encode())
+        with self.assertRaises(worker.Refusal):
+            worker.install(deps)
+        self.assertEqual(self.read_status()['status'], 'STOP')
+        self.assertEqual(deps.compose_calls, [])
+
     def test_unknown_identity_rejected(self):
         self.write_env()
         self.write_installed_lock(tag='v1.1.0')
@@ -1071,6 +1085,39 @@ class ArchiveTests(WorkerCase):
     def test_archive_without_receipt_is_noop(self):
         worker.archive(FakeDeps())
         self.assertFalse(self.archive_dir().exists())
+
+    def test_interrupted_marker_write_does_not_block_next_archive(self):
+        self.write_receipt()
+        original_replace = worker.os.replace
+
+        def interrupted(source, destination):
+            if str(destination).endswith('/archiving.json'):
+                raise OSError('simulated crash before durable marker')
+            return original_replace(source, destination)
+
+        with mock.patch.object(worker.os, 'replace', side_effect=interrupted):
+            with self.assertRaises(OSError):
+                worker.archive(FakeDeps())
+        self.assertFalse((self.base / 'status' / 'archiving.json').exists())
+        worker.archive(FakeDeps())
+        self.assertFalse((self.base / 'status' / 'current.json').exists())
+        self.assertEqual(len(list(self.archive_dir().iterdir())), 1)
+
+    def test_short_marker_writes_publish_complete_json(self):
+        receipt = self.write_receipt()
+        name = worker.receipt_archive_name(receipt)
+        original_write = worker.os.write
+
+        def short_write(descriptor, data):
+            return original_write(descriptor, bytes(data)[:3])
+
+        with mock.patch.object(worker.os, 'write', side_effect=short_write):
+            worker.create_marker(receipt['manifestSha256'], name)
+
+        marker = json.loads((self.base / 'status' / 'archiving.json').read_text())
+        self.assertEqual(marker['archiveName'], name)
+        worker.archive(FakeDeps())
+        self.assertFalse((self.base / 'status' / 'archiving.json').exists())
 
     def test_archive_manual_recovery_refused(self):
         self.write_receipt(status='MANUAL_RECOVERY_REQUIRED', phase='ROLLBACK')

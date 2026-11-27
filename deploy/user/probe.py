@@ -179,6 +179,18 @@ def primary_ip_and_interface(runner):
         device = route.get('dev')
         if prefs and device:
             return prefs, device
+        if device:
+            # A static default route need not carry prefsrc. A route lookup
+            # asks the kernel which local source address it would use.
+            lookup = runner(['ip', '-json', '-4', 'route', 'get', '1.1.1.1'])
+            try:
+                selected = json.loads(lookup) if lookup else []
+            except ValueError:
+                selected = []
+            if type(selected) is list:
+                for item in selected:
+                    if type(item) is dict and item.get('dev') == device and item.get('prefsrc'):
+                        return item['prefsrc'], device
     return None, None
 
 

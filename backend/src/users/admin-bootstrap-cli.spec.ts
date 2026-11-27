@@ -2,9 +2,23 @@ import { DataSource } from "typeorm";
 import {
   parseBootstrapCommand,
   assertBootstrapSchemaReady,
+  readMatchingPassword,
 } from "./admin-bootstrap-cli";
 
 describe("Operator bootstrap CLI contract", () => {
+  it("re-prompts a mistyped confirmation before creating the administrator", async () => {
+    const answers = ["first", "wrong", "short", "short", "long-enough-pass", "long-enough-pass"];
+    const ask = jest.fn(async () => answers.shift()!);
+    const diagnostic = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(readMatchingPassword(ask)).resolves.toBe("long-enough-pass");
+      expect(ask).toHaveBeenCalledTimes(6);
+      expect(diagnostic).toHaveBeenCalledWith("Passwords do not match; try again.\n");
+      expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining("12 or more characters"));
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
   it("accepts the exact create command without password arguments", () => {
     expect(parseBootstrapCommand([
       "bootstrap", "create",

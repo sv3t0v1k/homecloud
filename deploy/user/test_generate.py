@@ -597,9 +597,16 @@ bind_owner() {
 class BootstrapChannelRegressionTests(unittest.TestCase):
     """Проверка аргументов и каналов реального shell-bootstrap."""
 
-    def run_bootstrap(self, *args, info=None, pipe=False):
+    def run_bootstrap(self, *args, info=None, pipe=False, real_tty_check=False):
         path = Path(__file__).resolve().with_name("bootstrap.sh")
         script = path.read_text()
+
+        if not real_tty_check:
+            guard = ('if [ "$NO_START" = 0 ] && ! ( : </dev/tty ) 2>/dev/null; then\n'
+                     "  fail 'для создания первого администратора нужен интерактивный терминал'\n"
+                     'fi')
+            self.assertEqual(script.count(guard), 1)
+            script = script.replace(guard, ':', 1)
 
         boundary = (
             'py() { env -i HOME=/root PATH="$clean_path" '
@@ -701,6 +708,12 @@ py() {
 
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("FETCH ", result.stderr)
+
+    def test_no_tty_refused_before_repository_fetch(self):
+        result = self.run_bootstrap('--tag', 'v1.2.0', real_tty_check=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('интерактивный терминал', result.stderr)
+        self.assertNotIn('FETCH ', result.stderr)
 
     def test_release_missing_verified_images_refused(self):
         for info in (

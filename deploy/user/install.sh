@@ -116,7 +116,9 @@ docker_ok=$(py -c 'import json,sys; d=json.load(open(sys.argv[1]))["docker"]; pr
 [ "$docker_ok" = yes ] || fail 'нужен работающий Docker с плагином compose'
 
 # --- Умолчания из probe -------------------------------------------------------
-primary_ip=$(py -c 'import json,sys; print(json.load(open(sys.argv[1]))["network"]["primary_ip"] or "127.0.0.1")' "$work/probe.json")
+primary_ip=$(py -c 'import json,sys; print(json.load(open(sys.argv[1]))["network"]["primary_ip"] or "")' "$work/probe.json")
+[ -n "$primary_ip" ] || [ -n "$ANSWERS_OVERRIDE" ] ||
+  fail 'не удалось определить адрес интерфейса для ingress; проверьте маршрут и адрес сервера'
 busy=$(py -c 'import json,sys; print(",".join(map(str,json.load(open(sys.argv[1]))["network"]["listening_tcp_ports"])))' "$work/probe.json")
 port_free() { case ",$busy," in *,"$1",*) return 1;; *) return 0;; esac; }
 default_https=443; port_free 443 || default_https=8443

@@ -49,6 +49,13 @@ function invalidInput(): never {
   throw new AdminBootstrapError("INVALID_BOOTSTRAP_INPUT");
 }
 
+export function validInitialPassword(password: unknown): password is string {
+  return typeof password === "string" &&
+    Array.from(password).length >= 12 &&
+    Buffer.byteLength(password, "utf8") <= 72 &&
+    !password.includes(String.fromCharCode(0));
+}
+
 function validateRequest(request: AdminBootstrapRequest): void {
   if (
     !request ||
@@ -66,10 +73,7 @@ function validateRequest(request: AdminBootstrapRequest): void {
       request.name.trim().length === 0 ||
       Array.from(request.name.trim()).length > 100 ||
       request.name.includes(String.fromCharCode(0)) ||
-      typeof request.password !== "string" ||
-      Array.from(request.password).length < 12 ||
-      Buffer.byteLength(request.password, "utf8") > 72 ||
-      request.password.includes(String.fromCharCode(0))
+      !validInitialPassword(request.password)
     ) {
       invalidInput();
     }

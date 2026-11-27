@@ -304,9 +304,10 @@ def iter_signed_locks(config, deps, public_der):
     for release in releases:
         if not type(release) is dict or release.get('draft') is not False:
             continue
-        assets = release.get('assets')
-        if not type(assets) is list:
+        if type(release.get('tag_name')) is not str or not TAG.fullmatch(release['tag_name']):
             continue
+        assets = release.get('assets')
+        require(type(assets) is list, 'published release lacks signature assets')
         by_name = {}
         for item in assets:
             if type(item) is dict and item.get('name') in ('release-lock.json', 'release-lock.json.sig'):
@@ -314,8 +315,8 @@ def iter_signed_locks(config, deps, public_der):
                     by_name[item['name']] = parse_asset_url(config, item)
                 except Refusal:
                     break
-        if set(by_name) != {'release-lock.json', 'release-lock.json.sig'}:
-            continue
+        require(set(by_name) == {'release-lock.json', 'release-lock.json.sig'},
+                'published release lacks signature assets')
         lock_bytes = github_get(config, deps, by_name['release-lock.json'], 'application/octet-stream')
         sig_bytes = github_get(config, deps, by_name['release-lock.json.sig'], 'application/octet-stream')
         verify_signature(lock_bytes, sig_bytes.decode(), public_der, deps)
@@ -1274,16 +1275,28 @@ def receipt_archive_name(receipt):
 def create_marker(identity, archive_name):
     value = json.dumps({'manifestSha256': identity, 'archiveName': archive_name},
                        sort_keys=True).encode() + b'\n'
-    descriptor = os.open(BASE_DIR / 'status' / 'archiving.json',
-                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o640)
+    status_dir = BASE_DIR / 'status'
+    marker_path = status_dir / 'archiving.json'
+    descriptor, temporary = tempfile.mkstemp(prefix='.archiving-', dir=status_dir)
     try:
         os.fchmod(descriptor, 0o640)
         os.fchown(descriptor, ROOT_UID, GID)
-        os.write(descriptor, value)
+        remaining = memoryview(value)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            require(written > 0, 'archival marker write failed')
+            remaining = remaining[written:]
         os.fsync(descriptor)
-    finally:
         os.close(descriptor)
-    fsync_dir(BASE_DIR / 'status')
+        descriptor = -1
+        require(not marker_path.exists(), 'archival marker already exists')
+        os.replace(temporary, marker_path)
+        fsync_dir(status_dir)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def archive(deps):
