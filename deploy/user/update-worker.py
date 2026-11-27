@@ -54,6 +54,16 @@ MAX_BODY = 2 * 1024 * 1024
 ASSET_HOSTS = ('release-assets.githubusercontent.com', 'objects.githubusercontent.com')
 
 
+USER_DEPLOYMENT_PATHS = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-compose.production-updates.yml', 'deploy/user/install.sh', 'deploy/user/probe.py', 'deploy/user/generate.py', 'deploy/user/update-worker.py', 'deploy/user/bootstrap.py', 'deploy/user/bootstrap.sh', 'deploy/user/release-public.b64', 'deploy/user/systemd/homecloud-user-update.path', 'deploy/user/systemd/homecloud-user-update.service', 'deploy/user/systemd/homecloud-user-update-archive.service', 'deploy/user/systemd/homecloud-user-update-archive.timer', 'deploy/linux/preflight.py', 'deploy/linux/startup-gate.sh', 'deploy/ingress/19-validate-public-host.sh', 'deploy/ingress/default.conf.template', 'deploy/ingress/upgrade.conf')
+INSTALLER_ONLY_PATHS = ('deploy/user/bootstrap.py', 'deploy/user/bootstrap.sh', 'deploy/user/generate.py', 'deploy/user/install.sh', 'deploy/user/probe.py')
+RELEASE_EVIDENCE_DIR = '.homecloud-release'
+RELEASE_COMPOSE_FILES = (
+    'docker-compose.yml',
+    'docker-compose.production.yml',
+    'docker-compose.production-updates.yml',
+)
+
+
 class Refusal(Exception):
     """Pre-transaction refusal: no mutation happened, the attempt is retryable."""
 
@@ -383,6 +393,204 @@ def check_installed(lock):
             'schema migrations differ; automatic update refused')
 
 
+def verify_deployment_directory(path, evidence=False):
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+
+    require(
+        stat.S_ISDIR(info.st_mode)
+        and info.st_uid == ROOT_UID
+        and not mode & 0o7022
+        and mode & 0o700 == 0o700,
+        'unsafe deployment directory: ' + str(path),
+    )
+
+    if evidence:
+        require(mode == 0o700, 'unsafe release evidence directory')
+
+    if hasattr(os, 'listxattr'):
+        require(not any(
+            attr in ('system.posix_acl_access',
+                     'system.posix_acl_default')
+            for attr in os.listxattr(path, follow_symlinks=False)
+        ), 'unsafe deployment directory ACL')
+
+
+def verify_deployment_parents(root):
+    require(root.is_absolute() and '..' not in root.parts,
+            'invalid deployment root')
+
+    for parent in reversed(root.parents):
+        verify_deployment_directory(parent)
+
+
+def read_deployment_file(path, mode):
+    descriptor = os.open(
+        path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+
+    with os.fdopen(descriptor, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+
+        require(
+            stat.S_ISREG(info.st_mode)
+            and info.st_uid == ROOT_UID
+            and info.st_nlink == 1
+            and stat.S_IMODE(info.st_mode) == mode
+            and info.st_size <= MAX_BODY,
+            'unsafe deployment file: ' + str(path),
+        )
+
+        if hasattr(os, 'listxattr'):
+            require(not any(
+                attr in ('system.posix_acl_access',
+                         'system.posix_acl_default')
+                for attr in os.listxattr(path, follow_symlinks=False)
+            ), 'unsafe deployment file ACL')
+
+        data = stream.read(MAX_BODY + 1)
+
+        require(len(data) <= MAX_BODY, 'deployment file too large')
+        return data
+
+
+def deployment_hashes(lock):
+    sources = lock.get('source_files')
+
+    require(type(sources) is dict, 'missing deployment source contract')
+
+    result = {}
+
+    for name in USER_DEPLOYMENT_PATHS:
+        digest = sources.get(name)
+
+        require(
+            type(digest) is str and HASH.fullmatch(digest),
+            'missing deployment hash: ' + name,
+        )
+
+        result[name] = digest
+
+    return result
+
+
+def verify_local_deployment(config, deps, public_der):
+    """Verify the original installation proof without importing repo code."""
+    try:
+        root = Path(config['compose_project_dir'])
+
+        require(str(root) == config['compose_project_dir'],
+                'noncanonical deployment path')
+
+        require(tuple(config.get(
+            'compose_files', RELEASE_COMPOSE_FILES
+        )) == RELEASE_COMPOSE_FILES, 'unexpected compose files')
+
+        verify_deployment_parents(root)
+        verify_deployment_directory(root)
+
+        files = {
+            name: 0o755 if name.endswith('.sh') else 0o644
+            for name in USER_DEPLOYMENT_PATHS
+        }
+
+        lock_name = RELEASE_EVIDENCE_DIR + '/release-lock.json'
+        sig_name = RELEASE_EVIDENCE_DIR + '/release-lock.json.sig'
+
+        files[lock_name] = 0o600
+        files[sig_name] = 0o600
+
+        directories = {
+            str(parent)
+            for name in files
+            for parent in Path(name).parents
+            if str(parent) != '.'
+        }
+
+        found = {}
+        found_dirs = set()
+        pending = [root]
+
+        while pending:
+            directory = pending.pop()
+
+            for target in directory.iterdir():
+                name = str(target.relative_to(root))
+
+                if name in files:
+                    found[name] = read_deployment_file(
+                        target, files[name])
+
+                elif name in directories:
+                    verify_deployment_directory(
+                        target, evidence=name == RELEASE_EVIDENCE_DIR)
+
+                    found_dirs.add(name)
+                    pending.append(target)
+
+                else:
+                    raise Refusal(
+                        'unexpected deployment path: ' + name)
+
+        require(set(found) == set(files)
+                and found_dirs == directories,
+                'incomplete local deployment')
+
+        payload = found[lock_name]
+
+        verify_signature(
+            payload,
+            found[sig_name].decode('ascii'),
+            public_der,
+            deps,
+        )
+
+        lock = json.loads(payload)
+
+        require(type(lock) is dict, 'invalid deployment lock')
+        validate_lock(lock)
+
+        identity = dict(lock)
+        claimed = identity.pop('manifest_sha256', None)
+
+        require(
+            claimed == hashlib.sha256(
+                canonical(identity).encode()).hexdigest(),
+            'invalid deployment manifest identity',
+        )
+
+        for name, digest in deployment_hashes(lock).items():
+            require(
+                hashlib.sha256(found[name]).hexdigest() == digest,
+                'local deployment hash mismatch: ' + name,
+            )
+
+        return lock, payload
+
+    except (OSError, ValueError, TypeError, KeyError,
+            AttributeError, subprocess.SubprocessError) as error:
+        raise Refusal('local deployment verification failed: ' + str(error))
+
+
+def check_deployment_compatibility(original, candidate):
+    """This worker can update images, not the host deployment itself."""
+    current = deployment_hashes(original)
+    proposed = deployment_hashes(candidate)
+
+    for name in USER_DEPLOYMENT_PATHS:
+        if name not in INSTALLER_ONLY_PATHS:
+            require(
+                current[name] == proposed[name],
+                'manual deployment update required: ' + name,
+            )
+
+    for role in ('backend', 'frontend'):
+        require(
+            original['images'][role]['repository']
+            == candidate['images'][role]['repository'],
+            'candidate image repository differs from installation',
+        )
+
+
 def verify_registry(lock, config, deps):
     for role in ('backend', 'frontend'):
         image = lock['images'][role]
@@ -544,6 +752,11 @@ def install(deps):
             publish_status(identity, 'RUNNING', 'FETCH_MANIFEST', deps)
             lock, lock_bytes = discover_lock(identity, config, deps, public_der)
             check_installed(lock)
+
+            deployment_lock, _ = verify_local_deployment(
+                config, deps, public_der)
+
+            check_deployment_compatibility(deployment_lock, lock)
             publish_status(identity, 'RUNNING', 'VERIFY_IMAGES', deps)
             verify_registry(lock, config, deps)
         except Refusal as error:
@@ -604,7 +817,18 @@ def bootstrap(deps):
                 'installed lock already exists')
         backend_ref, frontend_ref = read_image_refs(config)
         public_der = load_public_key()
-        _, lock_bytes = discover_lock_by_images(backend_ref, frontend_ref, config, deps, public_der)
+        lock, lock_bytes = verify_local_deployment(
+            config, deps, public_der)
+
+        refs = tuple(
+            lock['images'][role]['repository'] + '@'
+            + lock['images'][role]['digest']
+            for role in ('backend', 'frontend')
+        )
+
+        require(refs == (backend_ref, frontend_ref),
+                'installed images differ from signed deployment')
+
         write_installed_lock(lock_bytes)
     finally:
         os.close(lock_fd)

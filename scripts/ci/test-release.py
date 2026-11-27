@@ -257,6 +257,22 @@ class ReleaseTests(unittest.TestCase):
 
         self.assertEqual(actual, r.USER_DEPLOYMENT_PATHS)
 
+        worker_tree = ast.parse(
+            (checkout / 'deploy/user/update-worker.py').read_text())
+
+        worker_paths = next(
+            ast.literal_eval(node.value)
+            for node in worker_tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == 'USER_DEPLOYMENT_PATHS'
+                for target in node.targets
+            )
+        )
+
+        self.assertEqual(worker_paths, r.USER_DEPLOYMENT_PATHS)
+
     def test_every_user_deployment_input_is_mandatory(self):
         for name in r.USER_DEPLOYMENT_PATHS:
             with self.subTest(missing=name):

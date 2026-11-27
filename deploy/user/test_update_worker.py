@@ -78,13 +78,25 @@ def release_py_sign(payload, directory):
     return sig_path.read_text().strip()
 
 
-def make_lock(tag='v1.2.0', migrations=('20260101000000Init',), commit=None):
+def fixture_deployment_hashes():
+    return {
+        name: hashlib.sha256(('fixture:' + name).encode()).hexdigest()
+        for name in worker.USER_DEPLOYMENT_PATHS
+    }
+
+
+def make_lock(tag='v1.2.0', migrations=('20260101000000Init',),
+              commit=None, source_files=None):
     commit = commit or hashlib.sha256(('commit:' + tag).encode()).hexdigest()[:40]
     lock = {
         'format': 'homecloud-ci-candidate-v1',
         'tag': tag,
         'commit': commit,
         'schema_migrations': list(migrations),
+        'source_files': (
+            fixture_deployment_hashes()
+            if source_files is None else source_files
+        ),
         'images': {
             role: {
                 'repository': 'ghcr.io/' + REPO + '/' + role,
@@ -218,8 +230,29 @@ class WorkerCase(unittest.TestCase):
         self.base = root / 'update'
         (self.base / 'inbox').mkdir(parents=True)
         (self.base / 'status').mkdir(parents=True)
-        self.project = root / 'project'
+        self.project = (root / 'project').resolve()
         self.project.mkdir()
+
+        for name in worker.USER_DEPLOYMENT_PATHS:
+            target = self.project / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(('fixture:' + name).encode())
+            target.chmod(0o755 if name.endswith('.sh') else 0o644)
+
+        evidence = self.project / worker.RELEASE_EVIDENCE_DIR
+        evidence.mkdir(mode=0o700)
+        evidence.chmod(0o700)
+
+        _, payload = make_lock(tag='v1.1.0')
+
+        self.proof_lock = evidence / 'release-lock.json'
+        self.proof_sig = evidence / 'release-lock.json.sig'
+
+        self.proof_lock.write_bytes(payload)
+        self.proof_sig.write_text(openssl_sign(payload))
+
+        self.proof_lock.chmod(0o600)
+        self.proof_sig.chmod(0o600)
         etc = root / 'etc'
         etc.mkdir()
         (etc / 'docker').mkdir()
@@ -240,6 +273,9 @@ class WorkerCase(unittest.TestCase):
         os.chmod(self.config_path, 0o600)
         patches = [
             mock.patch.object(worker, 'BASE_DIR', self.base),
+            # External macOS fixture ancestors are not Linux root paths.
+            # All deployment files and internal directories remain real.
+            mock.patch.object(worker, 'verify_deployment_parents'),
             mock.patch.object(worker, 'CONFIG_PATH', self.config_path),
             mock.patch.object(worker, 'PUBLIC_KEY_PATH', self.key_path),
             mock.patch.object(worker, 'TOKEN_PATH', self.token_path),
@@ -300,6 +336,86 @@ class WorkerCase(unittest.TestCase):
 
 
 class InstallTests(WorkerCase):
+    def test_tampered_local_deployment_blocks_update(self):
+        self.write_env()
+        self.write_installed_lock()
+        before = self.read_env()
+
+        (self.project / 'deploy/linux/startup-gate.sh').write_bytes(
+            b'tampered')
+
+        _, _, deps = self.candidate_deps()
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'local deployment hash mismatch'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(self.read_env(), before)
+        self.assertEqual(deps.compose_calls, [])
+        self.assertEqual(self.read_status()['status'], 'STOP')
+
+    def test_extra_deployment_file_blocks_update(self):
+        self.write_env()
+        self.write_installed_lock()
+        (self.project / '.env').write_text('unexpected=value')
+
+        _, _, deps = self.candidate_deps()
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'unexpected deployment path'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(deps.compose_calls, [])
+        self.assertEqual(self.read_status()['status'], 'STOP')
+
+    def test_changed_signed_deployment_blocks_image_update(self):
+        self.write_env()
+        self.write_installed_lock()
+        before = self.read_env()
+
+        sources = fixture_deployment_hashes()
+        sources['deploy/linux/startup-gate.sh'] = 'f' * 64
+
+        lock, payload = make_lock(source_files=sources)
+
+        self.write_request(lock['manifest_sha256'])
+
+        deps = FakeDeps(github_routes(
+            payload, openssl_sign(payload)))
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'manual deployment update required'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(self.read_env(), before)
+        self.assertEqual(deps.compose_calls, [])
+        self.assertEqual(self.read_status()['status'], 'STOP')
+
+    def test_installer_only_changes_allow_image_update(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        sources = fixture_deployment_hashes()
+        sources['deploy/user/install.sh'] = 'f' * 64
+
+        lock, payload = make_lock(source_files=sources)
+
+        self.write_request(lock['manifest_sha256'])
+
+        deps = FakeDeps(github_routes(
+            payload, openssl_sign(payload)))
+
+        worker.install(deps)
+
+        self.assertEqual(self.read_status()['status'], 'INSTALLED')
+        self.assertEqual(
+            [call[0] for call in deps.compose_calls],
+            ['pull', 'up'],
+        )
+
     def test_happy_path_installs_signed_release(self):
         self.write_env()
         self.write_installed_lock(tag='v1.1.0')
@@ -493,6 +609,7 @@ class BootstrapTests(WorkerCase):
         self.write_env(backend_ref, frontend_ref)
         deps = FakeDeps(github_routes(payload, openssl_sign(payload)))
         worker.bootstrap(deps)
+        self.assertEqual(deps.http_calls, [])
         self.assertEqual(self.install_lock().read_bytes(), payload)
         self.assertEqual(deps.compose_calls, [])
         self.assertFalse((self.base / 'status' / 'current.json').exists())
@@ -517,8 +634,10 @@ class BootstrapTests(WorkerCase):
         frontend_ref = lock['images']['frontend']['repository'] + '@' + lock['images']['frontend']['digest']
         self.write_env(backend_ref, frontend_ref)
         foreign = openssl_sign(payload, FOREIGN_PRIVATE_DER)
+        self.proof_sig.write_text(foreign)
+
         with self.assertRaises(worker.Refusal):
-            worker.bootstrap(FakeDeps(github_routes(payload, foreign)))
+            worker.bootstrap(FakeDeps())
         self.assertFalse(self.install_lock().exists())
 
     def test_bootstrap_refuses_unpinned_refs(self):
