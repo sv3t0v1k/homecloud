@@ -122,6 +122,11 @@ if [ "$CHANNEL" = test ]; then
   [ -z "$TAG" ] || fail '--tag предназначен для release'
 fi
 
+# RELEASE images come exclusively from the signed release-lock.
+if [ "$CHANNEL" = release ] && [ "$IMAGES_GIVEN" = 1 ]; then
+  fail '--images разрешён только для test-канала'
+fi
+
 # Install.sh не должен повторно спрашивать канал.
 set -- "$@" --channel "$CHANNEL"
 
@@ -166,19 +171,27 @@ else
     || fail 'не удалось скачать репозиторий'
 fi
 
-# Для подписанного релиза подставляем образы из lock, если оператор не задал
-# свои и канал не test (у test-канала своих образов в lock нет).
-if [ "$IMAGES_GIVEN" = 0 ] && [ "$CHANNEL" != test ] && [ -n "$TAG" ]; then
+# RELEASE: use only the image pair validated by bootstrap.py.
+# TEST: explicit images or installer input remain available.
+if [ "$CHANNEL" = release ]; then
   pair=$(printf '%s' "$info" | py -c 'import json,sys
 value = json.load(sys.stdin)
-images = value.get("images") or {}
-backend = images.get("backend"); frontend = images.get("frontend")
-if backend and frontend:
-    print(backend + "," + frontend)') || pair=''
-  if [ -n "$pair" ]; then
-    set -- "$@" --images "$pair"
-    say '==> Образы взяты из подписанного release-lock'
-  fi
+images = value.get("images")
+if not isinstance(images, dict):
+    sys.exit(1)
+backend = images.get("backend")
+frontend = images.get("frontend")
+if not isinstance(backend, str) or not backend:
+    sys.exit(1)
+if not isinstance(frontend, str) or not frontend:
+    sys.exit(1)
+print(backend + "," + frontend)') \
+    || fail 'подписанный release-lock не содержит допустимые образы'
+
+  [ -n "$pair" ] || fail 'пустая пара образов RELEASE'
+
+  set -- "$@" --images "$pair"
+  say '==> Образы взяты из подписанного release-lock'
 fi
 
 say "==> Запускаю установщик из $REPO_DIR"

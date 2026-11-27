@@ -446,7 +446,7 @@ py() {
 class BootstrapChannelRegressionTests(unittest.TestCase):
     """Проверка аргументов и каналов реального shell-bootstrap."""
 
-    def run_bootstrap(self, *args):
+    def run_bootstrap(self, *args, info=None):
         path = Path(__file__).resolve().with_name("bootstrap.sh")
         script = path.read_text()
 
@@ -489,7 +489,7 @@ py() {
 
         env = dict(os.environ)
         env["HC_TEST_PYTHON"] = sys.executable
-        env["HC_TEST_INFO"] = json.dumps({
+        env["HC_TEST_INFO"] = json.dumps(info if info is not None else {
             "images": {
                 "backend": "ghcr.io/example/backend@sha256:" + "a" * 64,
                 "frontend": "ghcr.io/example/frontend@sha256:" + "b" * 64,
@@ -519,6 +519,51 @@ py() {
         ]
         self.assertEqual(len(lines), 1)
         return json.loads(lines[0][6:])[1:]
+
+    def test_release_image_override_refused_before_fetch(self):
+        pair = "foreign/backend:latest,foreign/frontend:latest"
+
+        for args in (
+            ["--images", pair],
+            ["--channel", "release", "--images", pair],
+            ["--tag", "v1.2.0", "--images", pair],
+        ):
+            with self.subTest(args=args):
+                result = self.run_bootstrap(*args)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("FETCH ", result.stderr)
+
+    def test_release_missing_verified_images_refused(self):
+        for info in (
+            {},
+            {"images": None},
+            {"images": {}},
+            {"images": {"backend": "backend-only"}},
+        ):
+            with self.subTest(info=info):
+                result = self.run_bootstrap(
+                    "--defaults", info=info)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(
+                    "Запускаю установщик", result.stdout)
+
+    def test_test_channel_explicit_images_preserved(self):
+        pair = "fixture/backend:dev,fixture/frontend:dev"
+
+        result = self.run_bootstrap(
+            "--ref", "test",
+            "--channel", "test",
+            "--images", pair,
+            "--defaults",
+        )
+
+        args = self.successful_args(result)
+
+        self.assertEqual(args.count("--images"), 1)
+        self.assertEqual(args[args.index("--images") + 1], pair)
+        self.assertEqual(args[args.index("--channel") + 1], "test")
 
     def test_default_is_signed_release(self):
         result = self.run_bootstrap("--defaults")

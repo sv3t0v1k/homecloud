@@ -198,15 +198,31 @@ def verify_archive_public_key(archive, members, trusted_der):
 
 def images_from_lock(lock):
     images = lock.get('images')
+
     if not isinstance(images, dict):
-        return None
+        raise Failure('release-lock: отсутствуют образы')
+
     pair = {}
+
     for role in ('backend', 'frontend'):
         item = images.get(role)
-        if not isinstance(item, dict) or not isinstance(item.get('repository'), str) \
-                or not isinstance(item.get('digest'), str):
-            return None
-        pair[role] = item['repository'] + '@' + item['digest']
+
+        if not isinstance(item, dict):
+            raise Failure('release-lock: отсутствует образ ' + role)
+
+        repository = 'ghcr.io/' + REPOSITORY + '/' + role
+        digest = item.get('digest')
+
+        if item.get('repository') != repository:
+            raise Failure('release-lock: неверный репозиторий ' + role)
+
+        if (not isinstance(digest, str)
+                or not digest.startswith('sha256:')
+                or not HEX64_RE.fullmatch(digest[7:])):
+            raise Failure('release-lock: неверный digest ' + role)
+
+        pair[role] = repository + '@' + digest
+
     return pair
 
 
@@ -226,6 +242,8 @@ def fetch_signed(tag, destination, fetch=real_fetch):
     if lock.get('tag') != tag:
         raise Failure('lock относится к %r, а не к %r' % (lock.get('tag'), tag))
 
+    images = images_from_lock(lock)
+
     log('скачиваю архив репозитория (%s)' % tag)
     tarball = fetch(CODELOAD + tag)
 
@@ -236,7 +254,7 @@ def fetch_signed(tag, destination, fetch=real_fetch):
         verify_source_tree(archive, members, lock)
         log('распаковываю в %s' % destination)
         extract_archive(archive, members, destination)
-    return {'tag': tag, 'images': images_from_lock(lock)}
+    return {'tag': tag, 'images': images}
 
 
 def fetch_unsigned(ref, destination, fetch=real_fetch):

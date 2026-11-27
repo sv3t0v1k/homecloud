@@ -268,6 +268,40 @@ class FetchSignedTests(OpensslRequired):
 
             self.assertEqual(list(Path(directory).iterdir()), [])
 
+    def test_signed_invalid_images_rejected_before_archive_download(self):
+        for role in ('backend', 'frontend'):
+            for key, value in (
+                ('repository', 'ghcr.io/foreign/homecloud/' + role),
+                ('digest', 'latest'),
+            ):
+                with self.subTest(role=role, key=key):
+                    lock, _ = make_lock()
+                    lock['images'][role][key] = value
+
+                    payload = json.dumps(lock).encode()
+                    routes = release_routes()
+
+                    routes[bootstrap.RELEASES + TAG + '/release-lock.json'] = payload
+                    routes[bootstrap.RELEASES + TAG + '/release-lock.json.sig'] = (
+                        openssl_sign(payload).encode()
+                    )
+
+                    fetch = mock.Mock(
+                        side_effect=canned_fetch(routes))
+
+                    with self.dest() as directory:
+                        with self.assertRaises(bootstrap.Failure):
+                            bootstrap.fetch_signed(
+                                TAG, directory, fetch=fetch)
+
+                        self.assertEqual(
+                            list(Path(directory).iterdir()), [])
+
+                    self.assertNotIn(
+                        mock.call(bootstrap.CODELOAD + TAG),
+                        fetch.call_args_list,
+                    )
+
     def test_lock_tag_mismatch_rejected(self):
         # Ассеты отдаются по запрошенному тегу, но lock внутри — от другого
         # релиза: подпись валидна, а привязка к тегу нарушена.
@@ -342,9 +376,38 @@ class MainTests(OpensslRequired):
 
 
 class ImagesFromLockTests(unittest.TestCase):
-    def test_incomplete_images_yield_none(self):
-        lock = {'images': {'backend': {'repository': 'r', 'digest': 'd'}}}
-        self.assertIsNone(bootstrap.images_from_lock(lock))
+    def test_incomplete_images_rejected(self):
+        lock, _ = make_lock()
+        del lock['images']['frontend']
+
+        with self.assertRaises(bootstrap.Failure):
+            bootstrap.images_from_lock(lock)
+
+    def test_invalid_image_identities_rejected(self):
+        mutations = (
+            ('repository', 'docker.io/example/backend'),
+            ('repository', 'ghcr.io/sv3t0v1k/homecloud/frontend'),
+            ('repository', 'ghcr.io/sv3t0v1k/homecloud/backend:latest'),
+            ('digest', 'latest'),
+            ('digest', 'sha256:' + 'a' * 63),
+            ('digest', 'sha256:' + 'a' * 65),
+            ('digest', 'sha256:' + 'G' * 64),
+            ('digest', 'sha256:' + 'A' * 64),
+            ('digest', None),
+        )
+
+        for key, value in mutations:
+            with self.subTest(key=key, value=value):
+                lock, _ = make_lock()
+                lock['images']['backend'][key] = value
+
+                with self.assertRaises(bootstrap.Failure):
+                    bootstrap.images_from_lock(lock)
+
+        for images in (None, [], {}, 'invalid'):
+            with self.subTest(images=images):
+                with self.assertRaises(bootstrap.Failure):
+                    bootstrap.images_from_lock({'images': images})
 
 
 class ProductionTrustAnchorTests(unittest.TestCase):
