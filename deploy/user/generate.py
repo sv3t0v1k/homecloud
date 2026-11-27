@@ -22,6 +22,7 @@ import secrets
 import stat
 import subprocess
 import sys
+import tempfile
 
 FORMAT = 'homecloud-user-generate-v1'
 PROJECT = re.compile(r'[a-z][a-z0-9-]{1,30}\Z')
@@ -285,6 +286,16 @@ def build(answers):
     files[str(storage_dir.parent / '.homecloud-backend')] = {
         'content': 'homecloud-v1 backend {uuid}\n'.format(uuid=layout['storage_uuid']),
         'mode': 0o400, 'owner': be}
+
+    # StorageMountRegistry requires this exact logical identity in production.
+    files[str(storage_dir / '.homecloud-storage-identity')] = {
+        'content': json.dumps({
+            'version': 1,
+            'storageLocationId': 'f2f5c4b0-8d57-4c49-9f8c-0d095b344601',
+            'machineKey': 'legacy-storage',
+            'mountKey': 'legacy-storage',
+        }, separators=(',', ':')) + '\n',
+        'mode': 0o600, 'owner': be}
 
     dirs = {
         ETC: (0o700, (0, 0)),
@@ -597,6 +608,57 @@ def apply_plan(plan):
         raise Refusal('apply failed; manual review required: ' + str(error))
 
     return created
+
+
+def runtime_with_owner(raw, owner_id):
+    require(isinstance(owner_id, str)
+            and re.fullmatch(r'[1-9][0-9]{0,9}', owner_id)
+            and int(owner_id) <= 2147483647,
+            'invalid update owner ID')
+    require(raw.endswith('\n'), 'invalid runtime environment')
+    require(not any(line.partition('=')[0].strip() == 'UPDATE_ADMIN_USER_ID'
+                    for line in raw.splitlines()),
+            'update owner already configured')
+    return raw + 'UPDATE_ADMIN_USER_ID=' + owner_id + '\n'
+
+
+def bind_update_owner(owner_id):
+    """Initial installation only, before enabling update services."""
+    path = Path(ETC) / 'runtime.env'
+    parent = path.parent.lstat()
+    require(stat.S_ISDIR(parent.st_mode)
+            and parent.st_uid == 0 and parent.st_gid == 0
+            and stat.S_IMODE(parent.st_mode) == 0o700,
+            'unsafe runtime environment parent')
+
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'r', encoding='utf-8') as handle:
+        info = os.fstat(handle.fileno())
+        require(stat.S_ISREG(info.st_mode)
+                and info.st_uid == 0 and info.st_gid == 0
+                and stat.S_IMODE(info.st_mode) == 0o600
+                and info.st_nlink == 1 and info.st_size <= 65536,
+                'unsafe runtime environment')
+        content = runtime_with_owner(handle.read(), owner_id)
+
+    descriptor, temporary = tempfile.mkstemp(
+        prefix='.runtime-owner-', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            os.fchown(handle.fileno(), 0, 0)
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def create_tls(tls):

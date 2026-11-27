@@ -61,6 +61,7 @@ services:
       # Канал обновлений выбирается при установке; без ключа подписи релизов
       # backend отвечает check_unavailable и не показывает кандидатов.
       UPDATE_CHANNEL: ${UPDATE_CHANNEL:-release}
+      UPDATE_ADMIN_USER_ID: ${UPDATE_ADMIN_USER_ID:-}
       UPDATE_INSTALL_BRIDGE_ENABLED: "false"
       UPDATE_RELEASE_PUBLIC_KEY: ${UPDATE_RELEASE_PUBLIC_KEY:-}
     # /storage сохраняется: migration520 и существующие DB bindings зависят от него.

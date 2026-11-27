@@ -59,15 +59,48 @@ clean_path=/usr/sbin:/usr/bin:/sbin:/bin
 py() { env -i HOME=/root PATH="$clean_path" /usr/bin/python3 -I -B "$@"; }
 
 say() { printf '%s\n' "$*"; }
+
+HAVE_TTY=0
+if ( : </dev/tty ) 2>/dev/null; then
+  HAVE_TTY=1
+fi
+if [ "$START" = 1 ] && [ "$HAVE_TTY" = 0 ]; then
+  fail 'для создания первого администратора нужен интерактивный терминал'
+fi
+
 ask() {
   # ask <prompt> <default>; печатает default в квадратных скобках.
   prompt=$1; default=$2
-  if [ "$MODE" = defaults ] || [ ! -t 0 ]; then
+  if [ "$MODE" = defaults ] || [ "$HAVE_TTY" = 0 ]; then
     printf '%s\n' "$default"; return 0
   fi
   printf '%s [%s]: ' "$prompt" "$default" >&2
-  IFS= read -r reply || reply=''
+  IFS= read -r reply </dev/tty || fail 'ввод прерван'
   [ -n "$reply" ] && printf '%s\n' "$reply" || printf '%s\n' "$default"
+}
+
+ask_port() {
+  while :; do
+    value=$(ask "$1" "$2") || return 1
+    if normalized=$(py -c '
+import re, sys
+value = sys.argv[1]
+if not re.fullmatch(r"[0-9]{1,5}", value):
+    sys.exit(1)
+number = int(value)
+if not 1 <= number <= 65535:
+    sys.exit(1)
+print(number)
+' "$value"); then
+      if [ "$normalized" != "$3" ]; then
+        printf '%s\n' "$normalized"
+        return 0
+      fi
+    fi
+    printf '%s\n' 'Нужен свободный номер порта от 1 до 65535; HTTP и HTTPS должны различаться.' >&2
+    [ "$MODE" != defaults ] && [ "$HAVE_TTY" = 1 ] ||
+      fail 'некорректный порт'
+  done
 }
 
 # --- Фаза 1: probe -----------------------------------------------------------
@@ -151,8 +184,8 @@ print(channel)
 else
   say '==> Параметры установки (Enter — принять предложенное)'
   public_host=$(ask 'Адрес сервера (домен или IP)' "$primary_ip")
-  https_port=$(ask 'HTTPS порт' "$default_https")
-  http_port=$(ask 'HTTP порт' "$default_http")
+  https_port=$(ask_port 'HTTPS порт' "$default_https" '')
+  http_port=$(ask_port 'HTTP порт' "$default_http" "$https_port")
   db_dir=$(ask 'Каталог базы данных' "$INSTALL_ROOT/postgres")
   storage_dir=$(ask 'Каталог файлов' "$INSTALL_ROOT/data/storage")
   storage_mount=$(ask 'Mountpoint раздела с файлами' "$default_storage_mount")
@@ -165,7 +198,9 @@ else
       *) fail 'канал обновлений: release или test';;
     esac
   fi
-  if [ "$(ask 'База данных на отдельном диске? (y/N)' 'N')" = y ]; then
+  separate_db=$(ask 'База данных на отдельном диске? (y/N)' 'N') ||
+    fail 'ввод прерван'
+  if [ "$separate_db" = y ]; then
     db_mount=$(ask 'Mountpoint раздела базы' '')
     db_uuid=$(ask 'UUID раздела базы' '')
     db_serial=$(mount_serial "$db_mount")
@@ -244,6 +279,29 @@ json.dump(answers, sys.stdout, ensure_ascii=False, indent=2)
 PY
 fi
 
+if [ "$START" = 1 ]; then
+  say '==> Создание первого администратора'
+  while :; do
+    printf 'Email администратора: ' >&2
+    IFS= read -r admin_email </dev/tty || fail 'ввод прерван'
+    printf 'Имя администратора [Administrator]: ' >&2
+    IFS= read -r admin_name </dev/tty || fail 'ввод прерван'
+    admin_name=${admin_name:-Administrator}
+    if py -c '
+import re, sys
+email, name = sys.argv[1:]
+if not (len(email) <= 255
+        and re.fullmatch(r"[^\s@]+@[^\s@]+", email)
+        and 1 <= len(name.strip()) <= 100):
+    sys.exit(1)
+' "$admin_email" "$admin_name"; then
+      break
+    fi
+    say 'Некорректный email или имя администратора.'
+  done
+  say 'Пароль будет запрошен защищённым bootstrap CLI после подготовки базы.'
+fi
+
 # --- Фаза 3: генерация -------------------------------------------------------
 say '==> Генерирую конфигурацию (секреты, /etc/homecloud, worker обновлений, TLS)'
 py "$installer_dir/generate.py" --answers "$work/answers.json" --mode apply || fail 'генерация отклонена'
@@ -284,8 +342,50 @@ else
     --env-file /etc/homecloud/runtime.env) || fail 'preflight отказал'
 fi
 
+create_owner() {
+  # The existing CLI owns password input, confirmation and hashing.
+  # Do not capture or pass passwords through shell variables or files.
+  compose_release run --rm --no-deps backend \
+    node dist/users/admin-bootstrap-cli.js bootstrap create \
+    --email "$admin_email" --name "$admin_name" \
+    </dev/tty >/dev/tty 2>/dev/tty
+}
+
+bind_owner() {
+  py -c '
+import runpy, sys
+try:
+    module = runpy.run_path(sys.argv[1])
+    module["bind_update_owner"](sys.argv[2])
+except Exception:
+    sys.exit("STOP: update owner binding refused")
+' "$installer_dir/generate.py" "$1"
+}
+
+provision_owner() {
+  say '==> Подготавливаю PostgreSQL и схему backend'
+  compose_release up -d --no-build --wait --wait-timeout 180 backend ||
+    fail 'подготовка backend отклонена'
+
+  compose_release stop backend || fail 'не удалось остановить backend'
+
+  create_owner || fail 'создание первого администратора отклонено'
+
+  owner_id=$(compose_release exec -T db sh -ec \
+    'exec psql -X -v ON_ERROR_STOP=1 -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT id FROM public.users
+WHERE "isActive" = TRUE AND role = 'ADMIN'
+  AND (SELECT count(*) FROM public.users) = 1;
+SQL
+  ) || fail 'не удалось подтвердить первого администратора'
+
+  bind_owner "$owner_id" || fail 'привязка владельца обновлений отклонена'
+  say '    первый администратор создан, доступ к обновлениям настроен'
+}
+
 # --- Фаза 6: старт ------------------------------------------------------------
 if [ "$START" = 1 ]; then
+  provision_owner
   say '==> Запускаю'
   compose_release up -d --no-build --wait --wait-timeout 180 || fail 'запуск отклонён'
 fi
@@ -324,10 +424,10 @@ if [ -z "$ANSWERS_OVERRIDE" ]; then
   say "  Канал обновлений: $CHANNEL"
 fi
 if [ "$START" = 1 ]; then
-  say '  Первый вход:    зарегистрируйте первого пользователя — это будет владелец.'
-  if [ "$CHANNEL" = release ]; then
-    say '  Кнопка обновлений: после регистрации владельца добавьте его числовой id'
-    say '  в /etc/homecloud/runtime.env (UPDATE_ADMIN_USER_ID=1) и перезапустите:'
-    say '  docker compose --env-file /etc/homecloud/runtime.env -f docker-compose.yml -f docker-compose.production.yml -f docker-compose.production-updates.yml up -d'
+  say "  Первый вход:    $admin_email"
+  say '  Используйте пароль, заданный при создании администратора.'
+  say '  Доступ к разделу обновлений настроен для владельца.'
+  if [ "$CHANNEL" = test ]; then
+    say '  TEST: host-side самообновление требует отдельной квалификации.'
   fi
 fi
