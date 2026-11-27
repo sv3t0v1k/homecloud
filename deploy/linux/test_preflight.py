@@ -42,17 +42,32 @@ class MaintenanceDirectoryTests(unittest.TestCase):
                     self.check(**changes)
 
 
-class ConfigTests(unittest.TestCase):
-    def setUp(self):
-        # Config fixtures do not provision real root-owned host paths.
-        guard = patch.object(p, 'check_maintenance_directory')
-        guard.start()
-        self.addCleanup(guard.stop)
+class UpdateDirectoryTests(unittest.TestCase):
+    def check(self, *, uid=0, gid=65533, mode=0o40750,
+              parent_uid=0, parent_mode=0o40755, attributes=None):
+        from unittest.mock import Mock
+        parent = Mock()
+        parent.lstat.return_value = SimpleNamespace(st_mode=parent_mode, st_uid=parent_uid)
+        directory = Mock(parents=[parent])
+        directory.stat.return_value = SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=gid)
+        with patch.object(p, 'ordinary_directory', return_value=directory):
+            with patch.object(p.os, 'listxattr', return_value=attributes or [], create=True):
+                p.check_update_directory('/fixture/status', 0o750)
 
-    @classmethod
-    def setUpClass(cls):
-        # Отдельный synthetic env: реальный checkout .env не читается и не выводится.
-        values = dict(COMPOSE_PROJECT_NAME='homecloud-d3-fixture', DB_PASSWORD='a'*64,
+    def test_safe_root_owned_state(self):
+        self.check()
+
+    def test_untrusted_parent_or_state_refused(self):
+        for changes in ({'uid': 1001}, {'gid': 1001}, {'mode': 0o40700},
+                        {'parent_uid': 1001}, {'parent_mode': 0o40777},
+                        {'attributes': ['system.posix_acl_access']}):
+            with self.subTest(changes=changes):
+                with self.assertRaises(p.Refusal):
+                    self.check(**changes)
+
+
+class ConfigTests(unittest.TestCase):
+    ENV_VALUES = dict(COMPOSE_PROJECT_NAME='homecloud-d3-fixture', DB_PASSWORD='a'*64,
                       JWT_SECRET='b'*64, JWT_REFRESH_SECRET='c'*64, REDIS_PASSWORD='d'*64,
                       PUBLIC_HOST='cloud.example.invalid', SSD_DB_DIR='/srv/homecloud-ssd/postgres',
                       HDD_STORAGE_DIR='/srv/homecloud-hdd/storage', TLS_CERT_DIR='/tmp/d3-tls',
@@ -61,20 +76,149 @@ class ConfigTests(unittest.TestCase):
                       PUBLIC_HTTP_PORT='18080', PUBLIC_HTTPS_PORT='18443', PUBLIC_ORIGIN='https://cloud.example.invalid:18443',
                       INGRESS_SUBNET='172.29.0.0/24', INGRESS_PROXY_IP='172.29.0.10',
                       BACKEND_PROXY_SUBNET='172.30.0.0/24', FRONTEND_PROXY_IP='172.30.0.10')
+
+    def setUp(self):
+        # Config fixtures do not provision real root-owned host paths.
+        for name in ('check_maintenance_directory', 'check_update_directory'):
+            guard = patch.object(p, name)
+            guard.start()
+            self.addCleanup(guard.stop)
+
+    @staticmethod
+    def compose_merge(values, *extra_files):
+        extra = [arg for path in extra_files for arg in ('-f', str(path))]
         with tempfile.NamedTemporaryFile(mode='w') as env:
             env.write(''.join(k+'='+v+'\n' for k,v in values.items()))
             env.flush()
             r = subprocess.run(['docker','compose','--env-file',env.name,'-f',str(ROOT/'docker-compose.yml'),
-                                '-f',str(PROD),'config','--format','json'],
+                                '-f',str(PROD),*extra,'config','--format','json'],
                                capture_output=True,text=True,
                                env={'PATH':os.environ['PATH'],'HOME':os.environ['HOME'],'COMPOSE_DISABLE_ENV_FILE':'1'})
             if r.returncode:
                 raise RuntimeError('Synthetic Compose config failure (вывод скрыт)')
-            cls.config=json.loads(r.stdout)
+            return json.loads(r.stdout)
+
+    @classmethod
+    def setUpClass(cls):
+        # Отдельный synthetic env: реальный checkout .env не читается и не выводится.
+        cls.config = cls.compose_merge(cls.ENV_VALUES)
         cls.inventory=json.loads(Path(__file__).with_name('host-disks.example.json').read_text())
+
+    def test_minimal_user_deployment_compose_merge(self):
+        checkout = Path(__file__).resolve().parents[2]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+
+            paths = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-compose.production-updates.yml', 'deploy/user/install.sh', 'deploy/user/probe.py', 'deploy/user/generate.py', 'deploy/user/update-worker.py', 'deploy/user/bootstrap.py', 'deploy/user/bootstrap.sh', 'deploy/user/release-public.b64', 'deploy/user/systemd/homecloud-user-update.path', 'deploy/user/systemd/homecloud-user-update.service', 'deploy/user/systemd/homecloud-user-update-archive.service', 'deploy/user/systemd/homecloud-user-update-archive.timer', 'deploy/linux/preflight.py', 'deploy/linux/startup-gate.sh', 'deploy/ingress/19-validate-public-host.sh', 'deploy/ingress/default.conf.template', 'deploy/ingress/upgrade.conf')
+
+            # Disposable config fixture, not a Git checkout.
+            for name in paths:
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((checkout / name).read_bytes())
+
+            self.assertFalse((root / 'backend').exists())
+            self.assertFalse((root / 'frontend').exists())
+            self.assertFalse((root / '.git').exists())
+
+            values = dict(
+                self.ENV_VALUES,
+                UPDATE_CHANNEL='release',
+                UPDATE_RELEASE_PUBLIC_KEY=(
+                    'MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+                ),
+            )
+
+            with patch.dict(globals(), {
+                'ROOT': root,
+                'PROD': root / 'docker-compose.production.yml',
+            }):
+                config = self.compose_merge(
+                    values,
+                    root / 'docker-compose.production-updates.yml',
+                )
+
+            with patch.object(
+                p, '__file__', str(root / 'deploy/linux/preflight.py')
+            ):
+                p.check_config(config, self.inventory)
+
+            self.assertEqual(
+                config['services']['backend']['image'],
+                values['RELEASE_BACKEND_IMAGE'],
+            )
+            self.assertEqual(
+                config['services']['frontend']['image'],
+                values['RELEASE_FRONTEND_IMAGE'],
+            )
 
     def test_actual_compose_merge(self):
         p.check_config(self.config,self.inventory)
+
+    def test_fresh_user_test_install_compose_merge(self):
+        values = dict(
+            self.ENV_VALUES,
+            UPDATE_CHANNEL='test',
+            UPDATE_ADMIN_USER_ID='17',
+            UPDATE_INSTALL_BRIDGE_ENABLED='false',
+        )
+
+        config = self.compose_merge(values)
+        p.check_config(config, self.inventory)
+
+        backend = config['services']['backend']
+
+        self.assertEqual(
+            backend['environment']['UPDATE_CHANNEL'], 'test')
+        self.assertEqual(
+            backend['environment']['UPDATE_ADMIN_USER_ID'], '17')
+        self.assertEqual(
+            backend['environment']['UPDATE_INSTALL_BRIDGE_ENABLED'],
+            'false')
+
+        self.assertNotIn(
+            'release_egress', backend.get('networks', {}))
+        self.assertNotIn(
+            'release_egress', config['networks'])
+
+        self.assertTrue(
+            config['networks']['app_network']['internal'])
+        self.assertTrue(
+            config['networks']['backend_proxy']['internal'])
+
+    def test_release_bridge_compose_merge_accepted(self):
+        values = dict(self.ENV_VALUES, UPDATE_CHANNEL='release',
+                      UPDATE_RELEASE_PUBLIC_KEY='MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+        config = self.compose_merge(values, ROOT/'docker-compose.production-updates.yml')
+        p.check_config(config, self.inventory)
+
+        backend = config['services']['backend']
+        networks = config['networks']
+
+        self.assertEqual(
+            set(backend['networks']),
+            {'app_network', 'backend_proxy', 'release_egress'},
+        )
+
+        self.assertTrue(networks['app_network']['internal'])
+        self.assertTrue(networks['backend_proxy']['internal'])
+
+        self.assertFalse(
+            networks['release_egress'].get('internal', False))
+        self.assertFalse(
+            networks['release_egress'].get('external', False))
+        self.assertEqual(
+            networks['release_egress']['driver'], 'bridge')
+
+        for role in ('db', 'frontend', 'ingress'):
+            self.assertNotIn(
+                'release_egress',
+                config['services'][role].get('networks', {}),
+            )
+
+        self.assertFalse(backend.get('ports'))
+        self.assertFalse(config['services']['db'].get('ports'))
 
     def refusal(self, edit):
         c=copy.deepcopy(self.config)
@@ -147,6 +291,50 @@ class ConfigTests(unittest.TestCase):
     def test_project_gate_cannot_use_legacy_config_source(self):
         with patch.object(p,'check_inventory_layout',return_value='/home/hs/homecloud-test/.runtime'):
             with self.assertRaises(p.Refusal):p.check_config(self.config,self.inventory)
+
+    @staticmethod
+    def apply_release_bridge(c, **env_over):
+        env = c['services']['backend']['environment']
+        env.update(UPDATE_CHANNEL='release', UPDATE_INSTALL_BRIDGE_ENABLED='true',
+                   UPDATE_REQUEST_INBOX='/run/homecloud-update/inbox',
+                   UPDATE_STATUS_FILE='/run/homecloud-update/status/current.json',
+                   UPDATE_INSTALLED_LOCK_PATH='/run/homecloud-update/status/installed-lock.json',
+                   UPDATE_RELEASE_PUBLIC_KEY='MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+        env.update(env_over)
+        volumes = c['services']['backend']['volumes']
+        volumes.append(dict(type='bind', source='/var/lib/homecloud-update/inbox',
+                            target='/run/homecloud-update/inbox',
+                            bind={'create_host_path': False}))
+        volumes.append(dict(type='bind', source='/var/lib/homecloud-update/status',
+                            target='/run/homecloud-update/status', read_only=True,
+                            bind={'create_host_path': False}))
+        return c
+
+    def test_release_update_bridge_accepted(self):
+        p.check_config(self.apply_release_bridge(copy.deepcopy(self.config)), self.inventory)
+
+    def test_release_bridge_requires_public_key(self):
+        self.refusal(lambda c: self.apply_release_bridge(c, UPDATE_RELEASE_PUBLIC_KEY=''))
+
+    def test_release_bridge_requires_installed_lock_path(self):
+        self.refusal(lambda c: self.apply_release_bridge(
+            c, UPDATE_INSTALLED_LOCK_PATH='/run/homecloud-update/status/installed.json'))
+
+    def test_release_bridge_missing_status_mount(self):
+        def edit(c):
+            self.apply_release_bridge(c)
+            c['services']['backend']['volumes'] = [
+                m for m in c['services']['backend']['volumes']
+                if m['target'] != '/run/homecloud-update/status']
+        self.refusal(edit)
+
+    def test_bridge_requires_known_channel(self):
+        self.refusal(lambda c: self.apply_release_bridge(c, UPDATE_CHANNEL='nightly'))
+
+    def test_system_root_without_project_root_is_dedicated_layout(self):
+        inventory = {'ssd': {'identity_mode': 'system-root-lvm'},
+                     'hdd': {'mount': '/srv/data', 'data': '/srv/data/storage'}}
+        self.assertEqual(p.check_inventory_layout(inventory), '/etc/homecloud')
 
 
 class DiskTests(unittest.TestCase):
@@ -356,6 +544,25 @@ class DataLayoutTests(unittest.TestCase):
 
 
 class UnitTests(unittest.TestCase):
+    def test_user_installer_docker_authority(self):
+        with patch.object(p, 'command',
+                          side_effect=AssertionError('Unexpected context lookup')):
+            self.assertEqual(
+                p.docker_command_prefix({}, user_installer=True),
+                ['docker', '--config', '/etc/homecloud/docker',
+                 '--host', 'unix:///var/run/docker.sock']
+            )
+
+    def test_user_installer_cannot_use_project_layout(self):
+        for inventory in (
+            {'project_root': '/home/hs/homecloud-test'},
+            {'config_dir': '/etc/other'},
+        ):
+            with self.subTest(inventory=inventory):
+                with self.assertRaises(p.Refusal):
+                    p.docker_command_prefix(
+                        inventory, user_installer=True)
+
     def test_project_uses_wrapper_daemon_without_reading_default_context(self):
         with patch.object(p,'command',side_effect=AssertionError('Default context must not be read')):
             self.assertEqual(p.docker_command_prefix({'project_root':'/home/hs/homecloud-test'}),

@@ -24,7 +24,8 @@ const phases: Record<string, string> = {
   STOP_SERVICES: 'Остановка сервисов', BACKUP: 'Резервное копирование',
   WRITE_REFS: 'Переключение образов', START_SERVICES: 'Запуск сервисов',
   SMOKE: 'Проверка HTTPS и сервисов', COMMIT_STATE: 'Фиксация результата',
-  COMPLETE: 'Проверка результата',
+  COMPLETE: 'Проверка результата', ROLLBACK: 'Откат к предыдущей версии',
+  STALE_RUN: 'Проверка прерванной установки', BOOTSTRAP: 'Первичная регистрация релиза',
 }
 
 function statusText(job: InstallStatus): string {
@@ -49,10 +50,12 @@ function statusText(job: InstallStatus): string {
 // without interrupting the host status monitor.
 function InstallConfirmation({
   version,
+  channel,
   manifestSha256,
   onConfirm,
 }: {
   version: string
+  channel: 'test' | 'release'
   manifestSha256: string
   onConfirm: (manifestSha256: string) => Promise<void>
 }) {
@@ -73,7 +76,7 @@ function InstallConfirmation({
   return (
     <div role="group" aria-label="Подтверждение установки">
       <p>
-        Установить TEST-сборку {version}?
+        {channel === 'test' ? `Установить TEST-сборку ${version}?` : `Установить обновление ${version}?`}
         {' '}Во время установки сервис временно недоступен.
       </p>
       <button
@@ -178,7 +181,7 @@ export function UpdatesSection({
     }
   }, [job])
 
-  const available = result?.channel === 'test' && result.status === 'available' ? result.available : null
+  const available = result?.status === 'available' ? result.available : null
   const canSubmit = available && /^[a-f0-9]{64}$/.test(available.manifestSha256) && job?.status === 'NO_JOB' && !statusError && !submitting
   const submit = async (manifestSha256: string) => {
     if (
@@ -220,10 +223,11 @@ export function UpdatesSection({
     <p role="status">{job ? statusText(job) : 'Получаем статус установки…'}</p>
     {statusError ? <p role="alert">Связь с сервером статуса прервана. Проверка повторится автоматически; не запускайте установку повторно.</p> : null}
     {submitError ? <p role="alert">{submitError}</p> : null}
-    {canSubmit && available ? (
+    {canSubmit && available && result ? (
       <InstallConfirmation
         key={available.manifestSha256}
         version={available.version}
+        channel={result.channel}
         manifestSha256={available.manifestSha256}
         onConfirm={submit}
       />

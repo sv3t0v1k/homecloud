@@ -7,7 +7,7 @@ import request from "supertest";
 import { AuthService } from "../auth/auth.service";
 import { LocalStrategy } from "../auth/local.strategy";
 import { RefreshTokenEntity } from "../entities/refresh-token.entity";
-import { UserEntity } from "../entities/user.entity";
+import { UserEntity, UserRole } from "../entities/user.entity";
 import { UpdatesModule } from "./updates.module";
 import { UpdatesService } from "./updates.service";
 
@@ -15,6 +15,8 @@ describe("UpdatesModule DI and HTTP access", () => {
   let app: INestApplication;
   let jwt: JwtService;
   let adminActive = true;
+  let adminRole = UserRole.ADMIN;
+  let adminVersion = "1";
   const check = jest.fn().mockResolvedValue({ status: "current" });
 
   beforeAll(async () => {
@@ -31,7 +33,13 @@ describe("UpdatesModule DI and HTTP access", () => {
       .overrideProvider(getRepositoryToken(UserEntity)).useValue({
         findOne: jest.fn(async ({ where }: { where: { id: number; isActive: boolean } }) =>
           where.id === 7 && !adminActive ? null :
-            { id: where.id, email: "user@example.test", isActive: true, sessionVersion: "1" }),
+            {
+              id: where.id,
+              email: "user@example.test",
+              isActive: true,
+              role: where.id === 7 ? adminRole : UserRole.ADMIN,
+              sessionVersion: where.id === 7 ? adminVersion : "1",
+            }),
       })
       .overrideProvider(getRepositoryToken(RefreshTokenEntity)).useValue({})
       .overrideProvider(AuthService).useValue({})
@@ -45,12 +53,17 @@ describe("UpdatesModule DI and HTTP access", () => {
   });
 
   afterAll(async () => app?.close());
-  beforeEach(() => { check.mockClear(); adminActive = true; });
+  beforeEach(() => {
+    check.mockClear();
+    adminActive = true;
+    adminRole = UserRole.ADMIN;
+    adminVersion = "1";
+  });
 
-  const token = (userId: number) => `Bearer ${jwt.sign({
+  const token = (userId: number, version = "1") => `Bearer ${jwt.sign({
       sub: userId,
       email: "user@example.test",
-      sv: "1",
+      sv: version,
       tokenUse: "access",
     })}`;
 
@@ -70,6 +83,33 @@ describe("UpdatesModule DI and HTTP access", () => {
   it("denies update discovery to an authenticated non-admin", async () => {
     await request(app.getHttpServer()).get("/updates").set("Authorization", token(8))
       .expect(403);
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("rejects all update endpoints after owner demotion and a fresh JWT", async () => {
+    await request(app.getHttpServer()).get("/updates/access")
+      .set("Authorization", token(7)).expect(200, { admin: true });
+
+    adminRole = UserRole.USER;
+    adminVersion = "2";
+
+    // The old session is revoked.
+    await request(app.getHttpServer()).get("/updates")
+      .set("Authorization", token(7)).expect(401);
+
+    // A fresh, valid ordinary-user session must not restore update rights.
+    const authorization = token(7, "2");
+
+    await request(app.getHttpServer()).get("/updates/access")
+      .set("Authorization", authorization).expect(200, { admin: false });
+    await request(app.getHttpServer()).get("/updates")
+      .set("Authorization", authorization).expect(403);
+    await request(app.getHttpServer()).get("/updates/installations/current")
+      .set("Authorization", authorization).expect(403);
+    await request(app.getHttpServer()).post("/updates/installations")
+      .set("Authorization", authorization)
+      .send({ manifestSha256: "a".repeat(64) }).expect(403);
+
     expect(check).not.toHaveBeenCalled();
   });
 

@@ -11,6 +11,17 @@ function evaluate(
   resolve: (name: string) => unknown,
   environment: Record<string, string | undefined> = {},
   platform = "linux",
+  runtime: {
+    process: {
+      platform: string;
+      env: Record<string, string | undefined>;
+      exitCode?: number;
+    };
+    console: Pick<Console, "error">;
+  } = {
+    process: { platform, env: environment },
+    console,
+  },
 ) {
   const source = fs.readFileSync(path.join(__dirname, name), "utf8");
   const compiled = ts.transpileModule(source, {
@@ -26,24 +37,51 @@ function evaluate(
   vm.runInNewContext(compiled, {
     exports,
     require: resolve,
-    process: { platform, env: environment },
+    process: runtime.process,
     __dirname,
-    console,
+    console: runtime.console,
   });
   return exports;
 }
 
 describe("writer startup admission contracts", () => {
-  it("main refuses an unfenced Linux entry before importing application modules", () => {
+  it("main refuses an unfenced Linux entry before importing application modules", async () => {
     const imports: string[] = [];
-    expect(() => evaluate("main.ts", (name) => {
+    const processState = {
+      platform: "linux",
+      env: {},
+      exitCode: 0,
+    };
+    const error = jest.fn();
+    const bootstrap = jest.fn(async () => undefined);
+    const failure = new Error("fence missing: private-secret");
+    failure.stack = "private-stack";
+    const fence = jest.fn(() => { throw failure; });
+
+    evaluate("main.ts", (name) => {
       imports.push(name);
       if (name === "./uploads/inherited-root-fence") {
-        return { assertInheritedRootFence: () => { throw new Error("fence missing"); } };
+        return { assertInheritedRootFence: fence };
       }
+      if (name === "./api-bootstrap") return { bootstrap };
       throw new Error(`unexpected application import: ${name}`);
-    })).toThrow("fence missing");
+    }, {}, "linux", {
+      process: processState,
+      console: { error },
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(fence).toHaveBeenCalledTimes(1);
     expect(imports).toEqual(["./uploads/inherited-root-fence"]);
+    expect(bootstrap).not.toHaveBeenCalled();
+    expect(processState.exitCode).toBe(1);
+    expect(error.mock.calls).toEqual([
+      ["STOP: backend bootstrap failed"],
+    ]);
+    expect(JSON.stringify(error.mock.calls)).not.toMatch(
+      /fence missing|private-secret|private-stack/,
+    );
   });
 
   it("main invokes bootstrap only after its fence has passed", async () => {

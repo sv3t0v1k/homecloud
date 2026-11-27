@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry archival of completed HomeCloud release updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=homecloud-user-update-archive.service
+
+[Install]
+WantedBy=timers.target

@@ -143,9 +143,44 @@ describe("UpdateInstallService — admission-only", () => {
     expect(remove.mock.calls[0][0]).not.toContain("/request.json");
   });
 
-  it("rejects an unsupported RELEASE install even when bridge is configured", async () => {
+  it("publishes a verified RELEASE candidate for the host worker", async () => {
     const cfg = { get: (key: string) => key === "UPDATE_CHANNEL" ? "release" : configured(key) } as ConfigService;
-    const service = new UpdateInstallService(cfg, {} as UpdatesService);
-    await expect(service.submit(hash)).rejects.toThrow(ServiceUnavailableException);
+    const updates = { check: jest.fn().mockResolvedValue({
+      channel: "release", status: "available", available: { manifestSha256: hash },
+    }) } as unknown as UpdatesService;
+    const service = new UpdateInstallService(cfg, updates);
+    jest.spyOn(service, "status").mockResolvedValue(noJob);
+    jest.spyOn(fs, "lstat").mockResolvedValue({
+      isDirectory: () => true, isSymbolicLink: () => false, uid: 0, gid: 65533, mode: 0o770,
+    } as never);
+    const writeFile = jest.fn();
+    jest.spyOn(fs, "open").mockResolvedValue({ writeFile, sync: jest.fn(), close: jest.fn() } as never);
+    const publish = jest.spyOn(fs, "link").mockResolvedValue(undefined);
+    jest.spyOn(fs, "unlink").mockResolvedValue(undefined);
+    await expect(service.submit(hash)).resolves.toMatchObject({ status: "QUEUED", manifestSha256: hash });
+    expect(writeFile).toHaveBeenCalledWith(JSON.stringify({
+      format: "homecloud-update-request-v1", channel: "release", manifestSha256: hash,
+    }) + "\n");
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a RELEASE request that does not match the verified candidate", async () => {
+    const cfg = { get: (key: string) => key === "UPDATE_CHANNEL" ? "release" : configured(key) } as ConfigService;
+    const updates = { check: jest.fn().mockResolvedValue({
+      channel: "release", status: "available", available: { manifestSha256: "b".repeat(64) },
+    }) } as unknown as UpdatesService;
+    const service = new UpdateInstallService(cfg, updates);
+    jest.spyOn(service, "status").mockResolvedValue(noJob);
+    await expect(service.submit(hash)).rejects.toThrow(ConflictException);
+  });
+
+  it("rejects a RELEASE request when no candidate is available", async () => {
+    const cfg = { get: (key: string) => key === "UPDATE_CHANNEL" ? "release" : configured(key) } as ConfigService;
+    const updates = { check: jest.fn().mockResolvedValue({
+      channel: "release", status: "current", available: null,
+    }) } as unknown as UpdatesService;
+    const service = new UpdateInstallService(cfg, updates);
+    jest.spyOn(service, "status").mockResolvedValue(noJob);
+    await expect(service.submit(hash)).rejects.toThrow(ConflictException);
   });
 });

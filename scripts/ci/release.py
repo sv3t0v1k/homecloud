@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """D5.1 candidate provenance; separate from qualified homecloud-release-v1/D1."""
 import argparse
+import base64
 from datetime import date, datetime
 import hashlib
 import importlib.util
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import provenance
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,7 +20,30 @@ SHA = re.compile(r'^[a-f0-9]{40}$')
 TAG = re.compile(r'^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-beta\.([1-9][0-9]*))?$')
 DIGEST = re.compile(r'^sha256:[a-f0-9]{64}$')
 REPO = re.compile(r'^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_.-]*$')
-SOURCE_PATHS = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-compose.project-test.yml',
+# Complete user installation and runtime deployment contract.
+# Every file must be covered by signed release-lock source_files.
+USER_DEPLOYMENT_PATHS = (
+    'docker-compose.yml',
+    'docker-compose.production.yml',
+    'docker-compose.production-updates.yml',
+    'deploy/user/install.sh',
+    'deploy/user/probe.py',
+    'deploy/user/generate.py',
+    'deploy/user/update-worker.py',
+    'deploy/user/bootstrap.py',
+    'deploy/user/bootstrap.sh',
+    'deploy/user/release-public.b64',
+    'deploy/user/systemd/homecloud-user-update.path',
+    'deploy/user/systemd/homecloud-user-update.service',
+    'deploy/user/systemd/homecloud-user-update-archive.service',
+    'deploy/user/systemd/homecloud-user-update-archive.timer',
+    'deploy/linux/preflight.py',
+    'deploy/linux/startup-gate.sh',
+    'deploy/ingress/19-validate-public-host.sh',
+    'deploy/ingress/default.conf.template',
+    'deploy/ingress/upgrade.conf',
+)
+SOURCE_PATHS = ('docker-compose.project-test.yml',
                 'backend/Dockerfile', 'frontend/Dockerfile', 'backend/package-lock.json',
                 'frontend/package-lock.json', 'scripts/ci/images.lock.json',
                 '.github/workflows/ci.yml', '.github/workflows/release.yml', 'scripts/ci/release.py',
@@ -31,7 +56,8 @@ SOURCE_PATHS = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-c
                 'scripts/ci/production-images.lock.json', 'scripts/ci/secret-findings.py',
                 'scripts/ci/skopeo-closure.py', 'scripts/ci/ci-gate.py',
                 'scripts/ci/test-routing.py', 'scripts/ci/audit-domains.py',
-                'docs/image-security-policy.md')
+                'scripts/ci/test-user-installer.sh',
+                'docs/image-security-policy.md') + USER_DEPLOYMENT_PATHS
 RUNTIME = {'backend', 'frontend', 'postgres', 'ingress'}
 BUILD = {'backend-deps', 'backend-builder', 'frontend-deps', 'frontend-builder', 'buildkit'}
 ENVIRONMENTS = {'backend', 'pr-fast-backend', 'frontend', 'configuration', 'image-build-backend', 'image-build-frontend',
@@ -149,6 +175,73 @@ def verify_qualified(args):
     print('PASS: exact qualified OCI candidates; registry writes NOT_RUN')
 
 
+def openssl_binary():
+    """OpenSSL 3.x с pkeyutl -rawin; LibreSSL не поддерживается."""
+    candidate = os.environ.get('HOMECLOUD_OPENSSL', 'openssl')
+    try:
+        version = subprocess.check_output([candidate, 'version'], text=True,
+                                          stderr=subprocess.PIPE).strip()
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError('OpenSSL недоступен: ' + candidate)
+    require(version.startswith('OpenSSL 3.'), 'требуется OpenSSL 3.x, получен: ' + version)
+    return candidate
+
+
+def read_key_b64(path, label):
+    text = Path(path).read_text().strip()
+    require(bool(re.fullmatch(r'[A-Za-z0-9+/=]+', text)), label + ': неверный формат base64')
+    return base64.b64decode(text, validate=True)
+
+
+def sign_lock(args):
+    """Подписывает release-lock приватным ключом из окружения и сразу
+    проверяет подпись репозиторным публичным ключом: несовпадение пары
+    или отсутствие секрета блокирует публикацию (fail-closed)."""
+    lock = Path(args.lock).resolve()
+    require(lock.is_file(), 'release-lock не найден: ' + str(lock))
+    public_der = read_key_b64(args.public_key, 'публичный ключ релизов')
+    private_b64 = os.environ.get('RELEASE_SIGNING_PRIVATE_KEY_B64', '').strip()
+    require(bool(private_b64),
+            'RELEASE_SIGNING_PRIVATE_KEY_B64 не задан: без подписи релиз не публикуется')
+    require(bool(re.fullmatch(r'[A-Za-z0-9+/=]+', private_b64)),
+            'RELEASE_SIGNING_PRIVATE_KEY_B64: неверный формат base64')
+    private_der = base64.b64decode(private_b64, validate=True)
+    openssl = openssl_binary()
+    with tempfile.TemporaryDirectory() as directory:
+        private_path = Path(directory) / 'private.der'
+        public_path = Path(directory) / 'public.der'
+        signature_path = Path(directory) / 'signature.bin'
+        private_path.write_bytes(private_der)
+        os.chmod(private_path, 0o600)
+        public_path.write_bytes(public_der)
+        run(openssl, 'pkeyutl', '-sign', '-inkey', str(private_path), '-keyform', 'DER',
+            '-rawin', '-in', str(lock), '-out', str(signature_path))
+        run(openssl, 'pkeyutl', '-verify', '-pubin', '-inkey', str(public_path), '-keyform', 'DER',
+            '-rawin', '-in', str(lock), '-sigfile', str(signature_path))
+        signature = signature_path.read_bytes()
+    require(len(signature) == 64, 'неожиданный размер подписи Ed25519')
+    Path(args.signature).write_text(base64.b64encode(signature).decode() + '\n')
+    print('PASS: release-lock подписан, подпись соответствует репозиторному ключу')
+
+
+def verify_lock_sig(args):
+    """Проверяет подпись release-lock репозиторным публичным ключом."""
+    lock = Path(args.lock).resolve()
+    require(lock.is_file(), 'release-lock не найден: ' + str(lock))
+    public_der = read_key_b64(args.public_key, 'публичный ключ релизов')
+    signature = read_key_b64(args.signature, 'подпись release-lock')
+    require(len(signature) == 64, 'подпись Ed25519 обязана быть 64 байта')
+    openssl = openssl_binary()
+    with tempfile.TemporaryDirectory() as directory:
+        public_path = Path(directory) / 'public.der'
+        signature_path = Path(directory) / 'signature.bin'
+        public_path.write_bytes(public_der)
+        signature_path.write_bytes(signature)
+        run(openssl, 'pkeyutl', '-verify', '-pubin', '-inkey', str(public_path), '-keyform', 'DER',
+            '-rawin', '-in', str(lock), '-sigfile', str(signature_path))
+    print('PASS: подпись release-lock соответствует репозиторному ключу')
+
+
 def shape(value):
     require(value.get('format') == 'homecloud-ci-candidate-v1', 'not a CI candidate')
     require(bool(TAG.fullmatch(value['tag']) and SHA.fullmatch(value['commit'])), 'invalid source')
@@ -160,6 +253,8 @@ def shape(value):
     require(value['deployment_status'] == 'NOT_DEPLOYED', 'candidate is not deployment evidence')
     require(bool(value['schema_migrations']) and all(isinstance(x, str) for x in value['schema_migrations']), 'missing schema contract')
     require(bool(value['source_files']) and all(re.fullmatch(r'[a-f0-9]{64}', x) for x in value['source_files'].values()), 'invalid source hashes')
+    require(set(USER_DEPLOYMENT_PATHS).issubset(value['source_files']),
+            'incomplete user deployment contract')
     require(set(SOURCE_PATHS).issubset(value['source_files']), 'incomplete source contract')
     require(any(x.startswith('backend/src/migrations/') for x in value['source_files']), 'missing migration source hashes')
     require(set(value['base_images']) == {'node', 'nginx', 'postgres'}, 'incomplete base lock')
@@ -305,6 +400,12 @@ def main():
     drift = subs.add_parser('reconcile')
     for name in ('github-sha', 'manifest', 'deployment', 'mac-root'):
         drift.add_argument('--'+name)
+    sign = subs.add_parser('sign-lock')
+    for name in ('lock', 'signature', 'public-key'):
+        sign.add_argument('--'+name, required=True)
+    check = subs.add_parser('verify-lock-sig')
+    for name in ('lock', 'signature', 'public-key'):
+        check.add_argument('--'+name, required=True)
     args = parser.parse_args()
     if args.command == 'verify-tag':
         verify_tag(args.tag, args.commit)
@@ -313,6 +414,10 @@ def main():
         create(args)
     elif args.command == 'verify-qualified':
         verify_qualified(args)
+    elif args.command == 'sign-lock':
+        sign_lock(args)
+    elif args.command == 'verify-lock-sig':
+        verify_lock_sig(args)
     else:
         return reconcile(args)
     return 0

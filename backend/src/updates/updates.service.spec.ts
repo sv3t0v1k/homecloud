@@ -1,5 +1,5 @@
-import { createHash } from "crypto";
-import { mkdtemp, rm, writeFile } from "fs/promises";
+import { createHash, generateKeyPairSync, sign } from "crypto";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { ConfigService } from "@nestjs/config";
@@ -10,6 +10,14 @@ const repo = "sv3t0v1k/https---github.com-sv3t0v1k-homecloud";
 const oldSha = "a".repeat(40);
 const newSha = "b".repeat(40);
 const digest = `sha256:${"c".repeat(64)}`;
+
+// Фикстурная пара ключей релизов: backend доверяет только валидной подписи.
+const releaseKeys = generateKeyPairSync("ed25519");
+const publicKeyB64 = releaseKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64");
+
+function signLock(text: string): string {
+  return sign(null, Buffer.from(text, "utf8"), releaseKeys.privateKey).toString("base64");
+}
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -49,7 +57,8 @@ describe("updates discovery", () => {
       format: "homecloud-installed-test-v1", version: oldSha.slice(0, 7), gitSha: oldSha,
       schemaMigrations: ["MigrationOne"],
     }));
-    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_METADATA_PATH" ? join(directory, "snapshot.json") : "" } as ConfigService);
+    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_METADATA_PATH" ? join(directory, "snapshot.json") :
+      key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
     global.fetch = jest.fn(async () => Response.json([])) as typeof fetch;
     expect(await service.check()).toMatchObject({
       installed: { version: oldSha.slice(0, 7), gitSha: oldSha }, status: "current", available: null,
@@ -93,14 +102,20 @@ describe("updates discovery", () => {
   it("hides releases that are drafts or lack current registry digests", async () => {
     const installed = lock(oldSha, "v0.9.0-beta.1");
     await writeFile(join(directory, "installed.json"), JSON.stringify(installed));
-    const config = { get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") : key === "UPDATE_ADMIN_USER_ID" ? "7" : "" } as ConfigService;
+    const config = { get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
+      key === "UPDATE_ADMIN_USER_ID" ? "7" :
+      key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService;
     const service = new UpdatesService(config);
     expect(service.isAdmin(7)).toBe(true);
     expect(service.isAdmin(8)).toBe(false);
+    const candidateText = JSON.stringify(lock(newSha, "v0.9.1-beta.1"));
     let draft = true;
     global.fetch = jest.fn(async (url: string) => {
-      if (url.includes("/releases?")) return Response.json([{ draft, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` }] }]);
-      if (url.includes("/releases/assets/42")) return Response.json(lock(newSha, "v0.9.1-beta.1"));
+      if (url.includes("/releases?")) return Response.json([{ draft, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [
+        { name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` },
+        { name: "release-lock.json.sig", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/43` }] }]);
+      if (url.includes("/releases/assets/42")) return new Response(candidateText);
+      if (url.includes("/releases/assets/43")) return new Response(signLock(candidateText));
       if (url.includes("/compare/")) return Response.json({ status: "ahead" });
       if (url.includes("/actions/runs/123")) return Response.json({ conclusion: "success", head_sha: newSha, event: "workflow_dispatch", path: ".github/workflows/release.yml", run_attempt: 1 });
       if (url.includes("/git/ref/tags/")) return Response.json({ object: { type: "tag", sha: "d".repeat(40) } });
@@ -115,12 +130,64 @@ describe("updates discovery", () => {
     expect((await service.check()).status).toBe("current");
   });
 
-  it("reports only a published, qualified and retrievable pair", async () => {
+  it.each([true, false])("checks generated RELEASE notes, changes heading: %s", async (withChanges) => {
+    const workflow = await readFile(join(__dirname, "../../../.github/workflows/release.yml"), "utf8");
+    const lines = workflow.split(/\r?\n/);
+    const start = lines.findIndex((line) => line.trim() === 'cat > "$RUNNER_TEMP/notes.md" <<NOTES');
+    const end = lines.findIndex((line, index) => index > start && line.trim() === "NOTES");
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const notes = lines.slice(start + 1, end)
+      .map((line) => line.trimStart()).join("\n")
+      .replaceAll("$TAG", "v0.9.1-beta.1")
+      .replaceAll("$COMMIT", newSha);
+    const body = withChanges ? notes : notes.replace("## Изменения", "## Сводка");
     await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
-    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") : "" } as ConfigService);
+    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
+      key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
+    const candidate = lock(newSha, "v0.9.1-beta.1");
+    const candidateText = JSON.stringify(candidate);
     global.fetch = jest.fn(async (url: string) => {
-      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [{ name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` }] }]);
-      if (url.includes("/releases/assets/42")) return Response.json(lock(newSha, "v0.9.1-beta.1"));
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body, assets: [
+        { name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` },
+        { name: "release-lock.json.sig", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/43` }] }]);
+      if (url.includes("/releases/assets/42")) return new Response(candidateText);
+      if (url.includes("/releases/assets/43")) return new Response(signLock(candidateText));
+      if (url.includes("/compare/")) return Response.json({ status: "ahead" });
+      if (url.includes("/actions/runs/123")) return Response.json({ conclusion: "success", head_sha: newSha, event: "workflow_dispatch", path: ".github/workflows/release.yml", run_attempt: 1 });
+      if (url.includes("/git/ref/tags/")) return Response.json({ object: { type: "tag", sha: "d".repeat(40) } });
+      if (url.includes("/git/tags/")) return Response.json({ object: { type: "commit", sha: newSha } });
+      if (url.includes("ghcr.io/token")) return Response.json({ token: "registry-token" });
+      if (url.includes("ghcr.io/v2/")) return new Response(null, { status: 200, headers: { "docker-content-digest": digest } });
+      throw new Error(`Unexpected URL ${url}`);
+    }) as typeof fetch;
+    const result = await service.check();
+    const expectedStatus = withChanges ? "available" : "current";
+    const expectedAvailable = withChanges ? {
+      version: "v0.9.1-beta.1",
+      gitSha: newSha,
+      manifestSha256: candidate.manifest_sha256,
+      backendDigest: digest,
+      frontendDigest: digest,
+      compatibility: "exact-migrations",
+      changes: "Подготовлены подписанный манифест и проверенная пара образов HomeCloud v0.9.1-beta.1.",
+    } : null;
+
+    expect(result.status).toBe(expectedStatus);
+    expect(result.available).toEqual(expectedAvailable);
+  });
+
+  it("accepts a signed final release without the prerelease flag", async () => {
+    await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
+    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
+      key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
+    const candidateText = JSON.stringify(lock(newSha, "v0.9.1"));
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: false, tag_name: "v0.9.1", body: "## Изменения\nСтабильный выпуск.", assets: [
+        { name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` },
+        { name: "release-lock.json.sig", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/43` }] }]);
+      if (url.includes("/releases/assets/42")) return new Response(candidateText);
+      if (url.includes("/releases/assets/43")) return new Response(signLock(candidateText));
       if (url.includes("/compare/")) return Response.json({ status: "ahead" });
       if (url.includes("/actions/runs/123")) return Response.json({ conclusion: "success", head_sha: newSha, event: "workflow_dispatch", path: ".github/workflows/release.yml", run_attempt: 1 });
       if (url.includes("/git/ref/tags/")) return Response.json({ object: { type: "tag", sha: "d".repeat(40) } });
@@ -131,6 +198,65 @@ describe("updates discovery", () => {
     }) as typeof fetch;
     const result = await service.check();
     expect(result.status).toBe("available");
-    expect(result.available).toMatchObject({ version: "v0.9.1-beta.1", gitSha: newSha, backendDigest: digest, frontendDigest: digest, changes: "Исправлена загрузка." });
+    expect(result.available).toMatchObject({ version: "v0.9.1", gitSha: newSha });
+  });
+
+  it("reports unavailable when a published lock signature does not verify", async () => {
+    await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
+    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
+      key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
+    const candidateText = JSON.stringify(lock(newSha, "v0.9.1-beta.1"));
+    const foreignSignature = signLock(JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [
+        { name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` },
+        { name: "release-lock.json.sig", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/43` }] }]);
+      if (url.includes("/releases/assets/42")) return new Response(candidateText);
+      if (url.includes("/releases/assets/43")) return new Response(foreignSignature);
+      throw new Error(`Unexpected URL ${url}`);
+    }) as typeof fetch;
+    const result = await service.check();
+    expect(result.status).toBe("check_unavailable");
+    expect(result.available).toBeNull();
+  });
+
+  it("reports unavailable when a published release lacks its signature asset", async () => {
+    await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
+    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
+      key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
+    const candidateText = JSON.stringify(lock(newSha, "v0.9.1-beta.1"));
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [
+        { name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` }] }]);
+      if (url.includes("/releases/assets/42")) return new Response(candidateText);
+      throw new Error(`Unexpected URL ${url}`);
+    }) as typeof fetch;
+    const result = await service.check();
+    expect(result.status).toBe("check_unavailable");
+    expect(result.available).toBeNull();
+  });
+
+  it("reports unavailable for an older published version without signature evidence", async () => {
+    await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
+    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
+      key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true,
+        tag_name: "v0.8.9-beta.1", body: "## Изменения\nСтарый выпуск.", assets: [] }]);
+      throw new Error(`Unexpected URL ${url}`);
+    }) as typeof fetch;
+    const result = await service.check();
+    expect(result.status).toBe("check_unavailable");
+    expect(result.available).toBeNull();
+  });
+
+  it("fails closed when the release public key is not configured", async () => {
+    await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
+    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") : "" } as ConfigService);
+    global.fetch = jest.fn(async () => { throw new Error("fetch must not be called without the key"); }) as typeof fetch;
+    const result = await service.check();
+    expect(result.status).toBe("check_unavailable");
+    expect(result.available).toBeNull();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

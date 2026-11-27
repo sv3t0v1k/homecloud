@@ -8,6 +8,7 @@ import {
   AdminBootstrapError,
   AdminBootstrapRequest,
   bootstrapAdmin,
+  validInitialPassword,
 } from "./admin-bootstrap";
 
 export type BootstrapCommand =
@@ -164,20 +165,27 @@ export async function readConfirmedPassword(): Promise<string> {
   }
 
   try {
-    const password = await ask("New administrator password: ");
-    const confirmation = await ask("Repeat administrator password: ");
-
-    if (password !== confirmation) {
-      throw new BootstrapCliError("BOOTSTRAP_PASSWORD_MISMATCH");
-    }
-
-    return password;
+    return await readMatchingPassword(ask);
   } finally {
     reader.close();
     reader.off("SIGINT", cancel);
     process.off("SIGINT", cancel);
     process.off("SIGTERM", cancel);
     muted.end();
+  }
+}
+
+export async function readMatchingPassword(ask: (prompt: string) => Promise<string>): Promise<string> {
+  for (;;) {
+    const password = await ask("New administrator password: ");
+    const confirmation = await ask("Repeat administrator password: ");
+    if (password !== confirmation) {
+      process.stderr.write("Passwords do not match; try again.\n");
+    } else if (validInitialPassword(password)) {
+      return password;
+    } else {
+      process.stderr.write("Password must be 12 or more characters, at most 72 UTF-8 bytes, and contain no NUL; try again.\n");
+    }
   }
 }
 

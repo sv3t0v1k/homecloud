@@ -5,7 +5,7 @@ import { AuthGuard } from "@nestjs/passport";
 import { getRepositoryToken } from "@nestjs/typeorm";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
-import { UserEntity } from "../entities/user.entity";
+import { UserEntity, UserRole } from "../entities/user.entity";
 import { UpdatesController } from "../updates/updates.controller";
 import { UpdatesService } from "../updates/updates.service";
 import { UpdateInstallService } from "../updates/update-install.service";
@@ -56,10 +56,21 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
   const jwt = new JwtService({ secret });
   const checkUpdates = jest.fn(async () => ({ available: false }));
   const isAdmin = jest.fn((userId: number) => userId === 2);
-  const users = new Map<number, { id: number; email: string; isActive: boolean; sessionVersion: string }>();
-  const findOne = jest.fn(async ({ where }: { where: { id: number; isActive: boolean } }) => {
+  const users = new Map<number, {
+    id: number;
+    email: string;
+    isActive: boolean;
+    sessionVersion: string;
+    role: UserRole;
+  }>();
+  const findOne = jest.fn(async ({ where }: {
+    where: { id: number; isActive?: boolean };
+  }) => {
     const user = users.get(where.id);
-    return user?.isActive === where.isActive ? user : null;
+    if (!user) return null;
+    if (where.isActive !== undefined &&
+        user.isActive !== where.isActive) return null;
+    return user;
   });
 
   beforeAll(async () => {
@@ -82,8 +93,20 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
   beforeEach(() => {
     jest.clearAllMocks();
     users.clear();
-    users.set(1, { id: 1, email: "owner@example.test", isActive: true, sessionVersion: "1" });
-    users.set(2, { id: 2, email: "admin@example.test", isActive: true, sessionVersion: "1" });
+    users.set(1, {
+      id: 1,
+      email: "owner@example.test",
+      isActive: true,
+      sessionVersion: "1",
+      role: UserRole.USER,
+    });
+    users.set(2, {
+      id: 2,
+      email: "admin@example.test",
+      isActive: true,
+      sessionVersion: "1",
+      role: UserRole.ADMIN,
+    });
   });
 
   describe.each(["/security-probe", "/passport-probe"])("%s", (endpoint) => {
@@ -247,10 +270,39 @@ describe("Real JWT boundary rejects abusive credentials before mutation", () => 
     await request(app.getHttpServer()).get("/updates")
       .set("Authorization", `Bearer ${admin}`).expect(200, { available: false });
     checkUpdates.mockClear();
+
+    // A new valid session must not restore update rights
+    // after the designated administrator has been demoted.
+    users.get(2)!.role = UserRole.USER;
+    users.get(2)!.sessionVersion = "2";
+    const demoted = jwt.sign(
+      { ...accessClaims, sub: 2, sv: "2" },
+      { expiresIn: 60 },
+    );
+
+    await request(app.getHttpServer()).get("/updates/access")
+      .set("Authorization", `Bearer ${demoted}`)
+      .expect(200, { admin: false });
+    await request(app.getHttpServer()).get("/updates")
+      .set("Authorization", `Bearer ${demoted}`).expect(403);
+    expect(checkUpdates).not.toHaveBeenCalled();
+
+    // Preserve the original independent deactivation check.
+    users.get(2)!.role = UserRole.ADMIN;
+    users.get(2)!.sessionVersion = "3";
+    const activeAdmin = jwt.sign(
+      { ...accessClaims, sub: 2, sv: "3" },
+      { expiresIn: 60 },
+    );
+    await request(app.getHttpServer()).get("/updates")
+      .set("Authorization", `Bearer ${activeAdmin}`)
+      .expect(200, { available: false });
+
+    checkUpdates.mockClear();
     isAdmin.mockClear();
     users.get(2)!.isActive = false;
     await request(app.getHttpServer()).get("/updates")
-      .set("Authorization", `Bearer ${admin}`).expect(401);
+      .set("Authorization", `Bearer ${activeAdmin}`).expect(401);
     expect(isAdmin).not.toHaveBeenCalled();
     expect(checkUpdates).not.toHaveBeenCalled();
   });

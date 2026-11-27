@@ -286,9 +286,11 @@ jobs:
       - name: Encrypted backup with real age
         run: |
           bash scripts/tests/test-backup-production.sh
-      - run: python3 deploy/linux/test_preflight.py
+      - name: User installer and signed update regression
+        shell: bash
         env:
-          HOMECLOUD_TEST_ROOT: ${{ github.workspace }}
+          HOMECLOUD_EXPECT_COMPOSE: '5.6.0'
+        run: bash scripts/ci/test-user-installer.sh
       - name: Isolated recovery contract tests with fake Docker
         run: |
           sudo mkdir -p /private/tmp

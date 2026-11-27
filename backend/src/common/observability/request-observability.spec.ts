@@ -152,6 +152,33 @@ describe("request observability", () => {
       expect(json.mock.calls[1][0].message).toBe("Internal server error");
     });
   });
+  it("exposes only allowlisted startup diagnostics", () => {
+    const lines: string[] = [];
+    const logger = new StructuredLogger((line) => lines.push(line));
+    logger.error(
+      "Storage unavailable: identity-mismatch/identity-unverifiable",
+      "private-stack",
+      "ExceptionHandler",
+    );
+    logger.error(
+      new Error("Unsafe or missing production configuration: JWT_SECRET"),
+      "private-stack",
+      "ExceptionHandler",
+    );
+    logger.error(
+      "Storage unavailable: identity-mismatch/identity-unverifiable private-secret",
+      "ExceptionHandler",
+    );
+    expect(JSON.parse(lines[0]).message).toBe(
+      "Storage unavailable: identity-mismatch/identity-unverifiable",
+    );
+    expect(JSON.parse(lines[1]).message).toBe(
+      "Unsafe or missing production configuration: JWT_SECRET",
+    );
+    expect(JSON.parse(lines[2]).message).toBe("runtime_error");
+    expect(lines.join()).not.toMatch(/private-stack|private-secret/);
+  });
+
   it("omits arbitrary errors/stacks from runtime logs", () => {
     const lines: string[] = [];
     const logger = new StructuredLogger((line) => lines.push(line));
