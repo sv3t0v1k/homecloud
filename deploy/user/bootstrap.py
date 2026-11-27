@@ -109,8 +109,8 @@ def latest_release_tag(fetch=real_fetch):
         data = json.loads(fetch(API + '/releases/latest').decode('utf-8'))
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            raise Failure('у репозитория пока нет опубликованных релизов; '
-                          'укажите тег явно: --tag vX.Y.Z')
+            raise Failure('нет опубликованного стабильного релиза; '
+                          'для beta укажите тег явно: --tag vX.Y.Z-beta.N')
         raise
     tag = data.get('tag_name')
     if not isinstance(tag, str) or not TAG_RE.fullmatch(tag):
@@ -669,7 +669,7 @@ def fetch_unsigned(ref, destination, fetch=real_fetch):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest='command', required=True)
-    sub.add_parser('latest-tag', help='тег последнего GitHub-релиза')
+    sub.add_parser('latest-tag', help='тег последнего стабильного GitHub-релиза')
     fetch_parser = sub.add_parser('fetch', help='скачать и распаковать репозиторий')
     source = fetch_parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--tag', help='подписанный релизный тег')

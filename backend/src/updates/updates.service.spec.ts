@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from "crypto";
-import { mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { ConfigService } from "@nestjs/config";
@@ -130,14 +130,25 @@ describe("updates discovery", () => {
     expect((await service.check()).status).toBe("current");
   });
 
-  it("reports only a published, qualified and retrievable pair", async () => {
+  it.each([true, false])("checks generated RELEASE notes, changes heading: %s", async (withChanges) => {
+    const workflow = await readFile(join(__dirname, "../../../.github/workflows/release.yml"), "utf8");
+    const lines = workflow.split(/\r?\n/);
+    const start = lines.findIndex((line) => line.trim() === 'cat > "$RUNNER_TEMP/notes.md" <<NOTES');
+    const end = lines.findIndex((line, index) => index > start && line.trim() === "NOTES");
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const notes = lines.slice(start + 1, end)
+      .map((line) => line.trimStart()).join("\n")
+      .replaceAll("$TAG", "v0.9.1-beta.1")
+      .replaceAll("$COMMIT", newSha);
+    const body = withChanges ? notes : notes.replace("## Изменения", "## Сводка");
     await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
     const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
       key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
     const candidate = lock(newSha, "v0.9.1-beta.1");
     const candidateText = JSON.stringify(candidate);
     global.fetch = jest.fn(async (url: string) => {
-      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body: "## Изменения\nИсправлена загрузка.", assets: [
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true, tag_name: "v0.9.1-beta.1", body, assets: [
         { name: "release-lock.json", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/42` },
         { name: "release-lock.json.sig", url: `https://api.github.com/repos/sv3t0v1k/https---github.com-sv3t0v1k-homecloud/releases/assets/43` }] }]);
       if (url.includes("/releases/assets/42")) return new Response(candidateText);
@@ -151,8 +162,19 @@ describe("updates discovery", () => {
       throw new Error(`Unexpected URL ${url}`);
     }) as typeof fetch;
     const result = await service.check();
-    expect(result.status).toBe("available");
-    expect(result.available).toMatchObject({ version: "v0.9.1-beta.1", gitSha: newSha, manifestSha256: candidate.manifest_sha256, backendDigest: digest, frontendDigest: digest, changes: "Исправлена загрузка." });
+    const expectedStatus = withChanges ? "available" : "current";
+    const expectedAvailable = withChanges ? {
+      version: "v0.9.1-beta.1",
+      gitSha: newSha,
+      manifestSha256: candidate.manifest_sha256,
+      backendDigest: digest,
+      frontendDigest: digest,
+      compatibility: "exact-migrations",
+      changes: "Подготовлены подписанный манифест и проверенная пара образов HomeCloud v0.9.1-beta.1.",
+    } : null;
+
+    expect(result.status).toBe(expectedStatus);
+    expect(result.available).toEqual(expectedAvailable);
   });
 
   it("accepts a signed final release without the prerelease flag", async () => {

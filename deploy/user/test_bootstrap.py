@@ -158,6 +158,18 @@ class LatestTagTests(OpensslRequired):
                               json.dumps({'tag_name': 'v0.4.2'}).encode()})
         self.assertEqual(bootstrap.latest_release_tag(fetch), 'v0.4.2')
 
+    def test_beta_only_repository_requires_explicit_tag(self):
+        url = bootstrap.API + '/releases/latest'
+        fetch = mock.Mock(side_effect=urllib.error.HTTPError(
+            url, 404, 'Not Found', None, None))
+
+        with self.assertRaisesRegex(
+            bootstrap.Failure, r'для beta укажите тег явно'
+        ):
+            bootstrap.latest_release_tag(fetch)
+
+        fetch.assert_called_once_with(url)
+
     def test_bad_format_rejected(self):
         fetch = canned_fetch({bootstrap.API + '/releases/latest':
                               json.dumps({'tag_name': 'main'}).encode()})
@@ -597,6 +609,25 @@ class FetchSignedTests(OpensslRequired):
                 bootstrap.Failure, 'нет подписанного хэша'
             ):
                 bootstrap.verify_local_release(directory)
+
+    def test_explicit_signed_beta_without_stable_release(self):
+        tag = 'v1.2.0-beta.1'
+        routes = release_routes(tag=tag)
+        url = bootstrap.API + '/releases/latest'
+        routes[url] = urllib.error.HTTPError(
+            url, 404, 'Not Found', None, None)
+
+        fetch = mock.Mock(side_effect=canned_fetch(routes))
+
+        with self.dest() as directory:
+            result = bootstrap.fetch_signed(
+                tag, directory, fetch=fetch)
+            self.assertEqual(result['tag'], tag)
+            self.assertEqual(
+                bootstrap.verify_local_release(directory), result)
+
+        self.assertNotIn(
+            mock.call(url), fetch.call_args_list)
 
     def test_happy_extracts_and_reports_images(self):
         routes = release_routes()
