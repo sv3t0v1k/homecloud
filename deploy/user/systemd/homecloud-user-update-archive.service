@@ -1,5 +1,5 @@
 [Unit]
-Description=Archive completed HomeCloud release update receipts
+Description=Recover interrupted HomeCloud updates and archive receipts
 
 [Service]
 Type=oneshot
@@ -10,4 +10,4 @@ UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=full
 PrivateTmp=yes
-ReadWritePaths=/var/lib/homecloud-update
+ReadWritePaths=/var/lib/homecloud-update /etc/homecloud

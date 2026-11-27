@@ -21,6 +21,7 @@ import argparse
 import base64
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -102,7 +103,11 @@ class Deps:
         context.verify_mode = ssl.CERT_NONE
         request = urllib.request.Request(url, headers={'Host': host_header})
         try:
-            with urllib.request.urlopen(request, timeout=15, context=context) as response:
+            opener = urllib.request.build_opener(
+                NoRedirect(),
+                urllib.request.HTTPSHandler(context=context),
+            )
+            with opener.open(request, timeout=15) as response:
                 return response.status
         except urllib.error.HTTPError as error:
             return error.code
@@ -349,48 +354,186 @@ def discover_lock_by_images(backend_ref, frontend_ref, config, deps, public_der)
 
 
 def validate_lock(lock):
-    require(lock.get('format') == 'homecloud-ci-candidate-v1' and
-            type(lock.get('tag')) is str and TAG.fullmatch(lock['tag']) and
-            type(lock.get('commit')) is str and SHA.fullmatch(lock['commit']) and
-            type(lock.get('schema_migrations')) is list and lock['schema_migrations'] and
-            all(type(item) is str and re.fullmatch(r'[A-Za-z0-9]+', item) for item in lock['schema_migrations']),
-            'invalid release lock shape')
+    require(
+        type(lock) is dict
+        and lock.get('format') == 'homecloud-ci-candidate-v1'
+        and type(lock.get('tag')) is str
+        and TAG.fullmatch(lock['tag'])
+        and type(lock.get('commit')) is str
+        and SHA.fullmatch(lock['commit'])
+        and type(lock.get('tag_object')) is str
+        and SHA.fullmatch(lock['tag_object'])
+        and lock.get('deployment_status') == 'NOT_DEPLOYED',
+        'invalid release lock shape',
+    )
+
+    repository = lock.get('repository')
+    require(type(repository) is str and re.fullmatch(
+        r'[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_.-]*',
+        repository), 'invalid release repository')
+
+    ci = lock.get('ci')
+    require(type(ci) is dict
+            and ci.get('status') == 'success'
+            and type(ci.get('run_id')) is str
+            and ci['run_id'].isdigit()
+            and type(ci.get('attempt')) is str
+            and ci['attempt'].isdigit()
+            and ci.get('url') == (
+                'https://github.com/' + repository
+                + '/actions/runs/' + ci['run_id']),
+            'invalid release CI identity')
+
+    qualification = lock.get('production_qualification')
+
+    require(
+        type(qualification) is dict
+        and qualification.get('format') ==
+            'homecloud-production-qualification-v2'
+        and qualification.get('status') == 'PASS'
+        and qualification.get('coverage') == 'COVERED'
+        and qualification.get('qualification_profile') == 'release'
+        and qualification.get('source_commit') == lock['commit']
+        and type(qualification.get('ci')) is dict
+        and qualification['ci'].get('run_id') == ci['run_id']
+        and qualification['ci'].get('attempt') == ci['attempt'],
+        'release qualification required',
+    )
+
+    migrations = lock.get('schema_migrations')
+
+    require(
+        type(migrations) is list and migrations
+        and all(type(item) is str and
+                re.fullmatch(r'[A-Za-z0-9]+', item)
+                for item in migrations)
+        and len(set(migrations)) == len(migrations),
+        'invalid schema migration contract',
+    )
+
+    images = lock.get('images')
+
+    require(type(images) is dict
+            and set(images) == {'backend', 'frontend'},
+            'invalid image pair')
+
     for role in ('backend', 'frontend'):
-        image = lock.get('images', {}).get(role)
-        require(type(image) is dict and type(image.get('repository')) is str and
-                re.fullmatch(r'ghcr\.io/[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_.-]*/' + role,
-                             image['repository']) and
-                type(image.get('digest')) is str and DIGEST.fullmatch(image['digest']) and
-                image.get('revision') == lock['commit'] and image.get('version') == lock['tag'],
-                'invalid image entry: ' + role)
+        image = images[role]
+
+        require(
+            type(image) is dict
+            and image.get('repository') ==
+                'ghcr.io/' + repository + '/' + role
+            and type(image.get('digest')) is str
+            and DIGEST.fullmatch(image['digest'])
+            and image.get('revision') == lock['commit']
+            and image.get('version') == lock['tag']
+            and image.get('platform') == 'linux/amd64',
+            'invalid image entry: ' + role,
+        )
+
+        proof = image.get('provenance_verification')
+
+        require(
+            type(proof) is dict
+            and proof.get('index_digest') == image['digest']
+            and proof.get('verified') ==
+                'DIGEST_SUBJECT_VCS_DOCKERFILE_ARGS_BASE_MATERIALS',
+            'invalid image provenance: ' + role,
+        )
+
+    body = dict(lock)
+    identity = body.pop('manifest_sha256', None)
+
+    require(
+        identity == hashlib.sha256(
+            canonical(body).encode()).hexdigest(),
+        'invalid release manifest identity',
+    )
 
 
 def version_key(tag):
     match = TAG.fullmatch(tag)
     major, minor, patch, beta = match.groups()
-    return (int(major), int(minor), int(patch), 0 if beta is None else 1, int(beta or 0))
+    return (int(major), int(minor), int(patch), 1 if beta is None else 0, int(beta or 0))
+
+
+def migration_hashes(lock):
+    sources = lock.get('source_files')
+
+    require(type(sources) is dict,
+            'missing migration source contract')
+
+    hashes = {
+        name: value for name, value in sources.items()
+        if type(name) is str
+        and re.fullmatch(r'backend/src/migrations/[^/]+[.]ts', name)
+    }
+
+    require(
+        len(hashes) == len(lock['schema_migrations'])
+        and bool(hashes)
+        and all(type(value) is str and HASH.fullmatch(value)
+                for value in hashes.values()),
+        'incomplete migration source hashes',
+    )
+
+    return hashes
+
+
+def installed_lock_path():
+    return BASE_DIR / 'status' / 'installed-lock.json'
+
+
+def read_installed_lock():
+    path = installed_lock_path()
+
+    require(path.exists() or path.is_symlink(),
+            'no installed release lock; updates are not bootstrapped')
+
+    descriptor = os.open(
+        path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+
+    with os.fdopen(descriptor, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+
+        require(
+            stat.S_ISREG(info.st_mode)
+            and info.st_uid == ROOT_UID
+            and info.st_gid == GID
+            and info.st_nlink == 1
+            and stat.S_IMODE(info.st_mode) == 0o640
+            and 0 < info.st_size <= MAX_BODY,
+            'unsafe installed lock',
+        )
+
+        payload = stream.read(MAX_BODY + 1)
+
+    require(len(payload) <= MAX_BODY, 'installed lock too large')
+
+    installed = json.loads(payload)
+    validate_lock(installed)
+
+    return installed, payload
 
 
 def check_installed(lock):
-    """The candidate must advance the installed version with identical migrations."""
-    path = BASE_DIR / 'status' / 'installed-lock.json'
-    if not path.exists() and not path.is_symlink():
-        raise Refusal('no installed release lock; updates are not bootstrapped', 'PREPARATION')
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    try:
-        info = os.fstat(descriptor)
-        require(stat.S_ISREG(info.st_mode) and info.st_uid == ROOT_UID and
-                0 < info.st_size <= MAX_BODY, 'unsafe installed lock')
-        installed = json.loads(os.read(descriptor, MAX_BODY + 1))
-    finally:
-        os.close(descriptor)
-    require(type(installed) is dict, 'invalid installed lock')
-    validate_lock(installed)
-    require(installed['commit'] != lock['commit'], 'candidate is the installed version')
+    installed, payload = read_installed_lock()
+
+    require(installed['commit'] != lock['commit'],
+            'candidate is the installed version')
+
     require(version_key(lock['tag']) > version_key(installed['tag']),
             'candidate is not newer than installed')
-    require(sorted(lock['schema_migrations']) == sorted(installed['schema_migrations']),
+
+    require(sorted(lock['schema_migrations'])
+            == sorted(installed['schema_migrations']),
             'schema migrations differ; automatic update refused')
+
+    require(migration_hashes(lock) == migration_hashes(installed),
+            'migration contents differ; automatic update refused')
+
+    return installed, payload
 
 
 def verify_deployment_directory(path, evidence=False):
@@ -697,10 +840,24 @@ def restore_images(config, previous):
             os.unlink(tmp)
 
 
-def smoke(config, deps):
-    status = deps.smoke_get('https://127.0.0.1:' + str(config['https_port']) + '/',
-                            config['public_host'])
-    require(status < 500, 'smoke HTTP ' + str(status))
+def smoke(config, deps, lock):
+    verify_running_images(config, deps, lock)
+    verify_database_migrations(config, deps, lock)
+
+    values = read_runtime_values(config)
+
+    bind = ipaddress.IPv4Address(
+        values.get('PUBLIC_BIND_IP', ''))
+
+    address = '127.0.0.1' if bind.is_unspecified else str(bind)
+
+    status = deps.smoke_get(
+        'https://' + address + ':'
+        + str(config['https_port']) + '/',
+        config['public_host'],
+    )
+
+    require(status == 200, 'smoke HTTP ' + str(status))
 
 
 def write_installed_lock(lock_bytes):
@@ -720,11 +877,164 @@ def write_installed_lock(lock_bytes):
             os.unlink(tmp)
 
 
+def journal_path():
+    return BASE_DIR / 'status' / 'transaction.json'
+
+
+def journal_exists():
+    path = journal_path()
+    return path.exists() or path.is_symlink()
+
+
+def create_journal(identity, previous_payload):
+    require(not journal_exists(), 'unfinished transaction exists')
+
+    entry = {
+        'format': 'homecloud-update-transaction-v1',
+        'candidate': identity,
+        'previous_lock': base64.b64encode(
+            previous_payload).decode('ascii'),
+    }
+
+    path = journal_path()
+    descriptor, temporary = tempfile.mkstemp(
+        prefix='.transaction-', dir=str(path.parent))
+
+    try:
+        with os.fdopen(descriptor, 'w') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            os.fchown(stream.fileno(), ROOT_UID, ROOT_GID)
+            json.dump(entry, stream, separators=(',', ':'))
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        os.replace(temporary, path)
+        fsync_dir(path.parent)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def read_journal():
+    entry = read_json_root(
+        journal_path(), 0o600, ROOT_GID,
+        limit=3 * MAX_BODY)
+
+    require(
+        set(entry) == {'format', 'candidate', 'previous_lock'}
+        and entry['format'] == 'homecloud-update-transaction-v1'
+        and type(entry['candidate']) is str
+        and HASH.fullmatch(entry['candidate'])
+        and type(entry['previous_lock']) is str,
+        'invalid update transaction journal',
+    )
+
+    payload = base64.b64decode(
+        entry['previous_lock'], validate=True)
+
+    require(0 < len(payload) <= MAX_BODY,
+            'invalid previous lock size')
+
+    previous = json.loads(payload)
+    validate_lock(previous)
+
+    return entry['candidate'], previous, payload
+
+
+def clear_journal():
+    path = journal_path()
+    os.unlink(path)
+    fsync_dir(path.parent)
+
+
+def rollback_transaction(config, deps):
+    identity, previous, payload = read_journal()
+
+    try:
+        publish_status(identity, 'RUNNING', 'ROLLBACK', deps)
+
+        original, _ = verify_local_deployment(
+            config, deps, load_public_key())
+
+        check_deployment_compatibility(original, previous)
+
+        refs = {
+            'RELEASE_' + role.upper() + '_IMAGE': reference
+            for role, reference in zip(
+                ('backend', 'frontend'), lock_image_refs(previous))
+        }
+
+        restore_images(config, refs)
+        assert_runtime_identity(config, previous)
+
+        compose(config, deps, 'up', '-d', '--no-build',
+                '--wait', '--wait-timeout', '300')
+
+        smoke(config, deps, previous)
+
+        write_installed_lock(payload)
+
+        publish_status(identity, 'STOP', 'ROLLBACK', deps)
+
+    except Exception:
+        publish_status(
+            identity, 'MANUAL_RECOVERY_REQUIRED', 'ROLLBACK', deps)
+
+        # Preserve journal for operator recovery.
+        raise RecoveryRequired('rollback failed; journal retained')
+
+    clear_journal()
+
+
+def recover_transaction(config, deps):
+    if not journal_exists():
+        return False
+
+    identity, previous, _ = read_journal()
+
+    status_path = BASE_DIR / 'status' / 'current.json'
+
+    receipt = (
+        read_json_root(status_path, 0o640, GID, 4096)
+        if status_path.exists() else {}
+    )
+
+    status = receipt.get('status')
+
+    if status == 'MANUAL_RECOVERY_REQUIRED':
+        # Do not repeatedly mutate a failed recovery.
+        return True
+
+    if receipt.get('manifestSha256') == identity:
+        if status in ('INSTALLED', 'STOP'):
+            installed, _ = read_installed_lock()
+
+            expected = (
+                identity if status == 'INSTALLED'
+                else previous['manifest_sha256']
+            )
+
+            require(installed['manifest_sha256'] == expected,
+                    'terminal receipt differs from installed lock')
+
+            assert_runtime_identity(config, installed)
+            clear_journal()
+            return True
+
+    # No durable terminal receipt: restore the prior release,
+    # even if candidate containers had already started.
+    rollback_transaction(config, deps)
+    return True
+
+
 def install(deps):
     require(os.geteuid() == 0, 'requires root')
     config = load_config()
     lock_fd = acquire_lock()
     try:
+        if recover_transaction(config, deps):
+            return
+
         status_path = BASE_DIR / 'status' / 'current.json'
         request_path = BASE_DIR / 'inbox' / 'request.json'
         if status_path.exists():
@@ -751,56 +1061,173 @@ def install(deps):
             publish_status(identity, 'RUNNING', 'VERIFY_TRUST', deps)
             publish_status(identity, 'RUNNING', 'FETCH_MANIFEST', deps)
             lock, lock_bytes = discover_lock(identity, config, deps, public_der)
-            check_installed(lock)
+            installed, previous_payload = check_installed(lock)
 
             deployment_lock, _ = verify_local_deployment(
                 config, deps, public_der)
 
+            check_deployment_compatibility(deployment_lock, installed)
             check_deployment_compatibility(deployment_lock, lock)
+
+            verify_running_images(config, deps, installed)
+            verify_database_migrations(config, deps, installed)
+
             publish_status(identity, 'RUNNING', 'VERIFY_IMAGES', deps)
             verify_registry(lock, config, deps)
-        except Refusal as error:
+
+        except Exception as error:
             publish_status(identity, 'STOP', 'PREPARATION', deps)
-            raise
-        # Point of no return: reference switch. Failures below roll back.
-        publish_status(identity, 'RUNNING', 'WRITE_REFS', deps)
-        previous = switch_images(config, lock)
+
+            if isinstance(error, Refusal):
+                raise
+
+            raise Refusal('update preparation failed') from error
+
+        # The previous identity must be durable BEFORE any mutation.
+        create_journal(identity, previous_payload)
+
         try:
+            publish_status(identity, 'RUNNING', 'WRITE_REFS', deps)
+            switch_images(config, lock)
+
             compose(config, deps, 'pull', 'backend', 'frontend')
+
             publish_status(identity, 'RUNNING', 'START_SERVICES', deps)
-            compose(config, deps, 'up', '-d', '--no-build', '--wait', '--wait-timeout', '300')
+            compose(config, deps, 'up', '-d', '--no-build',
+                    '--wait', '--wait-timeout', '300')
+
             publish_status(identity, 'RUNNING', 'SMOKE', deps)
-            smoke(config, deps)
-        except Exception:
-            publish_status(identity, 'RUNNING', 'ROLLBACK', deps)
-            try:
-                restore_images(config, previous)
-                compose(config, deps, 'up', '-d', '--no-build', '--wait', '--wait-timeout', '300')
-                smoke(config, deps)
-            except Exception as rollback_error:
-                publish_status(identity, 'MANUAL_RECOVERY_REQUIRED', 'ROLLBACK', deps)
-                raise RecoveryRequired(str(rollback_error)[:120])
-            publish_status(identity, 'STOP', 'ROLLBACK', deps)
-            raise RecoveryRequired('rolled back after failed update')
-        write_installed_lock(lock_bytes)
+            smoke(config, deps, lock)
+
+            write_installed_lock(lock_bytes)
+
+        except Exception as error:
+            rollback_transaction(config, deps)
+            raise RecoveryRequired(
+                'update failed; previous release restored') from error
+
+        # Terminal receipt is the commit marker. A crash before it
+        # triggers rollback; a crash after it only clears the journal.
         publish_status(identity, 'INSTALLED', 'COMPLETE', deps)
+        clear_journal()
     finally:
         os.close(lock_fd)
 
 
-def read_image_refs(config):
-    path = env_path(config)
-    raw = path.read_bytes()
+def read_runtime_values(config):
+    raw = read_deployment_file(env_path(config), 0o600)
+
     require(len(raw) <= 65536, 'runtime.env too large')
-    refs = {}
+
+    values = {}
+
     for line in raw.decode().splitlines():
         key, sep, value = line.partition('=')
-        if sep and key in ('RELEASE_BACKEND_IMAGE', 'RELEASE_FRONTEND_IMAGE'):
-            refs[key] = value.strip()
-    require(len(refs) == 2, 'runtime.env lacks image references')
-    require(all(DIGEST.fullmatch(ref.partition('@')[2]) for ref in refs.values()),
+
+        if not sep or key.startswith('#'):
+            continue
+
+        require(key not in values,
+                'duplicate runtime environment key: ' + key)
+
+        values[key] = value.strip()
+
+    return values
+
+
+def read_image_refs(config):
+    values = read_runtime_values(config)
+
+    refs = tuple(
+        values.get('RELEASE_' + role.upper() + '_IMAGE', '')
+        for role in ('backend', 'frontend')
+    )
+
+    require(all(DIGEST.fullmatch(ref.partition('@')[2])
+                for ref in refs),
             'installed image references are not digest-pinned')
-    return refs['RELEASE_BACKEND_IMAGE'], refs['RELEASE_FRONTEND_IMAGE']
+
+    return refs
+
+
+def lock_image_refs(lock):
+    return tuple(
+        lock['images'][role]['repository'] + '@'
+        + lock['images'][role]['digest']
+        for role in ('backend', 'frontend')
+    )
+
+
+def assert_runtime_identity(config, lock):
+    require(read_image_refs(config) == lock_image_refs(lock),
+            'runtime image references differ from installed lock')
+
+
+def check_output(config, deps, args):
+    result = deps.run(
+        args, env=compose_env(config), timeout=60)
+
+    require(result.returncode == 0,
+            'runtime verification command failed')
+
+    output = result.stdout or b''
+
+    if isinstance(output, bytes):
+        output = output.decode('utf-8')
+
+    require(len(output) <= 65536,
+            'runtime verification output too large')
+
+    return output.strip()
+
+
+def verify_running_images(config, deps, lock):
+    assert_runtime_identity(config, lock)
+
+    for role, reference in zip(
+        ('backend', 'frontend'), lock_image_refs(lock)
+    ):
+        container = check_output(
+            config, deps, compose_command(
+                config, 'ps', '-q', role))
+
+        require(re.fullmatch(r'[a-f0-9]{64}', container),
+                'expected exactly one running container: ' + role)
+
+        base = compose_command(config)
+        docker = base[:base.index('compose')]
+
+        actual = check_output(
+            config, deps,
+            docker + [
+                'inspect', '--format',
+                '{{.Config.Image}} {{.State.Status}} {{.State.Health.Status}}',
+                container,
+            ],
+        )
+
+        require(actual == reference + ' running healthy',
+                'unexpected running image or health: ' + role)
+
+
+def verify_database_migrations(config, deps, lock):
+    command = (
+        'psql -X -v ON_ERROR_STOP=1 -At '
+        '-U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+        '-c "SELECT name FROM public.migrations ORDER BY name"'
+    )
+
+    output = check_output(
+        config, deps, compose_command(
+            config, 'exec', '-T', 'db',
+            'sh', '-ec', command,
+        ),
+    )
+
+    actual = output.splitlines()
+
+    require(sorted(actual) == sorted(lock['schema_migrations']),
+            'actual database migrations differ from release lock')
 
 
 def bootstrap(deps):
@@ -870,6 +1297,34 @@ def archive(deps):
     archive_dir = status_dir / 'archive'
     lock_fd = acquire_lock()
     try:
+        if journal_exists():
+            recover_transaction(load_config(), deps)
+            return
+
+        if status_path.exists():
+            current = read_json_root(
+                status_path, 0o640, GID, 4096, (1, 2))
+
+            if current.get('status') in (
+                'RUNNING', 'VALIDATION_REQUIRED'
+            ):
+                try:
+                    updated = datetime.fromisoformat(
+                        current['updatedAt'])
+                    stale = (
+                        deps.now() - updated
+                        > timedelta(minutes=STALE_MINUTES)
+                    )
+                except (ValueError, TypeError, KeyError):
+                    stale = True
+
+                if stale:
+                    publish_status(
+                        current['manifestSha256'],
+                        'MANUAL_RECOVERY_REQUIRED',
+                        'STALE_RUN', deps)
+                    return
+
         if not status_path.exists():
             if not marker_path.exists():
                 return

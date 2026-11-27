@@ -41,8 +41,14 @@ FOREIGN_PRIVATE_DER = PKCS8_PREFIX + bytes.fromhex(FOREIGN_SEED)
 
 REPO = 'acme/homecloud'
 NOW = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
-OLD_BACKEND = 'ghcr.io/' + REPO + '/backend@sha256:' + '1' * 64
-OLD_FRONTEND = 'ghcr.io/' + REPO + '/frontend@sha256:' + '2' * 64
+OLD_BACKEND = (
+    'ghcr.io/' + REPO + '/backend@sha256:'
+    + hashlib.sha256(b'v1.1.0:backend').hexdigest()
+)
+OLD_FRONTEND = (
+    'ghcr.io/' + REPO + '/frontend@sha256:'
+    + hashlib.sha256(b'v1.1.0:frontend').hexdigest()
+)
 
 
 def openssl_sign(payload, private_der=PRIVATE_DER):
@@ -88,21 +94,53 @@ def fixture_deployment_hashes():
 def make_lock(tag='v1.2.0', migrations=('20260101000000Init',),
               commit=None, source_files=None):
     commit = commit or hashlib.sha256(('commit:' + tag).encode()).hexdigest()[:40]
+    hashes = dict(
+        fixture_deployment_hashes()
+        if source_files is None else source_files
+    )
+
+    for migration in migrations:
+        hashes.setdefault(
+            'backend/src/migrations/' + migration + '.ts',
+            hashlib.sha256(migration.encode()).hexdigest(),
+        )
+
     lock = {
         'format': 'homecloud-ci-candidate-v1',
+        'repository': REPO,
+        'tag_object': 'c' * 40,
+        'deployment_status': 'NOT_DEPLOYED',
+        'ci': {
+            'status': 'success',
+            'run_id': '1',
+            'attempt': '1',
+            'url': 'https://github.com/' + REPO + '/actions/runs/1',
+        },
+        'production_qualification': {
+            'format': 'homecloud-production-qualification-v2',
+            'status': 'PASS',
+            'coverage': 'COVERED',
+            'qualification_profile': 'release',
+            'source_commit': commit,
+            'ci': {'run_id': '1', 'attempt': '1'},
+        },
         'tag': tag,
         'commit': commit,
         'schema_migrations': list(migrations),
-        'source_files': (
-            fixture_deployment_hashes()
-            if source_files is None else source_files
-        ),
+        'source_files': hashes,
         'images': {
             role: {
                 'repository': 'ghcr.io/' + REPO + '/' + role,
                 'digest': 'sha256:' + hashlib.sha256((tag + ':' + role).encode()).hexdigest(),
                 'revision': commit,
                 'version': tag,
+                'platform': 'linux/amd64',
+                'provenance_verification': {
+                    'index_digest': 'sha256:' + hashlib.sha256(
+                        (tag + ':' + role).encode()).hexdigest(),
+                    'verified':
+                        'DIGEST_SUBJECT_VCS_DOCKERFILE_ARGS_BASE_MATERIALS',
+                },
             } for role in ('backend', 'frontend')
         },
     }
@@ -145,14 +183,58 @@ class FakeDeps:
         self.compose_calls = []
         self.smoke_calls = []
         self.http_calls = []
+        self.readonly_calls = []
+        self.actual_migrations = ['20260101000000Init']
+        self.inspected_image_override = None
+        self.runtime_path = None
 
     def run(self, args, **kwargs):
         args = list(args)
         if 'pkeyutl' in args:
             return subprocess.run(args, capture_output=True, timeout=60)
         # docker compose --project-directory .. --env-file .. -f .. -f .. -f .. <sub> ...
+        if 'inspect' in args:
+            self.readonly_calls.append(['inspect', args[-1]])
+
+            role = 'backend' if args[-1] == 'a' * 64 else 'frontend'
+
+            values = dict(
+                line.split('=', 1)
+                for line in self.runtime_path.read_text().splitlines()
+                if '=' in line
+            )
+
+            ref = (
+                self.inspected_image_override
+                or values['RELEASE_' + role.upper() + '_IMAGE']
+            )
+
+            return subprocess.CompletedProcess(
+                args, 0,
+                stdout=(ref + ' running healthy').encode(),
+            )
+
         index = max(i for i, item in enumerate(args) if item == '-f') + 2
         sub = args[index:]
+
+        if sub[0] == 'ps':
+            self.readonly_calls.append(sub)
+            self.runtime_path = Path(
+                args[args.index('--env-file') + 1])
+
+            container = 'a' if sub[-1] == 'backend' else 'b'
+
+            return subprocess.CompletedProcess(
+                args, 0, stdout=(container * 64).encode())
+
+        if sub[0] == 'exec':
+            self.readonly_calls.append(sub)
+
+            return subprocess.CompletedProcess(
+                args, 0,
+                stdout='\n'.join(self.actual_migrations).encode(),
+            )
+
         self.compose_calls.append(sub)
         queue = self.compose_failures.get(sub[0], [])
         code = queue.pop(0) if queue else 0
@@ -293,6 +375,7 @@ class WorkerCase(unittest.TestCase):
     def write_env(self, backend_ref=OLD_BACKEND, frontend_ref=OLD_FRONTEND):
         self.env_path.write_text('RELEASE_BACKEND_IMAGE=' + backend_ref + '\n'
                                  'RELEASE_FRONTEND_IMAGE=' + frontend_ref + '\n'
+                                 'PUBLIC_BIND_IP=192.168.1.10\n'
                                  'OTHER_KEY=keep\n')
         os.chmod(self.env_path, 0o600)
         return self.env_path
@@ -416,6 +499,261 @@ class InstallTests(WorkerCase):
             ['pull', 'up'],
         )
 
+    def test_stable_version_is_newer_than_beta(self):
+        self.assertGreater(
+            worker.version_key('v1.2.0'),
+            worker.version_key('v1.2.0-beta.99'),
+        )
+        self.assertGreater(
+            worker.version_key('v1.2.0-beta.10'),
+            worker.version_key('v1.2.0-beta.9'),
+        )
+
+    def test_changed_migration_contents_refused(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        sources = fixture_deployment_hashes()
+        sources[
+            'backend/src/migrations/20260101000000Init.ts'
+        ] = 'f' * 64
+
+        lock, payload = make_lock(source_files=sources)
+        self.write_request(lock['manifest_sha256'])
+
+        deps = FakeDeps(github_routes(
+            payload, openssl_sign(payload)))
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'migration contents differ'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(deps.compose_calls, [])
+        self.assertFalse(worker.journal_exists())
+
+    def test_actual_database_schema_mismatch_refused(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        _, _, deps = self.candidate_deps()
+        deps.actual_migrations.append('UnexpectedMigration')
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'actual database migrations differ'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(deps.compose_calls, [])
+        self.assertFalse(worker.journal_exists())
+
+    def test_runtime_digest_mismatch_refused(self):
+        self.write_env(
+            backend_ref='ghcr.io/' + REPO +
+            '/backend@sha256:' + 'f' * 64
+        )
+        self.write_installed_lock()
+
+        _, _, deps = self.candidate_deps()
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'runtime image references differ'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_running_container_identity_mismatch_refused(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        _, _, deps = self.candidate_deps()
+        deps.inspected_image_override = 'foreign/image:latest'
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'unexpected running image'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_duplicate_environment_key_refused(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        with self.env_path.open('a') as stream:
+            stream.write(
+                'RELEASE_BACKEND_IMAGE=' + OLD_BACKEND + '\n')
+
+        _, _, deps = self.candidate_deps()
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'duplicate runtime environment key'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(deps.compose_calls, [])
+
+    def test_http_404_causes_rollback(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        _, _, deps = self.candidate_deps(
+            smoke_statuses=[404, 200])
+
+        with self.assertRaises(worker.RecoveryRequired):
+            worker.install(deps)
+
+        self.assertEqual(self.read_status()['status'], 'STOP')
+        self.assertIn(OLD_BACKEND + '\n', self.read_env())
+        self.assertFalse(worker.journal_exists())
+
+    def test_crash_after_reference_switch_recovers_from_timer(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        path = worker.installed_lock_path()
+        previous = path.read_bytes()
+
+        _, _, deps = self.candidate_deps()
+        switch = worker.switch_images
+
+        def crash(config, lock):
+            self.assertTrue(worker.journal_exists())
+            switch(config, lock)
+            raise KeyboardInterrupt('simulated process crash')
+
+        with mock.patch.object(
+            worker, 'switch_images', side_effect=crash
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                worker.install(deps)
+
+        self.assertTrue(worker.journal_exists())
+        self.assertNotIn(OLD_BACKEND + '\n', self.read_env())
+
+        recovery = FakeDeps()
+        worker.archive(recovery)
+
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertIn(OLD_BACKEND + '\n', self.read_env())
+        self.assertEqual(self.read_status()['status'], 'STOP')
+        self.assertEqual(recovery.compose_calls[0][0], 'up')
+        self.assertFalse(worker.journal_exists())
+
+    def test_crash_after_installed_lock_write_restores_old_release(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        path = worker.installed_lock_path()
+        previous = path.read_bytes()
+
+        _, _, deps = self.candidate_deps()
+        write = worker.write_installed_lock
+
+        def crash(payload):
+            write(payload)
+            raise KeyboardInterrupt('crash after installed lock write')
+
+        with mock.patch.object(
+            worker, 'write_installed_lock', side_effect=crash
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                worker.install(deps)
+
+        self.assertTrue(worker.journal_exists())
+        self.assertNotEqual(path.read_bytes(), previous)
+
+        worker.archive(FakeDeps())
+
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertIn(OLD_BACKEND + '\n', self.read_env())
+        self.assertFalse(worker.journal_exists())
+
+    def test_crash_after_terminal_receipt_does_not_rollback(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        _, payload, deps = self.candidate_deps()
+
+        with mock.patch.object(
+            worker, 'clear_journal',
+            side_effect=KeyboardInterrupt('crash before journal cleanup'),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                worker.install(deps)
+
+        self.assertTrue(worker.journal_exists())
+        self.assertEqual(
+            self.read_status()['status'], 'INSTALLED')
+
+        recovery = FakeDeps()
+        worker.archive(recovery)
+
+        self.assertEqual(recovery.compose_calls, [])
+        self.assertEqual(
+            worker.installed_lock_path().read_bytes(), payload)
+        self.assertFalse(worker.journal_exists())
+
+    def test_failed_recovery_retains_transaction(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        _, _, deps = self.candidate_deps(
+            compose_failures={'up': [1, 1]})
+
+        with self.assertRaises(worker.RecoveryRequired):
+            worker.install(deps)
+
+        self.assertTrue(worker.journal_exists())
+        self.assertEqual(
+            self.read_status()['status'],
+            'MANUAL_RECOVERY_REQUIRED',
+        )
+
+        recovery = FakeDeps()
+        worker.archive(recovery)
+
+        self.assertTrue(worker.journal_exists())
+        self.assertEqual(recovery.compose_calls, [])
+
+    def test_timer_reconciles_stale_receipt_without_request(self):
+        old = (NOW - timedelta(minutes=45)).isoformat()
+
+        self.write_receipt(
+            status='RUNNING', phase='VERIFY_TRUST', updated=old)
+
+        worker.archive(FakeDeps())
+
+        self.assertEqual(
+            self.read_status()['status'],
+            'MANUAL_RECOVERY_REQUIRED',
+        )
+
+    def test_unqualified_release_is_rejected(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        lock, _ = make_lock()
+        lock['production_qualification']['status'] = 'BLOCKED'
+        lock.pop('manifest_sha256')
+
+        lock['manifest_sha256'] = hashlib.sha256(
+            worker.canonical(lock).encode()).hexdigest()
+
+        payload = json.dumps(lock).encode()
+        self.write_request(lock['manifest_sha256'])
+
+        deps = FakeDeps(github_routes(
+            payload, openssl_sign(payload)))
+
+        with self.assertRaisesRegex(
+            worker.Refusal, 'release qualification required'
+        ):
+            worker.install(deps)
+
+        self.assertEqual(deps.compose_calls, [])
+
     def test_happy_path_installs_signed_release(self):
         self.write_env()
         self.write_installed_lock(tag='v1.1.0')
@@ -441,7 +779,7 @@ class InstallTests(WorkerCase):
         for call in deps.compose_calls:
             if call[0] == 'up':
                 self.assertIn('--no-build', call)
-        self.assertEqual(deps.smoke_calls, [('https://127.0.0.1:443/', 'cloud.example.com')])
+        self.assertEqual(deps.smoke_calls, [('https://192.168.1.10:443/', 'cloud.example.com')])
 
     def test_no_request_is_noop(self):
         worker.install(FakeDeps())
@@ -620,13 +958,29 @@ class BootstrapTests(WorkerCase):
         with self.assertRaises(worker.Refusal):
             worker.bootstrap(FakeDeps())
 
-    def test_bootstrap_refuses_when_no_release_matches(self):
-        _, payload = make_lock(tag='v1.1.0')
-        self.write_env()  # refs не из этого релиза
-        deps = FakeDeps(github_routes(payload, openssl_sign(payload)))
-        with self.assertRaises(worker.Refusal):
-            worker.bootstrap(deps)
-        self.assertFalse(self.install_lock().exists())
+    def test_bootstrap_refuses_when_runtime_images_differ_from_signed_deployment(self):
+        for role in ('backend', 'frontend'):
+            with self.subTest(role=role):
+                foreign_ref = (
+                    'ghcr.io/' + REPO + '/' + role
+                    + '@sha256:' + 'f' * 64
+                )
+
+                self.write_env(**{
+                    role + '_ref': foreign_ref,
+                })
+
+                deps = FakeDeps()
+
+                with self.assertRaisesRegex(
+                    worker.Refusal,
+                    'installed images differ from signed deployment',
+                ):
+                    worker.bootstrap(deps)
+
+                self.assertFalse(self.install_lock().exists())
+                self.assertEqual(deps.http_calls, [])
+                self.assertEqual(deps.compose_calls, [])
 
     def test_bootstrap_refuses_foreign_signature(self):
         lock, payload = make_lock(tag='v1.1.0')
