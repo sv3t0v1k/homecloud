@@ -106,19 +106,30 @@ env-путей inbox/status/installed-lock, непустой
 на путь ссылаются compose-проект и worker обновлений, он должен быть
 стабильным) и запускает установщик:
 
+Без `--tag` bootstrap выбирает последний опубликованный стабильный RELEASE.
+GitHub endpoint `releases/latest` исключает предварительные версии.
+
+В период beta необходимо явно указать тег опубликованной подписанной
+версии (`vX.Y.Z-beta.N`). Например, после публикации `v0.9.0-beta.1`:
+
 ```bash
-# интерактивно (сохранить скрипт — чтобы работали вопросы с умолчаниями)
 curl -fsSL https://raw.githubusercontent.com/sv3t0v1k/homecloud/main/deploy/user/bootstrap.sh \
-  -o /tmp/homecloud-bootstrap.sh && sudo sh /tmp/homecloud-bootstrap.sh
-
-# полностью автоматически (по pipe — все ответы по умолчанию)
-curl -fsSL https://raw.githubusercontent.com/sv3t0v1k/homecloud/main/deploy/user/bootstrap.sh | sudo sh
-
-# конкретный подписанный релиз вместо «последнего»
-... | sudo sh -s -- --tag v0.4.2
-# test-канал (без проверки подписи, предупреждение в выводе)
-... | sudo sh -s -- --ref test --channel test
+  -o /tmp/homecloud-bootstrap.sh && \
+  sudo sh /tmp/homecloud-bootstrap.sh --tag v0.9.0-beta.1 --interactive
 ```
+
+После появления стабильного RELEASE тег можно опустить:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sv3t0v1k/homecloud/main/deploy/user/bootstrap.sh \
+  -o /tmp/homecloud-bootstrap.sh && \
+  sudo sh /tmp/homecloud-bootstrap.sh --interactive
+```
+
+Для полностью автоматической установки необходимо явно передать
+`--defaults` и, если требуется, файл `--answers`.
+Канал TEST требует явного `--channel test`, `--ref` и проверенной
+пары TEST-образов через `--images` или ввод установщика.
 
 Доверие: релизный тег резолвится из GitHub Releases, затем
 `bootstrap.py` скачивает `release-lock.json` + подпись, проверяет

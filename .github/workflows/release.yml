@@ -223,6 +223,10 @@ jobs:
           cat > "$RUNNER_TEMP/notes.md" <<NOTES
           Этап D5.1 — кандидат HomeCloud $TAG.
 
+          ## Изменения
+          Подготовлены подписанный манифест и проверенная пара образов HomeCloud $TAG.
+
+          ## Квалификация
           Исходный commit: $COMMIT.
           Тесты, Compose, dependency и secret gates успешно выполнены в текущем CI run.
           Linux/amd64 backend/frontend опубликованы в GHCR и проверены по digest и OCI revision.
