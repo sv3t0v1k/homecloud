@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -434,6 +435,284 @@ py() {
                     "DB_PASSWORD=<generated>\n",
                     runtime,
                 )
+
+
+class BootstrapChannelRegressionTests(unittest.TestCase):
+    """Проверка аргументов и каналов реального shell-bootstrap."""
+
+    def run_bootstrap(self, *args):
+        path = Path(__file__).resolve().with_name("bootstrap.sh")
+        script = path.read_text()
+
+        boundary = (
+            'py() { env -i HOME=/root PATH="$clean_path" '
+            '/usr/bin/python3 -I -B "$@"; }'
+        )
+
+        harness = """
+py() {
+  case "${2-}" in
+    latest-tag)
+      printf '%s\\n' v1.2.0
+      ;;
+    fetch)
+      "$HC_TEST_PYTHON" -c 'import sys,json; print("FETCH "+json.dumps(sys.argv[1:]))' "$@" >&2
+      printf '%s\\n' "$HC_TEST_INFO"
+      ;;
+    *)
+      "$HC_TEST_PYTHON" -I -B "$@"
+      ;;
+  esac
+}
+"""
+
+        self.assertEqual(script.count(boundary), 1)
+        script = script.replace(boundary, harness, 1)
+
+        launch = 'exec sh "$REPO_DIR/deploy/user/install.sh" "$@"'
+
+        capture = (
+            'exec "$HC_TEST_PYTHON" -c '
+            "'import sys,json; print(json.dumps(sys.argv[1:]))' "
+            '"$REPO_DIR/deploy/user/install.sh" "$@"'
+        )
+
+        self.assertEqual(script.count(launch), 1)
+        script = script.replace(launch, capture, 1)
+        script = 'id() { printf "0\\n"; }\n' + script
+
+        env = dict(os.environ)
+        env["HC_TEST_PYTHON"] = sys.executable
+        env["HC_TEST_INFO"] = json.dumps({
+            "images": {
+                "backend": "ghcr.io/example/backend@sha256:" + "a" * 64,
+                "frontend": "ghcr.io/example/frontend@sha256:" + "b" * 64,
+            }
+        })
+
+        return subprocess.run(
+            ["sh", "-c", script, str(path), *args],
+            cwd=path.parents[2],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def successful_args(self, result):
+        self.assertEqual(
+            result.returncode, 0,
+            result.stdout + result.stderr,
+        )
+        return json.loads(result.stdout.splitlines()[-1])
+
+    def fetch_args(self, result):
+        lines = [
+            line for line in result.stderr.splitlines()
+            if line.startswith("FETCH ")
+        ]
+        self.assertEqual(len(lines), 1)
+        return json.loads(lines[0][6:])[1:]
+
+    def test_default_is_signed_release(self):
+        result = self.run_bootstrap("--defaults")
+        args = self.successful_args(result)
+        self.assertEqual(
+            self.fetch_args(result),
+            ["fetch", "--tag", "v1.2.0",
+             "--dest", "/opt/homecloud/repo"],
+        )
+        self.assertIn("--channel", args)
+        self.assertEqual(args[args.index("--channel") + 1], "release")
+        self.assertIn("--images", args)
+        self.assertIn("--defaults", args)
+
+    def test_explicit_tag(self):
+        result = self.run_bootstrap("--tag", "v2.0.0")
+        self.successful_args(result)
+        self.assertEqual(
+            self.fetch_args(result)[1:3],
+            ["--tag", "v2.0.0"],
+        )
+
+    def test_explicit_test_ref(self):
+        result = self.run_bootstrap(
+            "--ref", "test",
+            "--channel", "test",
+            "--defaults",
+        )
+        args = self.successful_args(result)
+        self.assertEqual(
+            self.fetch_args(result)[1:3],
+            ["--ref", "test"],
+        )
+        self.assertEqual(args[args.index("--channel") + 1], "test")
+        self.assertNotIn("--images", args)
+
+    def test_unsafe_channel_combinations_refused_before_fetch(self):
+        cases = [
+            ["--ref", "test"],
+            ["--ref", "test", "--channel", "release"],
+            ["--channel", "test"],
+            ["--tag", "v1.2.0", "--channel", "test"],
+            ["--tag", "v1.2.0", "--ref", "test"],
+            ["--channel", "nightly"],
+            ["--channel", "release", "--channel", "test"],
+        ]
+        for args in cases:
+            with self.subTest(args=args):
+                result = self.run_bootstrap(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("FETCH ", result.stderr)
+
+    def test_argument_boundaries_preserved(self):
+        answers_path = "/srv/config/My answers 'draft' *.json"
+
+        result = self.run_bootstrap(
+            "--root", "/srv/homecloud",
+            "--repo-dir", "/srv/homecloud/repo",
+            "--answers", answers_path,
+            "--name", "custom-cloud",
+            "--no-start",
+        )
+
+        args = self.successful_args(result)
+        self.assertEqual(args[0], "/srv/homecloud/repo/deploy/user/install.sh")
+        self.assertEqual(args[args.index("--root") + 1], "/srv/homecloud")
+        self.assertEqual(args[args.index("--answers") + 1], answers_path)
+        self.assertEqual(args[args.index("--name") + 1], "custom-cloud")
+        self.assertIn("--no-start", args)
+        self.assertNotIn("--repo-dir", args)
+
+    def test_missing_value_refused_before_fetch(self):
+        for option in ("--tag", "--ref", "--root", "--answers", "--channel"):
+            with self.subTest(option=option):
+                result = self.run_bootstrap(option)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("FETCH ", result.stderr)
+
+    def test_unknown_argument_refused_before_fetch(self):
+        result = self.run_bootstrap("--unknown")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("FETCH ", result.stderr)
+
+
+class InstallerAnswersChannelTests(unittest.TestCase):
+    """Проверка канала answers до изменения хоста."""
+
+    def run_installer(self, answers, *args):
+        path = Path(__file__).resolve().with_name("install.sh")
+        script = path.read_text()
+
+        boundary = (
+            'py() { env -i HOME=/root PATH="$clean_path" '
+            '/usr/bin/python3 -I -B "$@"; }'
+        )
+
+        harness = """
+py() {
+  case "$1" in
+    */probe.py)
+      printf '%s\\n' "$HC_TEST_PROBE" > "$3"
+      ;;
+    *)
+      "$HC_TEST_PYTHON" -I -B "$@"
+      ;;
+  esac
+}
+"""
+
+        self.assertEqual(script.count(boundary), 1)
+        script = script.replace(boundary, harness, 1)
+
+        # Останавливаем тест до фазы generate/apply.
+        marker = "# --- Фаза 3:"
+        self.assertEqual(script.count(marker), 1)
+        script = script.split(marker, 1)[0]
+        script += '\nprintf "SELECTED_CHANNEL=%s\\n" "$CHANNEL"\n'
+        script = 'id() { printf "0\\n"; }\n' + script
+
+        env = dict(os.environ)
+        env["HC_TEST_PYTHON"] = sys.executable
+        env["HC_TEST_PROBE"] = json.dumps({
+            "warnings": [],
+            "system": {"arch": "x86_64"},
+            "docker": {
+                "present": True,
+                "compose_version": "5.6.0",
+            },
+            "network": {
+                "primary_ip": "192.168.1.10",
+                "listening_tcp_ports": [],
+            },
+            "mounts": [
+                {
+                    "target": "/",
+                    "uuid": "ssd-uuid",
+                    "serial": "SSD123",
+                },
+            ],
+        })
+
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "test answers.json"
+            file.write_text(json.dumps(answers))
+
+            return subprocess.run(
+                ["sh", "-c", script, str(path),
+                 "--answers", str(file), *args],
+                cwd=path.parents[2],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+    def test_channel_inferred_from_answers(self):
+        for channel in ("release", "test"):
+            with self.subTest(channel=channel):
+                result = self.run_installer({
+                    "update_channel": channel
+                })
+                self.assertEqual(
+                    result.returncode, 0,
+                    result.stdout + result.stderr,
+                )
+                self.assertIn(
+                    "SELECTED_CHANNEL=" + channel,
+                    result.stdout,
+                )
+
+    def test_explicit_matching_channel(self):
+        result = self.run_installer(
+            {"update_channel": "test"},
+            "--channel", "test",
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            result.stdout + result.stderr,
+        )
+        self.assertIn("SELECTED_CHANNEL=test", result.stdout)
+
+    def test_conflicting_channel_rejected(self):
+        for explicit, saved in (
+            ("release", "test"),
+            ("test", "release"),
+        ):
+            with self.subTest(explicit=explicit, saved=saved):
+                result = self.run_installer(
+                    {"update_channel": saved},
+                    "--channel", explicit,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("SELECTED_CHANNEL=", result.stdout)
+
+    def test_missing_or_invalid_channel_rejected(self):
+        for answers in ({}, {"update_channel": "nightly"}):
+            with self.subTest(answers=answers):
+                result = self.run_installer(answers)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("SELECTED_CHANNEL=", result.stdout)
 
 
 if __name__ == '__main__':

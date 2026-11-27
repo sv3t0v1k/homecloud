@@ -127,6 +127,23 @@ fi
 # --- Фаза 2: вопросы ---------------------------------------------------------
 if [ -n "$ANSWERS_OVERRIDE" ]; then
   cp "$ANSWERS_OVERRIDE" "$work/answers.json"
+
+  answers_channel=$(py -c '
+import json
+import sys
+
+answers = json.load(open(sys.argv[1]))
+channel = answers.get("update_channel")
+if channel not in ("release", "test"):
+    sys.exit("answers: update_channel должен быть release или test")
+print(channel)
+' "$work/answers.json") || fail 'неверный канал в answers'
+
+  if [ "$CHANNEL_GIVEN" = 1 ] && [ "$CHANNEL" != "$answers_channel" ]; then
+    fail '--channel противоречит update_channel в answers'
+  fi
+
+  CHANNEL=$answers_channel
 else
   say '==> Параметры установки (Enter — принять предложенное)'
   public_host=$(ask 'Адрес сервера (домен или IP)' "$primary_ip")

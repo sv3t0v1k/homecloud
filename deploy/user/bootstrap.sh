@@ -35,25 +35,95 @@ TAG=''
 REF=''
 REPO_DIR=''
 INSTALL_ROOT=/opt/homecloud
-ARGS=''
 CHANNEL=release
+CHANNEL_GIVEN=0
 IMAGES_GIVEN=0
 
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --tag) TAG=${2:?}; shift 2;;
-    --ref) REF=${2:?}; shift 2;;
-    --repo-dir) REPO_DIR=${2:?}; shift 2;;
-    --root) INSTALL_ROOT=${2:?}; ARGS="$ARGS --root $(printf '%s' "$2" | sed "s/'/'\\\\''/g; s/^/'/; s/$/'/")"; shift 2;;
-    --channel) CHANNEL=${2:?}; ARGS="$ARGS --channel $2"; shift 2;;
-    --images) IMAGES_GIVEN=1; ARGS="$ARGS --images $2"; shift 2;;
-    *) ARGS="$ARGS $1"; shift;;
+# Обрабатываем только исходные аргументы.
+# Аргументы install.sh добавляются в конец "$@".
+remaining=$#
+
+while [ "$remaining" -gt 0 ]; do
+  opt=$1
+  shift
+  remaining=$((remaining - 1))
+
+  case "$opt" in
+    --tag|--ref|--repo-dir|--root|--channel|--images|--answers|--name)
+      [ "$remaining" -gt 0 ] || fail "$opt: отсутствует значение"
+      value=$1
+      shift
+      remaining=$((remaining - 1))
+
+      [ -n "$value" ] || fail "$opt: пустое значение"
+
+      case "$opt" in
+        --tag)
+          [ -z "$TAG" ] || fail 'повторный --tag'
+          TAG=$value
+          ;;
+        --ref)
+          [ -z "$REF" ] || fail 'повторный --ref'
+          REF=$value
+          ;;
+        --repo-dir)
+          REPO_DIR=$value
+          ;;
+        --root)
+          INSTALL_ROOT=$value
+          set -- "$@" "$opt" "$value"
+          ;;
+        --channel)
+          [ "$CHANNEL_GIVEN" = 0 ] || fail 'повторный --channel'
+          CHANNEL=$value
+          CHANNEL_GIVEN=1
+          ;;
+        --images)
+          IMAGES_GIVEN=1
+          set -- "$@" "$opt" "$value"
+          ;;
+        *)
+          set -- "$@" "$opt" "$value"
+          ;;
+      esac
+      ;;
+    --defaults|--interactive|--no-start)
+      set -- "$@" "$opt"
+      ;;
+    *)
+      fail "неизвестный аргумент: $opt"
+      ;;
   esac
 done
 
-case "$INSTALL_ROOT" in /*) ;; *) fail '--root: абсолютный путь';; esac
-case "$CHANNEL" in release|test) ;; *) fail '--channel: release или test';; esac
-[ -n "$TAG" ] && [ -n "$REF" ] && fail 'нельзя одновременно --tag и --ref'
+case "$INSTALL_ROOT" in
+  /*) ;;
+  *) fail '--root: абсолютный путь';;
+esac
+
+case "$CHANNEL" in
+  release|test) ;;
+  *) fail '--channel: release или test';;
+esac
+
+if [ -n "$TAG" ] && [ -n "$REF" ]; then
+  fail 'нельзя одновременно --tag и --ref'
+fi
+
+# INS-003: неподписанный ref допустим только
+# при явно выбранном test-канале.
+if [ -n "$REF" ]; then
+  [ "$CHANNEL_GIVEN" = 1 ] && [ "$CHANNEL" = test ] \
+    || fail '--ref требует явного --channel test'
+fi
+
+if [ "$CHANNEL" = test ]; then
+  [ -n "$REF" ] || fail 'test-канал требует --ref'
+  [ -z "$TAG" ] || fail '--tag предназначен для release'
+fi
+
+# Install.sh не должен повторно спрашивать канал.
+set -- "$@" --channel "$CHANNEL"
 
 clean_path=/usr/sbin:/usr/bin:/sbin:/bin
 py() { env -i HOME=/root PATH="$clean_path" /usr/bin/python3 -I -B "$@"; }
@@ -88,11 +158,13 @@ else
   say "==> Скачиваю релиз $TAG с проверкой подписи"
 fi
 
-fetch_args=''
-if [ -n "$TAG" ]; then fetch_args="--tag $TAG"; else fetch_args="--ref $REF"; fi
-# shellcheck disable=SC2086
-info=$(py "$BOOTSTRAP_PY" fetch $fetch_args --dest "$REPO_DIR") \
-  || fail 'не удалось скачать и проверить репозиторий'
+if [ -n "$TAG" ]; then
+  info=$(py "$BOOTSTRAP_PY" fetch --tag "$TAG" --dest "$REPO_DIR") \
+    || fail 'не удалось скачать и проверить репозиторий'
+else
+  info=$(py "$BOOTSTRAP_PY" fetch --ref "$REF" --dest "$REPO_DIR") \
+    || fail 'не удалось скачать репозиторий'
+fi
 
 # Для подписанного релиза подставляем образы из lock, если оператор не задал
 # свои и канал не test (у test-канала своих образов в lock нет).
@@ -104,11 +176,10 @@ backend = images.get("backend"); frontend = images.get("frontend")
 if backend and frontend:
     print(backend + "," + frontend)') || pair=''
   if [ -n "$pair" ]; then
-    ARGS="$ARGS --images $pair"
+    set -- "$@" --images "$pair"
     say '==> Образы взяты из подписанного release-lock'
   fi
 fi
 
 say "==> Запускаю установщик из $REPO_DIR"
-# shellcheck disable=SC2086
-exec sh "$REPO_DIR/deploy/user/install.sh" $ARGS
+exec sh "$REPO_DIR/deploy/user/install.sh" "$@"
