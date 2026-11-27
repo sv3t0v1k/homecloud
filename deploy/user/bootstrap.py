@@ -52,7 +52,7 @@ MAX_LOCK_BYTES = 8 * 1024 * 1024
 # Trust anchor belongs to the trusted bootstrap, not the downloaded release.
 # Changing this key requires an explicit key rotation procedure.
 TRUSTED_RELEASE_PUBLIC_B64 = (
-    'MCowBQYDK2VwAyEAerX37IOR/e0gTYCYg2f5ePTkMRwgnEEUr/GAMeZBIwA='
+    'MCowBQYDK2VwAyEA0ILGVqfbCeMUPX2Nj5cfOCRJNrVyhoNm33YUrAiqR2U='
 )
 # Файлы без которых установщик не работает (должны входить в source_files lock).
 REQUIRED_PATHS = ('deploy/user/install.sh', 'deploy/user/probe.py',
