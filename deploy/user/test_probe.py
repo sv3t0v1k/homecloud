@@ -140,6 +140,24 @@ class ProbeContractTests(unittest.TestCase):
         self.assertIsNone(facts['network']['primary_ip'])
         self.assertEqual(facts['warnings'], [])
 
+    def test_static_default_route_uses_kernel_selected_source(self):
+        facts = self.collect({
+            ('ip', '-json', 'route', 'show', 'default'):
+                json.dumps([{'dst': 'default', 'gateway': '192.168.1.1', 'dev': 'eth0'}]),
+            ('ip', '-json', '-4', 'route', 'get', '1.1.1.1'):
+                json.dumps([{'dev': 'eth0', 'prefsrc': '192.168.1.10'}]),
+        })
+        self.assertEqual(facts['network']['primary_ip'], '192.168.1.10')
+
+    def test_static_route_does_not_accept_other_interface_source(self):
+        facts = self.collect({
+            ('ip', '-json', 'route', 'show', 'default'):
+                json.dumps([{'dst': 'default', 'gateway': '192.168.1.1', 'dev': 'eth0'}]),
+            ('ip', '-json', '-4', 'route', 'get', '1.1.1.1'):
+                json.dumps([{'dev': 'eth1', 'prefsrc': '192.168.2.10'}]),
+        })
+        self.assertIsNone(facts['network']['primary_ip'])
+
 
 if __name__ == '__main__':
     unittest.main()

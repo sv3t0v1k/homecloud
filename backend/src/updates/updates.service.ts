@@ -187,17 +187,18 @@ export class UpdatesService {
       const releases = await githubJson("/releases?per_page=20", token) as Release[];
       if (!Array.isArray(releases)) throw new Error("Invalid releases");
       for (const release of releases) {
-        if (release.draft || !isVersion(release.tag_name) ||
-            (isVersion(installed.version) && !newer(release.tag_name, installed.version))) continue;
+        if (release.draft || !isVersion(release.tag_name)) continue;
         const assetUrl = (name: string) => release.assets?.find((item) => item.name === name && APIS.some((base) => item.url.startsWith(`${base}/releases/assets/`) && /^\d+$/.test(item.url.slice(`${base}/releases/assets/`.length))));
         const asset = assetUrl("release-lock.json");
         const signatureAsset = assetUrl("release-lock.json.sig");
-        if (!asset || !signatureAsset) continue;
+        if (!asset || !signatureAsset) throw new Error("Published release has incomplete signature evidence");
         const lockText = await githubText(asset.url, token, "application/octet-stream");
         const signatureText = await githubText(signatureAsset.url, token, "application/octet-stream");
-        if (!verifyLockSignature(lockText, signatureText, publicKey)) continue;
+        if (!verifyLockSignature(lockText, signatureText, publicKey)) throw new Error("Published release signature is invalid");
         const lock = verifiedLock(JSON.parse(lockText));
-        if (!lock || lock.tag !== release.tag_name || lock.commit === installed.gitSha ||
+        if (!lock || lock.tag !== release.tag_name) continue;
+        if ((isVersion(installed.version) && !newer(release.tag_name, installed.version)) ||
+            lock.commit === installed.gitSha ||
             canonical([...lock.schema_migrations].sort()) !== canonical([...installed.schemaMigrations].sort())) continue;
         const comparison = await githubJson(`/compare/${installed.gitSha}...${lock.commit}`, token) as { status?: string };
         if (comparison.status !== "ahead") continue;

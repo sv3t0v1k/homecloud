@@ -1,5 +1,8 @@
 [Unit]
 Description=Recover interrupted HomeCloud updates and archive receipts
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
 
 [Service]
 Type=oneshot

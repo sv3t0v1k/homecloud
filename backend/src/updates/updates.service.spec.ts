@@ -201,7 +201,7 @@ describe("updates discovery", () => {
     expect(result.available).toMatchObject({ version: "v0.9.1", gitSha: newSha });
   });
 
-  it("skips a release whose lock signature does not verify", async () => {
+  it("reports unavailable when a published lock signature does not verify", async () => {
     await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
     const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
       key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
@@ -216,11 +216,11 @@ describe("updates discovery", () => {
       throw new Error(`Unexpected URL ${url}`);
     }) as typeof fetch;
     const result = await service.check();
-    expect(result.status).toBe("current");
+    expect(result.status).toBe("check_unavailable");
     expect(result.available).toBeNull();
   });
 
-  it("skips a release without a signature asset", async () => {
+  it("reports unavailable when a published release lacks its signature asset", async () => {
     await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
     const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
       key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
@@ -232,7 +232,21 @@ describe("updates discovery", () => {
       throw new Error(`Unexpected URL ${url}`);
     }) as typeof fetch;
     const result = await service.check();
-    expect(result.status).toBe("current");
+    expect(result.status).toBe("check_unavailable");
+    expect(result.available).toBeNull();
+  });
+
+  it("reports unavailable for an older published version without signature evidence", async () => {
+    await writeFile(join(directory, "installed.json"), JSON.stringify(lock(oldSha, "v0.9.0-beta.1")));
+    const service = new UpdatesService({ get: (key: string) => key === "UPDATE_INSTALLED_LOCK_PATH" ? join(directory, "installed.json") :
+      key === "UPDATE_RELEASE_PUBLIC_KEY" ? publicKeyB64 : "" } as ConfigService);
+    global.fetch = jest.fn(async (url: string) => {
+      if (url.includes("/releases?")) return Response.json([{ draft: false, prerelease: true,
+        tag_name: "v0.8.9-beta.1", body: "## Изменения\nСтарый выпуск.", assets: [] }]);
+      throw new Error(`Unexpected URL ${url}`);
+    }) as typeof fetch;
+    const result = await service.check();
+    expect(result.status).toBe("check_unavailable");
     expect(result.available).toBeNull();
   });
 
