@@ -149,7 +149,7 @@ else
   public_host=$(ask 'Адрес сервера (домен или IP)' "$primary_ip")
   https_port=$(ask 'HTTPS порт' "$default_https")
   http_port=$(ask 'HTTP порт' "$default_http")
-  db_dir=$(ask 'Каталог базы данных' "$INSTALL_ROOT/data/postgres")
+  db_dir=$(ask 'Каталог базы данных' "$INSTALL_ROOT/postgres")
   storage_dir=$(ask 'Каталог файлов' "$INSTALL_ROOT/data/storage")
   storage_mount=$(ask 'Mountpoint раздела с файлами' "$default_storage_mount")
   storage_uuid=$(ask 'UUID раздела с файлами' "$default_storage_uuid")

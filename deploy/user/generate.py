@@ -12,6 +12,8 @@ Modes:
   apply — write artifacts with exact modes/owners and create TLS via openssl.
 """
 import argparse
+import importlib.util
+import platform
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -321,6 +323,130 @@ def redact_plan(plan):
             'generated_keys': plan['generated_keys']}
 
 
+def load_host_preflight():
+    """Reuse the existing native Linux disk qualification contract."""
+    path = Path(__file__).resolve().parents[1] / 'linux/preflight.py'
+    spec = importlib.util.spec_from_file_location(
+        'homecloud_host_preflight', path)
+    require(spec is not None and spec.loader is not None,
+            'cannot load host preflight')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_trusted_parents(plan):
+    """Existing parents must not allow unprivileged path replacement."""
+    targets = (
+        set(plan['dirs'])
+        | set(plan['files'])
+        | {plan['tls']['cert'], plan['tls']['key']}
+    )
+    checked = set()
+
+    for value in sorted(targets):
+        for parent in reversed(Path(value).parents):
+            if parent in checked:
+                continue
+            checked.add(parent)
+
+            try:
+                info = parent.lstat()
+            except FileNotFoundError:
+                continue
+
+            require(stat.S_ISDIR(info.st_mode),
+                    'unsafe install parent: ' + str(parent))
+            require(info.st_uid == 0 and not info.st_mode & 0o022,
+                    'untrusted install parent: ' + str(parent))
+
+            require(not os.listxattr(parent, follow_symlinks=False),
+                    'extended attributes on install parent: ' + str(parent))
+
+
+def check_host_disks(inventory, preflight):
+    """Qualify disks and future data paths without creating directories."""
+    ssd = inventory['ssd']
+    hdd = inventory['hdd']
+
+    db = Path(ssd['data'])
+    storage = Path(hdd['data'])
+
+    require(db != storage and db not in storage.parents
+            and storage not in db.parents,
+            'data directories overlap')
+
+    require(ssd['uuid'] != hdd['uuid'],
+            'SSD/HDD must have different filesystem UUIDs')
+
+    ssd_device = preflight.check_disk(ssd, 'db')
+    hdd_device = preflight.check_disk(hdd, 'backend')
+
+    require(ssd_device != hdd_device,
+            'SSD/HDD must be different physical disks')
+
+    for disk in (ssd, hdd):
+        data = Path(disk['data'])
+        mount = Path(disk['mount'])
+
+        require(data.is_absolute() and mount.is_absolute(),
+                'data and mount paths must be absolute')
+        require(str(data) == disk['data']
+                and str(mount) == disk['mount']
+                and '..' not in data.parts
+                and '..' not in mount.parts,
+                'non-canonical disk path')
+        require(mount in data.parents,
+                'data directory must be below mountpoint')
+
+        # Data directory does not exist yet.
+        # Resolve its nearest existing ancestor.
+        parent = data.parent
+
+        while True:
+            try:
+                info = parent.lstat()
+                require(stat.S_ISDIR(info.st_mode),
+                        'invalid data ancestor: ' + str(parent))
+                break
+            except FileNotFoundError:
+                require(parent != parent.parent,
+                        'no existing data ancestor')
+                parent = parent.parent
+
+        records = json.loads(preflight.host_findmnt(
+            '--json', '--target', str(parent),
+            '--output', 'TARGET,UUID'))['filesystems']
+
+        require(len(records) == 1,
+                'ambiguous data ancestor mount')
+
+        record = records[0]
+
+        require(record['target'] == disk['mount']
+                and record['uuid'] == disk['uuid'],
+                'future data directory is on a different mount: '
+                + str(data))
+
+
+def assert_host_admission(answers, plan):
+    """Read-only admission before any persistent artifact is created."""
+    require(platform.system() == 'Linux'
+            and platform.machine() == 'x86_64',
+            'installation requires native Linux x86_64')
+
+    assert_fresh_install(plan)
+    check_trusted_parents(plan)
+
+    preflight = load_host_preflight()
+
+    try:
+        check_host_disks(disk_inventory(answers), preflight)
+    except (preflight.Refusal, OSError, ValueError,
+            KeyError, TypeError, subprocess.SubprocessError) as error:
+        raise Refusal('host disk admission failed: ' + str(error))
+
+
 def assert_fresh_install(plan):
     """Read-only admission: never overwrite an existing installation."""
     targets = (
@@ -453,6 +579,7 @@ def main():
         else:
             if os.geteuid() != 0:
                 raise Refusal('apply требует root')
+            assert_host_admission(answers, plan)
             apply_plan(plan)
             create_tls(plan['tls'])
             print(json.dumps({'format': FORMAT, 'status': 'APPLIED',

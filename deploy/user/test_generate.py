@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -431,6 +432,10 @@ py() {
                 self.assertEqual(
                     inventory["hdd"]["data"],
                     root + "/data/storage",
+                )
+                self.assertEqual(
+                    inventory["ssd"]["data"],
+                    root + "/postgres",
                 )
                 self.assertIn(
                     "DB_PASSWORD=<generated>\n",
@@ -933,6 +938,295 @@ class FreshInstallationTests(unittest.TestCase):
         )
         self.assertFalse(self.data.exists())
         self.assertFalse(self.marker.exists())
+
+
+class HostAdmissionTests(unittest.TestCase):
+    """Read-only disk admission before any installation writes."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+
+        self.root = Path(directory.name).resolve()
+        self.ssd = self.root / "ssd"
+        self.hdd = self.root / "hdd"
+
+        self.ssd.mkdir()
+        self.hdd.mkdir()
+
+        self.inventory = {
+            "ssd": {
+                "mount": str(self.ssd),
+                "uuid": "uuid-ssd",
+                "data": str(self.ssd / "homecloud/postgres"),
+            },
+            "hdd": {
+                "mount": str(self.hdd),
+                "uuid": "uuid-hdd",
+                "data": str(self.hdd / "homecloud/storage"),
+            },
+        }
+
+        def findmnt(*args):
+            target = args[args.index("--target") + 1]
+
+            for disk in self.inventory.values():
+                if target == disk["mount"]:
+                    return json.dumps({
+                        "filesystems": [{
+                            "target": disk["mount"],
+                            "uuid": disk["uuid"],
+                        }],
+                    })
+
+            raise AssertionError("Unexpected mount query: " + target)
+
+        self.preflight = SimpleNamespace(
+            check_disk=mock.Mock(
+                side_effect=["/dev/sda", "/dev/sdb"]
+            ),
+            host_findmnt=mock.Mock(side_effect=findmnt),
+        )
+
+    def check(self):
+        generate.check_host_disks(
+            self.inventory,
+            self.preflight,
+        )
+
+    def test_distinct_disks_and_future_paths_accepted(self):
+        self.check()
+
+        self.assertEqual(
+            self.preflight.check_disk.call_args_list,
+            [
+                mock.call(self.inventory["ssd"], "db"),
+                mock.call(self.inventory["hdd"], "backend"),
+            ],
+        )
+        self.assertEqual(
+            self.preflight.host_findmnt.call_count, 2
+        )
+        self.assertEqual(list(self.ssd.iterdir()), [])
+        self.assertEqual(list(self.hdd.iterdir()), [])
+
+    def test_real_preflight_disk_contract(self):
+        preflight = generate.load_host_preflight()
+
+        devices = {}
+
+        for role, letter in (("ssd", "a"), ("hdd", "b")):
+            disk = self.inventory[role]
+
+            disk.update({
+                "serial": "SERIAL-" + letter,
+                "min_free_bytes": 1024,
+                "min_free_inodes": 100,
+            })
+
+            devices["/dev/sd" + letter + "1"] = {
+                "path": "/dev/sd" + letter,
+                "type": "disk",
+                "serial": disk["serial"],
+                "tran": "sata",
+                "rota": role == "hdd",
+                "wwn": "wwn-" + letter,
+            }
+
+        def command(*args):
+            if args[0] == "findmnt":
+                self.assertEqual(args[1:3], ("--task", "1"))
+                target = args[args.index("--target") + 1]
+
+                for role, letter in (("ssd", "a"), ("hdd", "b")):
+                    disk = self.inventory[role]
+
+                    if target == disk["mount"]:
+                        return json.dumps({
+                            "filesystems": [{
+                                "target": target,
+                                "uuid": disk["uuid"],
+                                "source": "/dev/sd" + letter + "1",
+                                "fstype": "ext4",
+                                "options": "rw,relatime",
+                                "fsroot": "/",
+                            }],
+                        })
+
+            if args[0] == "lsblk":
+                source = args[-1]
+                return json.dumps({
+                    "blockdevices": [{
+                        "path": source,
+                        "type": "part",
+                        "children": [devices[source]],
+                    }],
+                })
+
+            raise AssertionError("Unexpected command: " + repr(args))
+
+        capacity = SimpleNamespace(
+            f_bavail=1000000,
+            f_frsize=4096,
+            f_favail=1000000,
+        )
+
+        with mock.patch.object(preflight, "command", side_effect=command):
+            with mock.patch.object(
+                preflight.os, "statvfs", return_value=capacity
+            ):
+                generate.check_host_disks(
+                    self.inventory, preflight
+                )
+
+                # Неверный serial обязан отклонить настоящий preflight.
+                self.inventory["hdd"]["serial"] = "WRONG-SERIAL"
+
+                with self.assertRaises(preflight.Refusal):
+                    generate.check_host_disks(
+                        self.inventory, preflight
+                    )
+
+        self.assertEqual(list(self.ssd.iterdir()), [])
+        self.assertEqual(list(self.hdd.iterdir()), [])
+
+    def test_same_physical_device_refused(self):
+        self.preflight.check_disk.side_effect = [
+            "/dev/sda", "/dev/sda"
+        ]
+
+        with self.assertRaisesRegex(
+            generate.Refusal, "different physical disks"
+        ):
+            self.check()
+
+        self.preflight.host_findmnt.assert_not_called()
+
+    def test_same_filesystem_uuid_refused(self):
+        self.inventory["hdd"]["uuid"] = "uuid-ssd"
+
+        with self.assertRaisesRegex(
+            generate.Refusal, "different filesystem UUIDs"
+        ):
+            self.check()
+
+        self.preflight.check_disk.assert_not_called()
+
+    def test_overlapping_data_directories_refused(self):
+        self.inventory["hdd"]["data"] = (
+            self.inventory["ssd"]["data"] + "/storage"
+        )
+
+        with self.assertRaisesRegex(
+            generate.Refusal, "data directories overlap"
+        ):
+            self.check()
+
+        self.preflight.check_disk.assert_not_called()
+
+    def test_wrong_effective_mount_refused(self):
+        self.preflight.host_findmnt.side_effect = None
+        self.preflight.host_findmnt.return_value = json.dumps({
+            "filesystems": [{
+                "target": str(self.hdd),
+                "uuid": "uuid-hdd",
+            }],
+        })
+
+        with self.assertRaisesRegex(
+            generate.Refusal, "different mount"
+        ):
+            self.check()
+
+        self.assertEqual(list(self.ssd.iterdir()), [])
+        self.assertEqual(list(self.hdd.iterdir()), [])
+
+    def test_nested_mount_refused(self):
+        nested = self.ssd / "homecloud"
+        nested.mkdir()
+
+        self.preflight.host_findmnt.side_effect = None
+        self.preflight.host_findmnt.return_value = json.dumps({
+            "filesystems": [{
+                "target": str(nested),
+                "uuid": "uuid-other",
+            }],
+        })
+
+        with self.assertRaisesRegex(
+            generate.Refusal, "different mount"
+        ):
+            self.check()
+
+        self.assertFalse((nested / "postgres").exists())
+
+    def test_untrusted_parent_refused(self):
+        plan = {
+            "dirs": {"/srv/homecloud": (0o700, (0, 0))},
+            "files": {},
+            "tls": {
+                "cert": "/srv/homecloud/tls/cert",
+                "key": "/srv/homecloud/tls/key",
+            },
+        }
+
+        def lstat(path):
+            if str(path) == "/":
+                return SimpleNamespace(
+                    st_uid=0, st_mode=0o40755
+                )
+
+            if str(path) == "/srv":
+                return SimpleNamespace(
+                    st_uid=1000, st_mode=0o40777
+                )
+
+            raise FileNotFoundError(str(path))
+
+        with mock.patch.object(Path, "lstat", lstat):
+            with mock.patch.object(
+                generate.os, "listxattr",
+                return_value=[],
+                create=True,
+            ):
+                with self.assertRaisesRegex(
+                    generate.Refusal, "untrusted install parent"
+                ):
+                    generate.check_trusted_parents(plan)
+
+    def test_main_never_applies_after_admission_failure(self):
+        answers_path = self.root / "answers.json"
+        answers_path.write_text("{}")
+
+        with mock.patch.object(
+            sys, "argv",
+            ["generate.py", "--answers", str(answers_path),
+             "--mode", "apply"],
+        ):
+            with mock.patch.object(
+                generate.os, "geteuid", return_value=0
+            ):
+                with mock.patch.object(
+                    generate, "build", return_value={}
+                ):
+                    with mock.patch.object(
+                        generate, "assert_host_admission",
+                        side_effect=generate.Refusal(
+                            "test disk refusal"
+                        ),
+                    ) as admission:
+                        with mock.patch.object(
+                            generate, "apply_plan"
+                        ) as apply:
+                            with mock.patch.object(
+                                generate, "create_tls"
+                            ) as tls:
+                                with mock.patch.object(sys, "stderr"):
+                                    self.assertEqual(generate.main(), 2)
+
+                                admission.assert_called_once()
+                                apply.assert_not_called()
+                                tls.assert_not_called()
 
 
 if __name__ == '__main__':
