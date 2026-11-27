@@ -173,6 +173,13 @@ class FetchSignedTests(OpensslRequired):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+        # macOS disposable fixture ancestors are not production
+        # root-owned Linux installation directories.
+        parent_guard = mock.patch.object(
+            bootstrap, 'assert_trusted_release_destination')
+        parent_guard.start()
+        self.addCleanup(parent_guard.stop)
+
     def dest(self):
         return tempfile.TemporaryDirectory()
 
@@ -432,6 +439,164 @@ class FetchSignedTests(OpensslRequired):
 
             self.assertEqual(existing.read_bytes(), b'preserved')
             self.assertEqual(list(Path(directory).iterdir()), [existing])
+
+    def test_every_local_deployment_file_is_hash_verified(self):
+        routes = release_routes()
+
+        with self.dest() as directory:
+            bootstrap.fetch_signed(
+                TAG, directory, fetch=canned_fetch(routes))
+
+            root = Path(directory)
+
+            for name in bootstrap.USER_DEPLOYMENT_PATHS:
+                with self.subTest(name=name):
+                    target = root / name
+                    original = target.read_bytes()
+
+                    try:
+                        target.write_bytes(original + b"tampered")
+
+                        with self.assertRaisesRegex(
+                            bootstrap.Failure,
+                            'хэш локального deployment не совпадает',
+                        ):
+                            bootstrap.verify_local_release(directory)
+                    finally:
+                        target.write_bytes(original)
+
+            bootstrap.verify_local_release(directory)
+
+    def test_extra_local_files_and_directories_rejected(self):
+        routes = release_routes()
+
+        with self.dest() as directory:
+            bootstrap.fetch_signed(
+                TAG, directory, fetch=canned_fetch(routes))
+
+            root = Path(directory)
+
+            for name in ('.env', 'docker-compose.override.yml',
+                         'deploy/user/unknown.py'):
+                with self.subTest(name=name):
+                    target = root / name
+                    target.write_bytes(b'untrusted')
+
+                    try:
+                        with self.assertRaisesRegex(
+                            bootstrap.Failure, 'посторонний путь'
+                        ):
+                            bootstrap.verify_local_release(directory)
+                    finally:
+                        target.unlink()
+
+            extra = root / 'unexpected'
+            extra.mkdir()
+
+            try:
+                with self.assertRaises(bootstrap.Failure):
+                    bootstrap.verify_local_release(directory)
+            finally:
+                extra.rmdir()
+
+            bootstrap.verify_local_release(directory)
+
+    def test_local_symlink_and_hardlink_rejected(self):
+        routes = release_routes()
+
+        with self.dest() as directory:
+            bootstrap.fetch_signed(
+                TAG, directory, fetch=canned_fetch(routes))
+
+            target = Path(directory) / 'deploy/linux/startup-gate.sh'
+            original = target.read_bytes()
+
+            with self.dest() as foreign_directory:
+                foreign = Path(foreign_directory) / 'gate'
+                foreign.write_bytes(original)
+                foreign.chmod(0o755)
+
+                target.unlink()
+                target.symlink_to(foreign)
+
+                try:
+                    with self.assertRaises(bootstrap.Failure):
+                        bootstrap.verify_local_release(directory)
+                finally:
+                    target.unlink()
+
+                os.link(foreign, target)
+
+                try:
+                    with self.assertRaises(bootstrap.Failure):
+                        bootstrap.verify_local_release(directory)
+                finally:
+                    target.unlink()
+
+            target.write_bytes(original)
+            target.chmod(0o755)
+
+            bootstrap.verify_local_release(directory)
+
+    def test_local_permissions_and_missing_files_rejected(self):
+        routes = release_routes()
+
+        with self.dest() as directory:
+            bootstrap.fetch_signed(
+                TAG, directory, fetch=canned_fetch(routes))
+
+            root = Path(directory)
+
+            for name, mode in (
+                ('deploy/user/install.sh', 0o777),
+                ('docker-compose.yml', 0o666),
+                (bootstrap.EVIDENCE_DIR, 0o755),
+                (bootstrap.EVIDENCE_DIR + '/' +
+                 bootstrap.EVIDENCE_LOCK, 0o644),
+                ('deploy/linux', 0o777),
+            ):
+                with self.subTest(name=name):
+                    target = root / name
+                    original = target.stat().st_mode & 0o7777
+
+                    try:
+                        target.chmod(mode)
+
+                        with self.assertRaises(bootstrap.Failure):
+                            bootstrap.verify_local_release(directory)
+                    finally:
+                        target.chmod(original)
+
+            target = root / 'deploy/linux/startup-gate.sh'
+            target.unlink()
+
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.verify_local_release(directory)
+
+    def test_local_lock_without_deployment_coverage_rejected(self):
+        routes = release_routes()
+
+        with self.dest() as directory:
+            bootstrap.fetch_signed(
+                TAG, directory, fetch=canned_fetch(routes))
+
+            proof = Path(directory) / bootstrap.EVIDENCE_DIR
+
+            lock = json.loads(
+                (proof / bootstrap.EVIDENCE_LOCK).read_bytes())
+
+            del lock['source_files']['deploy/linux/startup-gate.sh']
+
+            payload = json.dumps(lock).encode()
+
+            (proof / bootstrap.EVIDENCE_LOCK).write_bytes(payload)
+            (proof / bootstrap.EVIDENCE_SIGNATURE).write_bytes(
+                openssl_sign(payload).encode())
+
+            with self.assertRaisesRegex(
+                bootstrap.Failure, 'нет подписанного хэша'
+            ):
+                bootstrap.verify_local_release(directory)
 
     def test_happy_extracts_and_reports_images(self):
         routes = release_routes()
@@ -713,6 +878,57 @@ class ProductionTrustAnchorTests(unittest.TestCase):
 
         self.assertEqual(len(der), 44)
         self.assertTrue(der.startswith(SPKI_PREFIX))
+
+
+class LocalDeploymentTrustTests(unittest.TestCase):
+    def test_parent_path_policy_rejects_untrusted_ancestors(self):
+        good = mock.Mock(
+            st_mode=bootstrap.stat.S_IFDIR | 0o755,
+            st_uid=os.geteuid(),
+        )
+
+        unsafe = (
+            mock.Mock(
+                st_mode=bootstrap.stat.S_IFDIR | 0o777,
+                st_uid=os.geteuid(),
+            ),
+            mock.Mock(
+                st_mode=bootstrap.stat.S_IFLNK | 0o777,
+                st_uid=os.geteuid(),
+            ),
+            mock.Mock(
+                st_mode=bootstrap.stat.S_IFDIR | 0o755,
+                st_uid=os.geteuid() + 10000,
+            ),
+        )
+
+        with mock.patch.object(
+            bootstrap.os, 'listxattr',
+            return_value=[], create=True,
+        ):
+            with mock.patch.object(
+                Path, 'lstat', return_value=good
+            ):
+                bootstrap.assert_trusted_release_destination(
+                    '/opt/homecloud/repo')
+
+            for item in unsafe:
+                with self.subTest(mode=item.st_mode, uid=item.st_uid):
+                    with mock.patch.object(
+                        Path, 'lstat', return_value=item
+                    ):
+                        with self.assertRaises(bootstrap.Failure):
+                            bootstrap.assert_trusted_release_destination(
+                                '/opt/homecloud/repo')
+
+        foreign = mock.Mock(
+            st_mode=bootstrap.stat.S_IFREG | 0o644,
+            st_uid=os.geteuid() + 10000,
+            st_nlink=1,
+        )
+
+        with self.assertRaises(bootstrap.Failure):
+            bootstrap.check_local_file_metadata(foreign, 0o644)
 
 
 if __name__ == '__main__':

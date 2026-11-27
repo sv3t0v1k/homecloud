@@ -621,6 +621,8 @@ def create_tls(tls):
 
 
 def main():
+    # RELEASE has a closed file allowlist, including during imports.
+    sys.dont_write_bytecode = True
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--answers', required=True, help='JSON answers file')
     parser.add_argument('--mode', choices=('plan', 'apply'), required=True)

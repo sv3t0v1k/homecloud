@@ -440,7 +440,136 @@ def save_release_evidence(destination, payload, signature):
             os.fsync(handle.fileno())
 
 
-def read_evidence_file(directory_fd, name, limit):
+def check_local_file_metadata(info, mode):
+    if (not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != mode):
+        raise Failure('недопустимый владелец, тип или права файла RELEASE')
+
+
+def check_local_acl(path):
+    if hasattr(os, 'listxattr'):
+        attributes = os.listxattr(path, follow_symlinks=False)
+
+        if any(
+            attr in ('system.posix_acl_access',
+                     'system.posix_acl_default')
+            for attr in attributes
+        ):
+            raise Failure('недопустимый ACL deployment RELEASE')
+
+
+def check_local_directory(path, evidence=False):
+    info = path.lstat()
+    mode = stat.S_IMODE(info.st_mode)
+
+    if (not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or mode & 0o7022
+            or mode & 0o700 != 0o700):
+        raise Failure('недоверенный каталог deployment RELEASE')
+
+    if evidence and mode != 0o700:
+        raise Failure('неверные права каталога доказательства RELEASE')
+
+    check_local_acl(path)
+
+
+def local_deployment_files():
+    files = {
+        name: 0o755 if name.endswith('.sh') else 0o644
+        for name in USER_DEPLOYMENT_PATHS
+    }
+
+    files[EVIDENCE_DIR + '/' + EVIDENCE_LOCK] = 0o600
+    files[EVIDENCE_DIR + '/' + EVIDENCE_SIGNATURE] = 0o600
+
+    return files
+
+
+def verify_local_layout(destination):
+    root = Path(destination)
+    expected_files = local_deployment_files()
+
+    expected_dirs = {
+        str(parent)
+        for name in expected_files
+        for parent in Path(name).parents
+        if str(parent) != '.'
+    }
+
+    check_local_directory(root)
+
+    found_files = set()
+    found_dirs = set()
+    pending = [root]
+
+    while pending:
+        directory = pending.pop()
+
+        for target in directory.iterdir():
+            name = str(target.relative_to(root))
+            info = target.lstat()
+
+            if name in expected_files:
+                check_local_file_metadata(
+                    info, expected_files[name])
+                check_local_acl(target)
+                found_files.add(name)
+
+            elif name in expected_dirs:
+                check_local_directory(
+                    target, evidence=(name == EVIDENCE_DIR))
+                found_dirs.add(name)
+                pending.append(target)
+
+            else:
+                raise Failure(
+                    'посторонний путь в deployment RELEASE: ' + name)
+
+    if found_files != set(expected_files):
+        raise Failure('отсутствуют обязательные файлы deployment RELEASE')
+
+    if found_dirs != expected_dirs:
+        raise Failure('отсутствуют обязательные каталоги deployment RELEASE')
+
+
+def verify_local_deployment_hashes(destination, lock):
+    source_files = lock.get('source_files')
+
+    if not isinstance(source_files, dict):
+        raise Failure('в lock отсутствует source_files')
+
+    descriptor = os.open(
+        destination,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+
+    try:
+        for name in USER_DEPLOYMENT_PATHS:
+            expected = source_files.get(name)
+
+            if (not isinstance(expected, str)
+                    or not HEX64_RE.fullmatch(expected)):
+                raise Failure(
+                    'нет подписанного хэша deployment: ' + name)
+
+            data = read_evidence_file(
+                descriptor,
+                name,
+                MAX_LOCK_BYTES,
+                mode=0o755 if name.endswith('.sh') else 0o644,
+            )
+
+            if sha256_hex(data) != expected:
+                raise Failure(
+                    'хэш локального deployment не совпадает: ' + name)
+    finally:
+        os.close(descriptor)
+
+
+def read_evidence_file(directory_fd, name, limit, mode=0o600):
     descriptor = os.open(
         name,
         os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -450,8 +579,10 @@ def read_evidence_file(directory_fd, name, limit):
     with os.fdopen(descriptor, 'rb') as handle:
         info = os.fstat(handle.fileno())
 
-        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
-            raise Failure('недопустимый файл доказательства RELEASE')
+        check_local_file_metadata(info, mode)
+
+        if not 0 <= info.st_size <= limit:
+            raise Failure('недопустимый размер локального файла RELEASE')
 
         content = handle.read(limit + 1)
 
@@ -465,6 +596,9 @@ def verify_local_release(destination):
     directory = os.path.join(destination, EVIDENCE_DIR)
 
     try:
+        assert_trusted_release_destination(destination)
+        verify_local_layout(destination)
+
         descriptor = os.open(
             directory,
             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -479,6 +613,7 @@ def verify_local_release(destination):
             os.close(descriptor)
 
         lock, images = verify_release_lock(payload, signature)
+        verify_local_deployment_hashes(destination, lock)
 
     except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
         raise Failure('локальное доказательство RELEASE отклонено: ' + str(error))
@@ -487,6 +622,8 @@ def verify_local_release(destination):
 
 
 def fetch_signed(tag, destination, fetch=real_fetch):
+    assert_trusted_release_destination(destination)
+
     log('скачиваю release-lock.json и подпись для %s' % tag)
     lock_payload = fetch(RELEASES + tag + '/release-lock.json')
     signature = fetch(RELEASES + tag + '/release-lock.json.sig')
@@ -506,7 +643,13 @@ def fetch_signed(tag, destination, fetch=real_fetch):
         extract_release(archive, members, destination)
 
     save_release_evidence(destination, lock_payload, signature)
-    return {'tag': tag, 'images': images}
+
+    verified = verify_local_release(destination)
+
+    if verified != {'tag': tag, 'images': images}:
+        raise Failure('локальное доказательство RELEASE изменилось')
+
+    return verified
 
 
 def fetch_unsigned(ref, destination, fetch=real_fetch):
