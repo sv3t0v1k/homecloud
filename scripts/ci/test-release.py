@@ -199,6 +199,58 @@ class ReleaseTests(unittest.TestCase):
                         with contextlib.redirect_stdout(io.StringIO()):
                             r.verify_qualified(args)
 
+    def test_user_deployment_contract_contains_all_runtime_inputs(self):
+        expected = {
+            'docker-compose.yml',
+            'docker-compose.production.yml',
+            'docker-compose.production-updates.yml',
+            'deploy/user/install.sh',
+            'deploy/user/probe.py',
+            'deploy/user/generate.py',
+            'deploy/user/update-worker.py',
+            'deploy/user/bootstrap.py',
+            'deploy/user/bootstrap.sh',
+            'deploy/user/release-public.b64',
+            'deploy/user/systemd/homecloud-user-update.path',
+            'deploy/user/systemd/homecloud-user-update.service',
+            'deploy/user/systemd/homecloud-user-update-archive.service',
+            'deploy/user/systemd/homecloud-user-update-archive.timer',
+            'deploy/linux/preflight.py',
+            'deploy/linux/startup-gate.sh',
+            'deploy/ingress/19-validate-public-host.sh',
+            'deploy/ingress/default.conf.template',
+            'deploy/ingress/upgrade.conf',
+        }
+
+        self.assertEqual(set(r.USER_DEPLOYMENT_PATHS), expected)
+        self.assertEqual(len(r.USER_DEPLOYMENT_PATHS), len(expected))
+        self.assertEqual(len(r.SOURCE_PATHS), len(set(r.SOURCE_PATHS)))
+        self.assertTrue(expected.issubset(r.SOURCE_PATHS))
+
+        checkout = Path(__file__).resolve().parents[2]
+
+        for name in expected:
+            with self.subTest(name=name):
+                target = checkout / name
+                self.assertTrue(target.is_file())
+                self.assertFalse(target.is_symlink())
+                self.assertEqual(target.resolve(), target)
+
+    def test_every_user_deployment_input_is_mandatory(self):
+        for name in r.USER_DEPLOYMENT_PATHS:
+            with self.subTest(missing=name):
+                candidate = self.manifest()
+                del candidate['source_files'][name]
+
+                # Recompute checksum to ensure the missing source
+                # contract itself causes refusal.
+                candidate['manifest_sha256'] = r.identity(candidate)
+
+                with self.assertRaisesRegex(
+                    ValueError, 'incomplete user deployment contract'
+                ):
+                    r.shape(candidate)
+
     def test_valid_candidate(self):
         r.shape(self.manifest())
 

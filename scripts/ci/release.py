@@ -20,7 +20,30 @@ SHA = re.compile(r'^[a-f0-9]{40}$')
 TAG = re.compile(r'^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-beta\.([1-9][0-9]*))?$')
 DIGEST = re.compile(r'^sha256:[a-f0-9]{64}$')
 REPO = re.compile(r'^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_.-]*$')
-SOURCE_PATHS = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-compose.project-test.yml',
+# Complete user installation and runtime deployment contract.
+# Every file must be covered by signed release-lock source_files.
+USER_DEPLOYMENT_PATHS = (
+    'docker-compose.yml',
+    'docker-compose.production.yml',
+    'docker-compose.production-updates.yml',
+    'deploy/user/install.sh',
+    'deploy/user/probe.py',
+    'deploy/user/generate.py',
+    'deploy/user/update-worker.py',
+    'deploy/user/bootstrap.py',
+    'deploy/user/bootstrap.sh',
+    'deploy/user/release-public.b64',
+    'deploy/user/systemd/homecloud-user-update.path',
+    'deploy/user/systemd/homecloud-user-update.service',
+    'deploy/user/systemd/homecloud-user-update-archive.service',
+    'deploy/user/systemd/homecloud-user-update-archive.timer',
+    'deploy/linux/preflight.py',
+    'deploy/linux/startup-gate.sh',
+    'deploy/ingress/19-validate-public-host.sh',
+    'deploy/ingress/default.conf.template',
+    'deploy/ingress/upgrade.conf',
+)
+SOURCE_PATHS = ('docker-compose.project-test.yml',
                 'backend/Dockerfile', 'frontend/Dockerfile', 'backend/package-lock.json',
                 'frontend/package-lock.json', 'scripts/ci/images.lock.json',
                 '.github/workflows/ci.yml', '.github/workflows/release.yml', 'scripts/ci/release.py',
@@ -33,17 +56,7 @@ SOURCE_PATHS = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-c
                 'scripts/ci/production-images.lock.json', 'scripts/ci/secret-findings.py',
                 'scripts/ci/skopeo-closure.py', 'scripts/ci/ci-gate.py',
                 'scripts/ci/test-routing.py', 'scripts/ci/audit-domains.py',
-                'deploy/user/release-public.b64',
-                'deploy/user/install.sh', 'deploy/user/probe.py', 'deploy/user/generate.py',
-                'deploy/user/update-worker.py', 'deploy/user/bootstrap.py',
-                'deploy/user/bootstrap.sh',
-                'deploy/user/systemd/homecloud-user-update.path',
-                'deploy/user/systemd/homecloud-user-update.service',
-                'deploy/user/systemd/homecloud-user-update-archive.service',
-                'deploy/user/systemd/homecloud-user-update-archive.timer',
-                'deploy/linux/preflight.py',
-                'docker-compose.production-updates.yml',
-                'docs/image-security-policy.md')
+                'docs/image-security-policy.md') + USER_DEPLOYMENT_PATHS
 RUNTIME = {'backend', 'frontend', 'postgres', 'ingress'}
 BUILD = {'backend-deps', 'backend-builder', 'frontend-deps', 'frontend-builder', 'buildkit'}
 ENVIRONMENTS = {'backend', 'pr-fast-backend', 'frontend', 'configuration', 'image-build-backend', 'image-build-frontend',
@@ -239,6 +252,8 @@ def shape(value):
     require(value['deployment_status'] == 'NOT_DEPLOYED', 'candidate is not deployment evidence')
     require(bool(value['schema_migrations']) and all(isinstance(x, str) for x in value['schema_migrations']), 'missing schema contract')
     require(bool(value['source_files']) and all(re.fullmatch(r'[a-f0-9]{64}', x) for x in value['source_files'].values()), 'invalid source hashes')
+    require(set(USER_DEPLOYMENT_PATHS).issubset(value['source_files']),
+            'incomplete user deployment contract')
     require(set(SOURCE_PATHS).issubset(value['source_files']), 'incomplete source contract')
     require(any(x.startswith('backend/src/migrations/') for x in value['source_files']), 'missing migration source hashes')
     require(set(value['base_images']) == {'node', 'nginx', 'postgres'}, 'incomplete base lock')
