@@ -555,14 +555,14 @@ def install(deps):
         try:
             compose(config, deps, 'pull', 'backend', 'frontend')
             publish_status(identity, 'RUNNING', 'START_SERVICES', deps)
-            compose(config, deps, 'up', '-d', '--wait', '--wait-timeout', '300')
+            compose(config, deps, 'up', '-d', '--no-build', '--wait', '--wait-timeout', '300')
             publish_status(identity, 'RUNNING', 'SMOKE', deps)
             smoke(config, deps)
         except Exception:
             publish_status(identity, 'RUNNING', 'ROLLBACK', deps)
             try:
                 restore_images(config, previous)
-                compose(config, deps, 'up', '-d', '--wait', '--wait-timeout', '300')
+                compose(config, deps, 'up', '-d', '--no-build', '--wait', '--wait-timeout', '300')
                 smoke(config, deps)
             except Exception as rollback_error:
                 publish_status(identity, 'MANUAL_RECOVERY_REQUIRED', 'ROLLBACK', deps)

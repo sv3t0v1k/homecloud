@@ -53,6 +53,13 @@ INSTALLER_FILES = {
     'docker-compose.yml': b'services: {}\n',
     'docker-compose.production.yml': b'services: {}\n',
     'docker-compose.production-updates.yml': b'services: {}\n',
+    'deploy/user/systemd/homecloud-user-update.service': b'[Service]\n',
+    'deploy/user/systemd/homecloud-user-update-archive.service': b'[Service]\n',
+    'deploy/user/systemd/homecloud-user-update-archive.timer': b'[Timer]\n',
+    'deploy/linux/startup-gate.sh': b'#!/bin/sh\nexit 0\n',
+    'deploy/ingress/19-validate-public-host.sh': b'#!/bin/sh\nexit 0\n',
+    'deploy/ingress/default.conf.template': b'# fixture\n',
+    'deploy/ingress/upgrade.conf': b'# fixture\n',
     'docs/updates/user-update-channel-design.md': '# дизайн\n'.encode(),
 }
 
@@ -94,7 +101,8 @@ def make_lock(tag=TAG, files=None, include_required=True):
     return lock, payload
 
 
-def make_tarball(files, prefix='homecloud-' + TAG + '/'):
+def make_tarball(files, prefix='homecloud-' + TAG + '/',
+                 extra_members=(), file_mode=0o644):
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode='w:gz') as archive:
         info = tarfile.TarInfo(prefix.rstrip('/'))
@@ -104,8 +112,10 @@ def make_tarball(files, prefix='homecloud-' + TAG + '/'):
         for name, data in files.items():
             info = tarfile.TarInfo(prefix + name)
             info.size = len(data)
-            info.mode = 0o644
+            info.mode = file_mode
             archive.addfile(info, io.BytesIO(data))
+        for info, data in extra_members:
+            archive.addfile(info, io.BytesIO(data) if data is not None else None)
     return buffer.getvalue()
 
 
@@ -294,6 +304,135 @@ class FetchSignedTests(OpensslRequired):
 
             self.assertEqual(list(Path(directory).iterdir()), [])
 
+    def test_release_extracts_only_deployment_allowlist(self):
+        files = dict(INSTALLER_FILES)
+        files['.env'] = b'RELEASE_BACKEND_IMAGE=untrusted'
+        files['backend/evil.py'] = b'unsigned content'
+        files['docker-compose.override.yml'] = b'unsigned override'
+
+        routes = release_routes()
+        routes[bootstrap.CODELOAD + TAG] = make_tarball(
+            files, file_mode=0o7777)
+
+        with self.dest() as directory:
+            bootstrap.fetch_signed(
+                TAG, directory, fetch=canned_fetch(routes))
+
+            root = Path(directory)
+
+            actual = {
+                str(path.relative_to(root))
+                for path in root.rglob('*')
+                if path.is_file()
+            }
+
+            expected = set(bootstrap.USER_DEPLOYMENT_PATHS) | {
+                bootstrap.EVIDENCE_DIR + '/' + bootstrap.EVIDENCE_LOCK,
+                bootstrap.EVIDENCE_DIR + '/' + bootstrap.EVIDENCE_SIGNATURE,
+            }
+
+            self.assertEqual(actual, expected)
+
+            for name in bootstrap.USER_DEPLOYMENT_PATHS:
+                mode = (root / name).stat().st_mode & 0o7777
+
+                self.assertEqual(
+                    mode, 0o755 if name.endswith('.sh') else 0o644)
+
+    def test_duplicate_release_member_rejected(self):
+        payload = INSTALLER_FILES['deploy/user/install.sh']
+
+        duplicate = tarfile.TarInfo(
+            'homecloud-' + TAG + '/deploy/user/install.sh')
+        duplicate.size = len(payload)
+
+        routes = release_routes()
+        routes[bootstrap.CODELOAD + TAG] = make_tarball(
+            INSTALLER_FILES,
+            extra_members=[(duplicate, payload)],
+        )
+
+        with self.dest() as directory:
+            with self.assertRaisesRegex(
+                bootstrap.Failure, 'дублирующийся путь'
+            ):
+                bootstrap.fetch_signed(
+                    TAG, directory, fetch=canned_fetch(routes))
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_required_symlink_rejected(self):
+        name = 'deploy/linux/startup-gate.sh'
+        files = dict(INSTALLER_FILES)
+        del files[name]
+
+        link = tarfile.TarInfo('homecloud-' + TAG + '/' + name)
+        link.type = tarfile.SYMTYPE
+        link.linkname = '/etc/passwd'
+
+        routes = release_routes()
+        routes[bootstrap.CODELOAD + TAG] = make_tarball(
+            files, extra_members=[(link, None)])
+
+        with self.dest() as directory:
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.fetch_signed(
+                    TAG, directory, fetch=canned_fetch(routes))
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_deployment_parent_conflict_rejected(self):
+        files = dict(INSTALLER_FILES)
+        files['deploy/linux'] = b'not a directory'
+
+        routes = release_routes()
+        routes[bootstrap.CODELOAD + TAG] = make_tarball(files)
+
+        with self.dest() as directory:
+            with self.assertRaisesRegex(
+                bootstrap.Failure, 'конфликт файла и каталога'
+            ):
+                bootstrap.fetch_signed(
+                    TAG, directory, fetch=canned_fetch(routes))
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_every_deployment_file_must_be_signed(self):
+        for name in bootstrap.USER_DEPLOYMENT_PATHS:
+            with self.subTest(name=name):
+                _, payload = make_lock()
+
+                lock = json.loads(payload)
+                del lock['source_files'][name]
+                payload = json.dumps(lock).encode()
+
+                routes = release_routes()
+                routes[bootstrap.RELEASES + TAG + '/release-lock.json'] = payload
+                routes[bootstrap.RELEASES + TAG + '/release-lock.json.sig'] = (
+                    openssl_sign(payload).encode()
+                )
+
+                with self.dest() as directory:
+                    with self.assertRaises(bootstrap.Failure):
+                        bootstrap.fetch_signed(
+                            TAG, directory, fetch=canned_fetch(routes))
+
+                    self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_existing_destination_never_overwritten(self):
+        routes = release_routes()
+
+        with self.dest() as directory:
+            existing = Path(directory) / 'existing'
+            existing.write_bytes(b'preserved')
+
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.fetch_signed(
+                    TAG, directory, fetch=canned_fetch(routes))
+
+            self.assertEqual(existing.read_bytes(), b'preserved')
+            self.assertEqual(list(Path(directory).iterdir()), [existing])
+
     def test_happy_extracts_and_reports_images(self):
         routes = release_routes()
         with self.dest() as directory:
@@ -303,7 +442,8 @@ class FetchSignedTests(OpensslRequired):
                 result['images']['backend'],
                 'ghcr.io/sv3t0v1k/homecloud/backend@sha256:' +
                 hashlib.sha256((TAG + 'backend').encode()).hexdigest())
-            for name, data in INSTALLER_FILES.items():
+            for name in bootstrap.USER_DEPLOYMENT_PATHS:
+                data = INSTALLER_FILES[name]
                 target = Path(directory) / name
                 self.assertTrue(target.is_file(), 'нет ' + name)
                 self.assertEqual(target.read_bytes(), data)
@@ -450,7 +590,7 @@ class FetchSignedTests(OpensslRequired):
             with self.assertRaises(bootstrap.Failure):
                 bootstrap.fetch_signed(TAG, directory, fetch=canned_fetch(routes))
 
-    def test_path_traversal_member_ignored(self):
+    def test_path_traversal_member_rejected(self):
         buffer = io.BytesIO()
         with tarfile.open(fileobj=buffer, mode='w:gz') as archive:
             for name, data in INSTALLER_FILES.items():
@@ -465,8 +605,10 @@ class FetchSignedTests(OpensslRequired):
         routes[bootstrap.CODELOAD + TAG] = buffer.getvalue()
         with tempfile.TemporaryDirectory() as parent:
             directory = os.path.join(parent, 'repo')
-            bootstrap.fetch_signed(TAG, directory, fetch=canned_fetch(routes))
-            self.assertFalse(os.path.exists(os.path.join(parent, '..', 'etc', 'evil')))
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.fetch_signed(TAG, directory, fetch=canned_fetch(routes))
+
+            self.assertFalse(os.path.exists(directory))
 
 
 class FetchUnsignedTests(OpensslRequired):
@@ -511,9 +653,14 @@ class MainTests(OpensslRequired):
     def test_network_error_fails_closed(self):
         with tempfile.TemporaryDirectory() as parent:
             directory = os.path.join(parent, 'repo')
-            with mock.patch('urllib.request.urlopen',
-                            side_effect=urllib.error.URLError('offline')):
-                code = bootstrap.main(['fetch', '--tag', TAG, '--dest', directory])
+            with mock.patch.object(
+                bootstrap, 'assert_trusted_release_destination'
+            ):
+                with mock.patch('urllib.request.urlopen',
+                                side_effect=urllib.error.URLError('offline')) as fetch:
+                    code = bootstrap.main(['fetch', '--tag', TAG, '--dest', directory])
+
+                fetch.assert_called_once()
             self.assertEqual(code, 1)
             self.assertFalse(os.path.exists(directory))
 

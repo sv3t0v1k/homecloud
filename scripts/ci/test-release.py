@@ -236,6 +236,27 @@ class ReleaseTests(unittest.TestCase):
                 self.assertFalse(target.is_symlink())
                 self.assertEqual(target.resolve(), target)
 
+    def test_bootstrap_deployment_contract_matches_ci(self):
+        import ast
+
+        checkout = Path(__file__).resolve().parents[2]
+        source = (checkout / 'deploy/user/bootstrap.py').read_text()
+
+        tree = ast.parse(source)
+
+        actual = next(
+            ast.literal_eval(node.value)
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == 'USER_DEPLOYMENT_PATHS'
+                for target in node.targets
+            )
+        )
+
+        self.assertEqual(actual, r.USER_DEPLOYMENT_PATHS)
+
     def test_every_user_deployment_input_is_mandatory(self):
         for name in r.USER_DEPLOYMENT_PATHS:
             with self.subTest(missing=name):

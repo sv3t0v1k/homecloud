@@ -1301,6 +1301,14 @@ class HostAdmissionTests(unittest.TestCase):
 
 
 class InstallerDockerAuthorityTests(unittest.TestCase):
+    def test_installer_never_builds_application_images(self):
+        source = Path(__file__).with_name("install.sh").read_text()
+
+        self.assertIn(
+            "compose_release up -d --no-build --wait",
+            source,
+        )
+
     def test_compose_uses_fixed_local_authority(self):
         installer = Path(__file__).with_name("install.sh")
         source = installer.read_text()

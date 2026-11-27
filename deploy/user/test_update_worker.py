@@ -322,6 +322,9 @@ class InstallTests(WorkerCase):
         self.assertEqual((self.base / 'status' / 'installed-lock.json').read_bytes(), payload)
         self.assertFalse((self.base / 'inbox' / 'request.json').exists())
         self.assertEqual([call[0] for call in deps.compose_calls], ['pull', 'up'])
+        for call in deps.compose_calls:
+            if call[0] == 'up':
+                self.assertIn('--no-build', call)
         self.assertEqual(deps.smoke_calls, [('https://127.0.0.1:443/', 'cloud.example.com')])
 
     def test_no_request_is_noop(self):
@@ -404,6 +407,9 @@ class InstallTests(WorkerCase):
         self.assertIn(OLD_BACKEND + '\n', self.read_env())
         self.assertIn(OLD_FRONTEND + '\n', self.read_env())
         self.assertEqual([call[0] for call in deps.compose_calls], ['pull', 'up', 'up'])
+        for call in deps.compose_calls:
+            if call[0] == 'up':
+                self.assertIn('--no-build', call)
 
     def test_pull_failure_rolls_back(self):
         self.write_env()
@@ -415,6 +421,9 @@ class InstallTests(WorkerCase):
         self.assertEqual((status['status'], status['phase']), ('STOP', 'ROLLBACK'))
         self.assertIn(OLD_BACKEND + '\n', self.read_env())
         self.assertEqual([call[0] for call in deps.compose_calls], ['pull', 'up'])
+        for call in deps.compose_calls:
+            if call[0] == 'up':
+                self.assertIn('--no-build', call)
 
     def test_rollback_failure_requires_manual_review(self):
         self.write_env()

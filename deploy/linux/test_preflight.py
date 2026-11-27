@@ -104,6 +104,55 @@ class ConfigTests(unittest.TestCase):
         cls.config = cls.compose_merge(cls.ENV_VALUES)
         cls.inventory=json.loads(Path(__file__).with_name('host-disks.example.json').read_text())
 
+    def test_minimal_user_deployment_compose_merge(self):
+        checkout = Path(__file__).resolve().parents[2]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+
+            paths = ('docker-compose.yml', 'docker-compose.production.yml', 'docker-compose.production-updates.yml', 'deploy/user/install.sh', 'deploy/user/probe.py', 'deploy/user/generate.py', 'deploy/user/update-worker.py', 'deploy/user/bootstrap.py', 'deploy/user/bootstrap.sh', 'deploy/user/release-public.b64', 'deploy/user/systemd/homecloud-user-update.path', 'deploy/user/systemd/homecloud-user-update.service', 'deploy/user/systemd/homecloud-user-update-archive.service', 'deploy/user/systemd/homecloud-user-update-archive.timer', 'deploy/linux/preflight.py', 'deploy/linux/startup-gate.sh', 'deploy/ingress/19-validate-public-host.sh', 'deploy/ingress/default.conf.template', 'deploy/ingress/upgrade.conf')
+
+            # Disposable config fixture, not a Git checkout.
+            for name in paths:
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((checkout / name).read_bytes())
+
+            self.assertFalse((root / 'backend').exists())
+            self.assertFalse((root / 'frontend').exists())
+            self.assertFalse((root / '.git').exists())
+
+            values = dict(
+                self.ENV_VALUES,
+                UPDATE_CHANNEL='release',
+                UPDATE_RELEASE_PUBLIC_KEY=(
+                    'MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+                ),
+            )
+
+            with patch.dict(globals(), {
+                'ROOT': root,
+                'PROD': root / 'docker-compose.production.yml',
+            }):
+                config = self.compose_merge(
+                    values,
+                    root / 'docker-compose.production-updates.yml',
+                )
+
+            with patch.object(
+                p, '__file__', str(root / 'deploy/linux/preflight.py')
+            ):
+                p.check_config(config, self.inventory)
+
+            self.assertEqual(
+                config['services']['backend']['image'],
+                values['RELEASE_BACKEND_IMAGE'],
+            )
+            self.assertEqual(
+                config['services']['frontend']['image'],
+                values['RELEASE_FRONTEND_IMAGE'],
+            )
+
     def test_actual_compose_merge(self):
         p.check_config(self.config,self.inventory)
 

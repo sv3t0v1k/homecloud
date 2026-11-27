@@ -24,6 +24,7 @@ import io
 import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import shutil
 import stat
@@ -58,6 +59,29 @@ REQUIRED_PATHS = ('deploy/user/install.sh', 'deploy/user/probe.py',
                   'deploy/user/generate.py', 'deploy/linux/preflight.py',
                   'docker-compose.yml', 'docker-compose.production.yml')
 
+
+# Explicit allowlist for signed user deployment.
+USER_DEPLOYMENT_PATHS = (
+    'docker-compose.yml',
+    'docker-compose.production.yml',
+    'docker-compose.production-updates.yml',
+    'deploy/user/install.sh',
+    'deploy/user/probe.py',
+    'deploy/user/generate.py',
+    'deploy/user/update-worker.py',
+    'deploy/user/bootstrap.py',
+    'deploy/user/bootstrap.sh',
+    'deploy/user/release-public.b64',
+    'deploy/user/systemd/homecloud-user-update.path',
+    'deploy/user/systemd/homecloud-user-update.service',
+    'deploy/user/systemd/homecloud-user-update-archive.service',
+    'deploy/user/systemd/homecloud-user-update-archive.timer',
+    'deploy/linux/preflight.py',
+    'deploy/linux/startup-gate.sh',
+    'deploy/ingress/19-validate-public-host.sh',
+    'deploy/ingress/default.conf.template',
+    'deploy/ingress/upgrade.conf',
+)
 
 class Failure(Exception):
     pass
@@ -143,7 +167,7 @@ def verify_source_tree(archive, members, lock):
     source_files = lock.get('source_files')
     if not isinstance(source_files, dict):
         raise Failure('в lock отсутствует source_files')
-    missing_required = [path for path in REQUIRED_PATHS if path not in source_files]
+    missing_required = [path for path in USER_DEPLOYMENT_PATHS if path not in source_files]
     if missing_required:
         raise Failure('lock не покрывает файлы установщика: %s' % ', '.join(missing_required))
     problems = []
@@ -166,6 +190,134 @@ def reject_evidence_members(members):
     for name in members:
         if name == EVIDENCE_DIR or name.startswith(EVIDENCE_DIR + '/'):
             raise Failure('архив содержит зарезервированный каталог доказательства RELEASE')
+
+
+def release_member_map(archive):
+    """Strict RELEASE index: no ambiguous paths or archive aliases."""
+    members = {}
+    seen = set()
+    top = None
+
+    for info in archive.getmembers():
+        name = info.name.rstrip('/') if info.isdir() else info.name
+        parts = name.split('/')
+
+        if (not name or name.startswith('/') or '\\' in name
+                or '\x00' in name
+                or any(part in ('', '.', '..') for part in parts)):
+            raise Failure('небезопасное имя в архиве RELEASE')
+
+        if top is None:
+            top = parts[0]
+
+        if parts[0] != top:
+            raise Failure('несколько корней архива RELEASE')
+
+        if name in seen:
+            raise Failure('дублирующийся путь в архиве RELEASE: ' + name)
+
+        seen.add(name)
+
+        if len(parts) == 1:
+            if not info.isdir():
+                raise Failure('корень архива RELEASE не является каталогом')
+            continue
+
+        relpath = '/'.join(parts[1:])
+        members[relpath] = info
+
+    reject_evidence_members(members)
+
+    return members
+
+
+def assert_trusted_release_destination(destination):
+    """Root CLI may write only below trusted canonical directories."""
+    root = Path(destination)
+
+    if not root.is_absolute() or str(root) != destination or '..' in root.parts:
+        raise Failure('неканонический каталог RELEASE')
+
+    for directory in reversed((root, *root.parents)):
+        try:
+            info = directory.lstat()
+        except FileNotFoundError:
+            continue
+
+        if not stat.S_ISDIR(info.st_mode):
+            raise Failure('небезопасный родительский путь RELEASE')
+
+        if info.st_uid not in (0, os.geteuid()) or info.st_mode & 0o022:
+            raise Failure('недоверенный родительский каталог RELEASE')
+
+        if hasattr(os, 'listxattr'):
+            attributes = os.listxattr(directory, follow_symlinks=False)
+
+            if any(
+                attr in ('system.posix_acl_access',
+                         'system.posix_acl_default')
+                for attr in attributes
+            ):
+                raise Failure('ACL на родительском каталоге RELEASE')
+
+
+def create_release_directories(path):
+    for directory in reversed((path, *path.parents)):
+        if not directory.exists():
+            os.mkdir(directory, 0o755)
+
+        if not directory.is_dir():
+            raise Failure('некорректный каталог deployment')
+
+
+def extract_release(archive, members, destination):
+    """Write only the authenticated allowlist, never archive metadata."""
+    root = Path(destination)
+
+    if root.is_symlink():
+        raise Failure('целевой каталог RELEASE является symlink')
+
+    if root.exists() and (
+            not root.is_dir() or any(root.iterdir())):
+        raise Failure('целевой каталог RELEASE не пуст')
+
+    # Validate every required member before the first write.
+    for name in USER_DEPLOYMENT_PATHS:
+        info = members.get(name)
+
+        if info is None or not info.isfile():
+            raise Failure('недопустимый deployment-файл: ' + name)
+
+        parts = name.split('/')
+
+        for index in range(1, len(parts)):
+            ancestor = members.get('/'.join(parts[:index]))
+
+            if ancestor is not None and not ancestor.isdir():
+                raise Failure('конфликт файла и каталога deployment')
+
+    create_release_directories(root)
+
+    for name in USER_DEPLOYMENT_PATHS:
+        target = root / name
+        create_release_directories(target.parent)
+
+        mode = 0o755 if name.endswith('.sh') else 0o644
+
+        descriptor = os.open(
+            target,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            mode,
+        )
+
+        with os.fdopen(descriptor, 'wb') as handle:
+            os.fchmod(handle.fileno(), mode)
+
+            with archive.extractfile(members[name]) as stream:
+                shutil.copyfileobj(stream, handle)
+
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def extract_archive(archive, members, destination):
@@ -346,12 +498,12 @@ def fetch_signed(tag, destination, fetch=real_fetch):
     tarball = fetch(CODELOAD + tag)
 
     with tarfile.open(fileobj=io.BytesIO(tarball), mode='r:gz') as archive:
-        members = member_map(archive)
+        members = release_member_map(archive)
         verify_archive_public_key(archive, members, public_der)
         log('проверяю хэши исходников по подписанному lock (%d файлов)' % len(lock.get('source_files', {})))
         verify_source_tree(archive, members, lock)
         log('распаковываю в %s' % destination)
-        extract_archive(archive, members, destination)
+        extract_release(archive, members, destination)
 
     save_release_evidence(destination, lock_payload, signature)
     return {'tag': tag, 'images': images}
@@ -398,7 +550,11 @@ def main(argv=None):
         destination = args.dest
         if os.path.exists(destination) and os.listdir(destination):
             raise Failure('целевой каталог не пуст: %s' % destination)
-        result = fetch_signed(args.tag, destination) if args.tag else fetch_unsigned(args.ref, destination)
+        if args.tag:
+            assert_trusted_release_destination(destination)
+            result = fetch_signed(args.tag, destination)
+        else:
+            result = fetch_unsigned(args.ref, destination)
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Failure as error:

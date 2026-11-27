@@ -287,7 +287,7 @@ fi
 # --- Фаза 6: старт ------------------------------------------------------------
 if [ "$START" = 1 ]; then
   say '==> Запускаю'
-  compose_release up -d --wait --wait-timeout 180 || fail 'запуск отклонён'
+  compose_release up -d --no-build --wait --wait-timeout 180 || fail 'запуск отклонён'
 fi
 
 # --- Фаза 7: bootstrap обновлений и systemd (только release-канал) ------------
