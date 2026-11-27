@@ -156,6 +156,13 @@ class LatestTagTests(OpensslRequired):
 
 
 class FetchSignedTests(OpensslRequired):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(
+            bootstrap, 'TRUSTED_RELEASE_PUBLIC_B64', PUBLIC_B64)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def dest(self):
         return tempfile.TemporaryDirectory()
 
@@ -188,6 +195,78 @@ class FetchSignedTests(OpensslRequired):
         with self.dest() as directory:
             with self.assertRaises(bootstrap.Failure):
                 bootstrap.fetch_signed(TAG, directory, fetch=canned_fetch(routes))
+
+    def test_foreign_key_and_signature_rejected_before_archive_download(self):
+        # Both the release lock and the archive key are replaced.
+        foreign_public = bytes.fromhex(
+            'd75a980182b10ab7d54bfed3c964073a'
+            '0ee172f3daa62325af021a68f707511a'
+        )
+
+        files = dict(INSTALLER_FILES)
+        files[bootstrap.PUBLIC_KEY_MEMBER] = (
+            base64.b64encode(SPKI_PREFIX + foreign_public) + b'\n'
+        )
+
+        routes = release_routes(
+            files=files,
+            signer=lambda payload: openssl_sign(
+                payload, FOREIGN_PRIVATE_DER)
+        )
+
+        fetch = mock.Mock(side_effect=canned_fetch(routes))
+
+        with self.dest() as directory:
+            with self.assertRaisesRegex(
+                bootstrap.Failure, 'подпись release-lock'
+            ):
+                bootstrap.fetch_signed(TAG, directory, fetch=fetch)
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+        # An invalid signature must stop the process before archive download.
+        self.assertNotIn(
+            mock.call(bootstrap.CODELOAD + TAG),
+            fetch.call_args_list,
+        )
+
+    def test_valid_signature_with_foreign_archive_key_rejected(self):
+        foreign_public = bytes.fromhex(
+            'd75a980182b10ab7d54bfed3c964073a'
+            '0ee172f3daa62325af021a68f707511a'
+        )
+
+        files = dict(INSTALLER_FILES)
+        files[bootstrap.PUBLIC_KEY_MEMBER] = (
+            base64.b64encode(SPKI_PREFIX + foreign_public) + b'\n'
+        )
+
+        # Even an authentic signature does not authorize a silent key change.
+        routes = release_routes(files=files)
+
+        with self.dest() as directory:
+            with self.assertRaisesRegex(
+                bootstrap.Failure, 'не совпадает с доверенным ключом'
+            ):
+                bootstrap.fetch_signed(
+                    TAG, directory, fetch=canned_fetch(routes))
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_missing_archive_key_rejected(self):
+        files = dict(INSTALLER_FILES)
+        del files[bootstrap.PUBLIC_KEY_MEMBER]
+
+        routes = release_routes(files=files)
+
+        with self.dest() as directory:
+            with self.assertRaisesRegex(
+                bootstrap.Failure, 'нет публичного ключа'
+            ):
+                bootstrap.fetch_signed(
+                    TAG, directory, fetch=canned_fetch(routes))
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_lock_tag_mismatch_rejected(self):
         # Ассеты отдаются по запрошенному тегу, но lock внутри — от другого
@@ -266,6 +345,21 @@ class ImagesFromLockTests(unittest.TestCase):
     def test_incomplete_images_yield_none(self):
         lock = {'images': {'backend': {'repository': 'r', 'digest': 'd'}}}
         self.assertIsNone(bootstrap.images_from_lock(lock))
+
+
+class ProductionTrustAnchorTests(unittest.TestCase):
+    def test_embedded_key_matches_production_key(self):
+        key_file = Path(__file__).with_name('release-public.b64')
+
+        self.assertEqual(
+            bootstrap.TRUSTED_RELEASE_PUBLIC_B64,
+            key_file.read_text().strip(),
+        )
+
+        der = bootstrap.trusted_public_key()
+
+        self.assertEqual(len(der), 44)
+        self.assertTrue(der.startswith(SPKI_PREFIX))
 
 
 if __name__ == '__main__':

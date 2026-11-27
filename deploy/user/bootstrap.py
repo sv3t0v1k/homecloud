@@ -41,6 +41,12 @@ HEX64_RE = re.compile(r'^[0-9a-f]{64}$')
 BASE64_RE = re.compile(r'^[A-Za-z0-9+/=\n]+$')
 LOCK_FORMAT = 'homecloud-ci-candidate-v1'
 PUBLIC_KEY_MEMBER = 'deploy/user/release-public.b64'
+
+# Trust anchor belongs to the trusted bootstrap, not the downloaded release.
+# Changing this key requires an explicit key rotation procedure.
+TRUSTED_RELEASE_PUBLIC_B64 = (
+    'MCowBQYDK2VwAyEAerX37IOR/e0gTYCYg2f5ePTkMRwgnEEUr/GAMeZBIwA='
+)
 # Файлы без которых установщик не работает (должны входить в source_files lock).
 REQUIRED_PATHS = ('deploy/user/install.sh', 'deploy/user/probe.py',
                   'deploy/user/generate.py', 'deploy/linux/preflight.py',
@@ -168,14 +174,26 @@ def extract_archive(archive, members, destination):
         os.chmod(target, info.mode & 0o777)
 
 
-def load_public_key(archive, members):
+def trusted_public_key():
+    return base64.b64decode(
+        TRUSTED_RELEASE_PUBLIC_B64, validate=True)
+
+
+def verify_archive_public_key(archive, members, trusted_der):
     info = members.get(PUBLIC_KEY_MEMBER)
     if info is None or not info.isfile():
         raise Failure('в архиве нет публичного ключа ' + PUBLIC_KEY_MEMBER)
-    text = archive.extractfile(info).read().decode('ascii').strip()
-    if not BASE64_RE.fullmatch(text):
-        raise Failure('невалидный публичный ключ релизов')
-    return base64.b64decode(text, validate=True)
+
+    try:
+        text = archive.extractfile(info).read().decode('ascii').strip()
+        if not BASE64_RE.fullmatch(text):
+            raise ValueError('invalid public key encoding')
+        archive_der = base64.b64decode(text, validate=True)
+    except (ValueError, UnicodeError):
+        raise Failure('невалидный публичный ключ в архиве')
+
+    if archive_der != trusted_der:
+        raise Failure('публичный ключ архива не совпадает с доверенным ключом bootstrap')
 
 
 def images_from_lock(lock):
@@ -196,18 +214,24 @@ def fetch_signed(tag, destination, fetch=real_fetch):
     log('скачиваю release-lock.json и подпись для %s' % tag)
     lock_payload = fetch(RELEASES + tag + '/release-lock.json')
     signature = fetch(RELEASES + tag + '/release-lock.json.sig')
+    public_der = trusted_public_key()
+    log('проверяю подпись Ed25519 доверенным ключом bootstrap')
+    verify_signature(lock_payload, signature.decode('ascii'), public_der)
+
+    lock = json.loads(lock_payload.decode('utf-8'))
+    if not isinstance(lock, dict):
+        raise Failure('неверная структура release-lock')
+    if lock.get('format') != LOCK_FORMAT:
+        raise Failure('неверный формат lock: %r' % (lock.get('format'),))
+    if lock.get('tag') != tag:
+        raise Failure('lock относится к %r, а не к %r' % (lock.get('tag'), tag))
+
     log('скачиваю архив репозитория (%s)' % tag)
     tarball = fetch(CODELOAD + tag)
+
     with tarfile.open(fileobj=io.BytesIO(tarball), mode='r:gz') as archive:
         members = member_map(archive)
-        public_der = load_public_key(archive, members)
-        log('проверяю подпись Ed25519 release-lock')
-        verify_signature(lock_payload, signature.decode('ascii'), public_der)
-        lock = json.loads(lock_payload.decode('utf-8'))
-        if lock.get('format') != LOCK_FORMAT:
-            raise Failure('неверный формат lock: %r' % (lock.get('format'),))
-        if lock.get('tag') != tag:
-            raise Failure('lock относится к %r, а не к %r' % (lock.get('tag'), tag))
+        verify_archive_public_key(archive, members, public_der)
         log('проверяю хэши исходников по подписанному lock (%d файлов)' % len(lock.get('source_files', {})))
         verify_source_tree(archive, members, lock)
         log('распаковываю в %s' % destination)
