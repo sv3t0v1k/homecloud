@@ -1,14 +1,19 @@
 import { assertInheritedRootFence } from "./uploads/inherited-root-fence";
 
-// Security gate must run before importing AppModule or ConfigModule.
-if (process.platform === "linux") {
-  assertInheritedRootFence();
+async function start(): Promise<void> {
+  // Security gate must run before importing AppModule or ConfigModule.
+  if (process.platform === "linux") {
+    assertInheritedRootFence();
+  }
+
+  // Application modules are loaded only after the fence is verified.
+  const { bootstrap } = await import("./api-bootstrap");
+  await bootstrap();
 }
 
-// Application modules are loaded only after the fence is verified.
-void import("./api-bootstrap")
-  .then(({ bootstrap }) => bootstrap())
-  .catch((error: unknown) => {
-    console.error("STOP: backend bootstrap failed", error);
-    process.exitCode = 1;
-  });
+void start().catch(() => {
+  // Raw exceptions and stack traces may contain credentials.
+  // Detailed safe diagnostics are emitted by StructuredLogger.
+  console.error("STOP: backend bootstrap failed");
+  process.exitCode = 1;
+});

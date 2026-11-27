@@ -198,7 +198,9 @@ else
       *) fail 'канал обновлений: release или test';;
     esac
   fi
-  if [ "$(ask 'База данных на отдельном диске? (y/N)' 'N')" = y ]; then
+  separate_db=$(ask 'База данных на отдельном диске? (y/N)' 'N') ||
+    fail 'ввод прерван'
+  if [ "$separate_db" = y ]; then
     db_mount=$(ask 'Mountpoint раздела базы' '')
     db_uuid=$(ask 'UUID раздела базы' '')
     db_serial=$(mount_serial "$db_mount")

@@ -521,6 +521,32 @@ py() { "$HC_TEST_PYTHON" -I -B "$@"; }
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), '443')
 
+    def test_eof_at_database_disk_choice_stops_installer(self):
+        source = Path(__file__).with_name('install.sh').read_text()
+        ask = 'ask() {' + source.split('ask() {', 1)[1].split(
+            'ask_port() {', 1)[0]
+        self.assertEqual(ask.count('</dev/tty'), 1)
+        ask = ask.replace('</dev/tty', '</dev/null', 1)
+
+        choice = source.split('  separate_db=$(ask', 1)[1].split(
+            '  storage_serial=$(mount_serial', 1)[0]
+        harness = """
+set -eu
+MODE=interactive
+HAVE_TTY=1
+fail() { echo "$*" >&2; exit 1; }
+mount_serial() { echo unexpected-mount-query >&2; exit 97; }
+"""
+        result = subprocess.run(
+            ['sh', '-c', harness + ask +
+             'separate_db=$(ask' + choice +
+             '\necho INSTALLATION_CONTINUED\n'],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('ввод прерван', result.stderr)
+        self.assertNotIn('INSTALLATION_CONTINUED', result.stdout)
+        self.assertNotIn('unexpected-mount-query', result.stderr)
+
     def test_owner_provisioning_order_and_failure(self):
         source = Path(__file__).with_name('install.sh').read_text()
         function = source.split('provision_owner() {', 1)[1].split(
