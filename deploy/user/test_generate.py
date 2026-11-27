@@ -1229,5 +1229,61 @@ class HostAdmissionTests(unittest.TestCase):
                                 tls.assert_not_called()
 
 
+class InstallerDockerAuthorityTests(unittest.TestCase):
+    def test_compose_uses_fixed_local_authority(self):
+        installer = Path(__file__).with_name("install.sh")
+        source = installer.read_text()
+
+        start = source.index("\ncompose() {\n")
+        end = source.index("\ncompose_release() {\n", start)
+        function = source[start:end]
+
+        # Capture exact argv of the actual installer shell function.
+        # The env command is replaced, so no Docker call is made.
+        harness = """
+env() {
+  "$HC_TEST_PYTHON" -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"
+}
+project_root=/opt/homecloud/repo
+clean_path=/usr/sbin:/usr/bin:/sbin:/bin
+"""
+
+        env = dict(os.environ)
+        env["HC_TEST_PYTHON"] = sys.executable
+        env["DOCKER_HOST"] = "ssh://untrusted"
+        env["DOCKER_CONTEXT"] = "untrusted"
+
+        result = subprocess.run(
+            ["sh", "-c", harness + function + "\ncompose pull\n"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        self.assertEqual(
+            json.loads(result.stdout),
+            [
+                "-i",
+                "HOME=/root",
+                "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+                "docker",
+                "--config", "/etc/homecloud/docker",
+                "--host", "unix:///var/run/docker.sock",
+                "compose",
+                "--project-directory", "/opt/homecloud/repo",
+                "--env-file", "/etc/homecloud/runtime.env",
+                "pull",
+            ],
+        )
+
+        self.assertEqual(
+            source.count("py deploy/linux/preflight.py --user-installer"),
+            2,
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

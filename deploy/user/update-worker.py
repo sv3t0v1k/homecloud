@@ -156,6 +156,8 @@ def load_config():
         value = config.get(key)
         require(type(value) is str and value.startswith('/') and '..' not in value,
                 'invalid worker config: ' + key)
+    require(config['docker_config'] == str(CONFIG_PATH.parent / 'docker'),
+            'invalid worker Docker authority')
     host = config.get('public_host')
     require(type(host) is str and bool(host), 'invalid worker config: public_host')
     port = config.get('https_port')
@@ -400,12 +402,13 @@ def verify_registry(lock, config, deps):
 
 
 def compose_env(config):
-    return {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/root',
-            'DOCKER_CONFIG': config['docker_config']}
+    return {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': '/root'}
 
 
 def compose_command(config, *args):
-    base = ['docker', 'compose', '--project-directory', config['compose_project_dir'],
+    base = ['docker', '--config', config['docker_config'],
+            '--host', 'unix:///var/run/docker.sock',
+            'compose', '--project-directory', config['compose_project_dir'],
             '--env-file', config['runtime_env']]
     for name in config.get('compose_files',
                            ['docker-compose.yml', 'docker-compose.production.yml',

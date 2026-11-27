@@ -30,8 +30,11 @@ def run(command, runner):
 
 
 def default_runner(command):
+    env = None
+    if command[0] == 'docker':
+        env = {'HOME': '/root', 'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'}
     try:
-        result = subprocess.run(command, stdout=subprocess.PIPE,
+        result = subprocess.run(command, env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, timeout=30, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -60,8 +63,10 @@ def ram_total_bytes():
 
 def docker_facts(runner):
     # Мягкие проверки: отсутствие docker/compose — предупреждение, не STOP.
-    version = runner(['docker', 'version', '--format', '{{.Server.Version}}'])
-    compose = runner(['docker', 'compose', 'version', '--short'])
+    prefix = ['docker', '--config', '/etc/homecloud/docker',
+              '--host', 'unix:///var/run/docker.sock']
+    version = runner(prefix + ['version', '--format', '{{.Server.Version}}'])
+    compose = runner(prefix + ['compose', 'version', '--short'])
     return {
         'present': version is not None,
         'version': version.strip() if version else None,

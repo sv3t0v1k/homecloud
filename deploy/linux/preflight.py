@@ -63,7 +63,14 @@ def check_inventory_layout(inventory):
     return config_dir
 
 
-def docker_command_prefix(inventory):
+def docker_command_prefix(inventory, user_installer=False):
+    if user_installer:
+        require('project_root' not in inventory
+                and inventory.get('config_dir', '/etc/homecloud')
+                == '/etc/homecloud',
+                'User installer cannot use project TEST layout')
+        return ['docker', '--config', '/etc/homecloud/docker',
+                '--host', 'unix:///var/run/docker.sock']
     if 'project_root' in inventory:
         # Same daemon as project wrapper; root's default context may differ.
         return ['docker', '--config', '/etc/homecloud-test/docker', '--host', 'unix:///var/run/docker.sock']
@@ -324,6 +331,8 @@ def main():
     parser.add_argument('--env-file', default='/etc/homecloud/runtime.env')
     parser.add_argument('--updates',
                         help='release update bridge override (docker-compose.production-updates.yml)')
+    parser.add_argument('--user-installer', action='store_true',
+                        help='use dedicated user installer Docker authority')
     args = parser.parse_args()
     require(platform.system() == 'Linux' and platform.machine() == 'x86_64',
             'D3 рассчитан на native Linux amd64; Desktop/эмуляция не подходят')
@@ -346,7 +355,8 @@ def main():
                 'SSD_', 'HDD_', 'PUBLIC_', 'TLS_', 'ACME_', 'BACKEND_', 'FRONTEND_',
                 'INGRESS_', 'REDIS_', 'STORAGE_', 'HTTP_', 'METRICS_')
     require(not any(key.startswith(reserved) for key in os.environ), 'Очистите override environment через env -i')
-    docker_prefix = docker_command_prefix(inventory)
+    docker_prefix = docker_command_prefix(
+        inventory, user_installer=args.user_installer)
     info = json.loads(command(*docker_prefix, 'info', '--format', '{{json .}}'))
     require(info['OSType'] == 'linux' and info['Architecture'] in ('x86_64', 'amd64') and
             'desktop' not in info.get('OperatingSystem', '').lower() and

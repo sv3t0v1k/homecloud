@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location(
     'probe', Path(__file__).with_name('probe.py'))
@@ -36,10 +37,15 @@ INVERSE_SDB1 = json.dumps({'blockdevices': [
     {'path': '/dev/sdb1', 'type': 'part', 'serial': None, 'children': [
         {'path': '/dev/sdb', 'type': 'disk', 'serial': 'HDD456'}]}]})
 
+DOCKER_PREFIX = (
+    'docker', '--config', '/etc/homecloud/docker',
+    '--host', 'unix:///var/run/docker.sock',
+)
+
 BASE = {
     ('uname', '-m'): 'x86_64\n',
-    ('docker', 'version'): '29.0.0\n',
-    ('docker', 'compose', 'version'): 'v5.6.0\n',
+    DOCKER_PREFIX + ('version',): '29.0.0\n',
+    DOCKER_PREFIX + ('compose', 'version'): 'v5.6.0\n',
     ('lsblk',): LSBLK,
     ('lsblk', '--json', '--inverse'): INVERSE_SDB1,
     ('findmnt',): json.dumps({'filesystems': [
@@ -50,6 +56,25 @@ BASE = {
 
 
 class ProbeContractTests(unittest.TestCase):
+    def test_docker_environment_is_clean(self):
+        with mock.patch.dict(probe.os.environ, {
+            'DOCKER_HOST': 'ssh://untrusted',
+            'DOCKER_CONTEXT': 'untrusted',
+            'DOCKER_CONFIG': '/untrusted/docker',
+        }):
+            with mock.patch.object(
+                probe.subprocess, 'run',
+                return_value=mock.Mock(
+                    returncode=0, stdout=b'29.0.0'),
+            ) as run:
+                probe.default_runner(
+                    list(DOCKER_PREFIX) + ['version'])
+
+        self.assertEqual(
+            run.call_args.kwargs['env'],
+            {'HOME': '/root', 'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'},
+        )
+
     def collect(self, extra=None):
         mapping = dict(BASE)
         mapping.update(extra or {})
@@ -87,7 +112,7 @@ class ProbeContractTests(unittest.TestCase):
 
     def test_missing_docker_warns(self):
         mapping = dict(BASE)
-        mapping.pop(('docker', 'version'))
+        mapping.pop(DOCKER_PREFIX + ('version',))
         facts = probe.collect(runner=canned(mapping))
         self.assertFalse(facts['docker']['present'])
         self.assertTrue(any('docker' in w for w in facts['warnings']))

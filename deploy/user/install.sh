@@ -230,8 +230,10 @@ say '==> Генерирую конфигурацию (секреты, /etc/homec
 py "$installer_dir/generate.py" --answers "$work/answers.json" --mode apply || fail 'генерация отклонена'
 
 compose() {
-  env -i HOME=/root PATH="$clean_path" DOCKER_CONFIG=/etc/homecloud/docker \
-    docker compose --project-directory "$project_root" \
+  env -i HOME=/root PATH="$clean_path" \
+    docker --config /etc/homecloud/docker \
+    --host unix:///var/run/docker.sock \
+    compose --project-directory "$project_root" \
     --env-file /etc/homecloud/runtime.env "$@"
 }
 
@@ -253,12 +255,12 @@ compose_release pull || fail 'не удалось скачать образы'
 # --- Фаза 5: preflight (тот же конвейер, что и в runbook) ---------------------
 say '==> Выполняю preflight'
 if [ "$CHANNEL" = release ]; then
-  (cd "$project_root" && py deploy/linux/preflight.py \
+  (cd "$project_root" && py deploy/linux/preflight.py --user-installer \
     --inventory /etc/homecloud/host-disks.json \
     --env-file /etc/homecloud/runtime.env \
     --updates "$project_root/docker-compose.production-updates.yml") || fail 'preflight отказал'
 else
-  (cd "$project_root" && py deploy/linux/preflight.py \
+  (cd "$project_root" && py deploy/linux/preflight.py --user-installer \
     --inventory /etc/homecloud/host-disks.json \
     --env-file /etc/homecloud/runtime.env) || fail 'preflight отказал'
 fi

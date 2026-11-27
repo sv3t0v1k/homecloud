@@ -167,6 +167,39 @@ class FakeDeps:
         return self.smoke_statuses[0]
 
 
+class DockerAuthorityTests(unittest.TestCase):
+    def test_local_docker_authority_and_clean_environment(self):
+        config = {
+            'docker_config': '/etc/homecloud/docker',
+            'compose_project_dir': '/opt/homecloud/repo',
+            'runtime_env': '/etc/homecloud/runtime.env',
+        }
+
+        with mock.patch.dict(os.environ, {
+            'DOCKER_HOST': 'ssh://untrusted',
+            'DOCKER_CONTEXT': 'untrusted',
+            'DOCKER_CONFIG': '/untrusted/docker',
+            'COMPOSE_PROJECT_NAME': 'untrusted',
+        }):
+            deps = mock.Mock()
+            deps.run.return_value.returncode = 0
+
+            worker.compose(config, deps, 'pull')
+
+        args, kwargs = deps.run.call_args
+
+        self.assertEqual(
+            args[0][:6],
+            ['docker', '--config', '/etc/homecloud/docker',
+             '--host', 'unix:///var/run/docker.sock', 'compose'],
+        )
+        self.assertEqual(
+            kwargs['env'],
+            {'HOME': '/root', 'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'},
+        )
+        self.assertEqual(args[0][-1], 'pull')
+
+
 class WorkerCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

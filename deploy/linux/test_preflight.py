@@ -437,6 +437,25 @@ class DataLayoutTests(unittest.TestCase):
 
 
 class UnitTests(unittest.TestCase):
+    def test_user_installer_docker_authority(self):
+        with patch.object(p, 'command',
+                          side_effect=AssertionError('Unexpected context lookup')):
+            self.assertEqual(
+                p.docker_command_prefix({}, user_installer=True),
+                ['docker', '--config', '/etc/homecloud/docker',
+                 '--host', 'unix:///var/run/docker.sock']
+            )
+
+    def test_user_installer_cannot_use_project_layout(self):
+        for inventory in (
+            {'project_root': '/home/hs/homecloud-test'},
+            {'config_dir': '/etc/other'},
+        ):
+            with self.subTest(inventory=inventory):
+                with self.assertRaises(p.Refusal):
+                    p.docker_command_prefix(
+                        inventory, user_installer=True)
+
     def test_project_uses_wrapper_daemon_without_reading_default_context(self):
         with patch.object(p,'command',side_effect=AssertionError('Default context must not be read')):
             self.assertEqual(p.docker_command_prefix({'project_root':'/home/hs/homecloud-test'}),
