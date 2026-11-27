@@ -166,6 +166,134 @@ class FetchSignedTests(OpensslRequired):
     def dest(self):
         return tempfile.TemporaryDirectory()
 
+    def test_retained_release_evidence_verifies_offline(self):
+        routes = release_routes()
+
+        with self.dest() as directory:
+            original = bootstrap.fetch_signed(
+                TAG, directory, fetch=canned_fetch(routes))
+
+            evidence = Path(directory) / bootstrap.EVIDENCE_DIR
+
+            self.assertEqual(
+                (evidence / bootstrap.EVIDENCE_LOCK).read_bytes(),
+                routes[bootstrap.RELEASES + TAG + '/release-lock.json'],
+            )
+
+            self.assertEqual(
+                (evidence / bootstrap.EVIDENCE_SIGNATURE).read_bytes(),
+                routes[bootstrap.RELEASES + TAG + '/release-lock.json.sig'],
+            )
+
+            with mock.patch.object(
+                bootstrap, 'real_fetch',
+                side_effect=AssertionError('network forbidden'),
+            ):
+                self.assertEqual(
+                    bootstrap.verify_local_release(directory),
+                    original,
+                )
+
+    def test_generator_requires_exact_signed_image_pair(self):
+        spec = importlib.util.spec_from_file_location(
+            'generate_for_release_test',
+            Path(__file__).with_name('generate.py'),
+        )
+
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+
+        routes = release_routes()
+
+        with self.dest() as directory:
+            root = Path(directory).resolve()
+
+            verified = bootstrap.fetch_signed(
+                TAG, str(root), fetch=canned_fetch(routes))
+
+            config = {
+                'project_root': str(root),
+                'update_channel': 'release',
+                'backend_image': verified['images']['backend'],
+                'frontend_image': verified['images']['frontend'],
+            }
+
+            with mock.patch.object(
+                generator, 'load_release_bootstrap',
+                return_value=bootstrap,
+            ):
+                generator.assert_install_identity(config, root)
+
+                for role in ('backend', 'frontend'):
+                    with self.subTest(role=role):
+                        modified = dict(config)
+                        modified[role + '_image'] = (
+                            'ghcr.io/sv3t0v1k/homecloud/' + role
+                            + '@sha256:' + 'f' * 64
+                        )
+
+                        with self.assertRaisesRegex(
+                            generator.Refusal,
+                            'differs from signed lock',
+                        ):
+                            generator.assert_install_identity(
+                                modified, root)
+
+                evidence = root / bootstrap.EVIDENCE_DIR
+                (evidence / bootstrap.EVIDENCE_SIGNATURE).unlink()
+
+                with self.assertRaises(generator.Refusal):
+                    generator.assert_install_identity(config, root)
+
+    def test_tampered_retained_lock_rejected(self):
+        routes = release_routes()
+
+        with self.dest() as directory:
+            bootstrap.fetch_signed(
+                TAG, directory, fetch=canned_fetch(routes))
+
+            path = (
+                Path(directory) / bootstrap.EVIDENCE_DIR
+                / bootstrap.EVIDENCE_LOCK
+            )
+
+            lock = json.loads(path.read_text())
+            lock['images']['backend']['digest'] = 'sha256:' + 'f' * 64
+            path.write_text(json.dumps(lock))
+
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.verify_local_release(directory)
+
+    def test_missing_retained_evidence_rejected(self):
+        with self.dest() as directory:
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.verify_local_release(directory)
+
+    def test_symlinked_evidence_rejected(self):
+        with self.dest() as directory:
+            root = Path(directory)
+            foreign = root / 'foreign'
+            foreign.mkdir()
+
+            (root / bootstrap.EVIDENCE_DIR).symlink_to(
+                foreign, target_is_directory=True)
+
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.verify_local_release(directory)
+
+    def test_archive_cannot_supply_release_evidence(self):
+        files = dict(INSTALLER_FILES)
+        files[bootstrap.EVIDENCE_DIR + '/release-lock.json'] = b'fake'
+
+        routes = release_routes(files=files)
+
+        with self.dest() as directory:
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.fetch_signed(
+                    TAG, directory, fetch=canned_fetch(routes))
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_happy_extracts_and_reports_images(self):
         routes = release_routes()
         with self.dest() as directory:
@@ -342,6 +470,21 @@ class FetchSignedTests(OpensslRequired):
 
 
 class FetchUnsignedTests(OpensslRequired):
+    def test_unsigned_archive_cannot_supply_release_evidence(self):
+        files = dict(INSTALLER_FILES)
+        files[bootstrap.EVIDENCE_DIR + '/release-lock.json'] = b'fake'
+
+        routes = {
+            bootstrap.CODELOAD + 'test': make_tarball(files),
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(bootstrap.Failure):
+                bootstrap.fetch_unsigned(
+                    'test', directory, fetch=canned_fetch(routes))
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_ref_extracts_without_signature(self):
         routes = {bootstrap.CODELOAD + 'test':
                   make_tarball(INSTALLER_FILES, prefix='homecloud-test/')}

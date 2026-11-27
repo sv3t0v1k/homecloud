@@ -120,6 +120,8 @@ def validate_answers(answers):
     require(answers['http_port'] != answers['https_port'], 'http_port и https_port обязаны различаться')
     canonical_dir(answers.get('project_root'), 'project_root')
     canonical_dir(answers.get('install_root'), 'install_root')
+    canonical_dir(answers.get('tls_cert_dir'), 'tls_cert_dir')
+    canonical_dir(answers.get('acme_webroot_dir'), 'acme_webroot_dir')
     canonical_dir(layout.get('db_dir'), 'layout.db_dir')
     canonical_dir(layout.get('storage_dir'), 'layout.storage_dir')
     for key in ('db_serial', 'storage_serial'):
@@ -234,6 +236,15 @@ def runtime_env(answers, generated, release_public_key):
         # Fail-closed: bridge включает только docker-compose.production-updates.yml.
         'UPDATE_INSTALL_BRIDGE_ENABLED': 'false',
     }
+    for key in ENV_KEYS:
+        value = values[key]
+
+        require(
+            isinstance(value, str)
+            and re.fullmatch(r'[A-Za-z0-9_./:@=+,-]+', value) is not None,
+            'unsafe runtime.env value: ' + key,
+        )
+
     return ''.join(key + '=' + values[key] + '\n' for key in ENV_KEYS)
 
 
@@ -321,6 +332,50 @@ def redact_plan(plan):
             'tls': {key: (value if key != 'key' else value) for key, value in plan['tls'].items()
                     if key in ('cert', 'cn', 'san_ip', 'san_dns')},
             'generated_keys': plan['generated_keys']}
+
+
+def load_release_bootstrap():
+    path = Path(__file__).resolve().with_name('bootstrap.py')
+
+    spec = importlib.util.spec_from_file_location(
+        'homecloud_release_bootstrap', path)
+
+    require(spec is not None and spec.loader is not None,
+            'cannot load release verifier')
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    return module
+
+
+def assert_install_identity(answers, repository_root):
+    """Bind the installation to its actual checkout and signed images."""
+    root = Path(repository_root).resolve(strict=True)
+
+    require(answers.get('project_root') == str(root),
+            'project_root must match the actual installer checkout')
+
+    channel = answers.get('update_channel')
+
+    require(channel in CHANNELS, 'invalid installation channel')
+
+    if channel == 'test':
+        return
+
+    bootstrap = load_release_bootstrap()
+
+    try:
+        evidence = bootstrap.verify_local_release(str(root))
+    except (bootstrap.Failure, OSError, ValueError,
+            subprocess.SubprocessError) as error:
+        raise Refusal('signed RELEASE evidence rejected: ' + str(error))
+
+    for role in ('backend', 'frontend'):
+        require(
+            answers.get(role + '_image') == evidence['images'][role],
+            'RELEASE image differs from signed lock: ' + role,
+        )
 
 
 def load_host_preflight():
@@ -579,6 +634,8 @@ def main():
         else:
             if os.geteuid() != 0:
                 raise Refusal('apply требует root')
+            assert_install_identity(
+                answers, Path(__file__).resolve().parents[2])
             assert_host_admission(answers, plan)
             apply_plan(plan)
             create_tls(plan['tls'])

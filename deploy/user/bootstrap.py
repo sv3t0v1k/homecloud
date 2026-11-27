@@ -3,6 +3,7 @@
 """Bootstrap пользовательского установщика: скачивание проверяемой копии репозитория.
 
 Режимы:
+  verify-local --repo-dir DIR  — повторная offline-проверка подписи RELEASE.
   latest-tag                    — тег последнего GitHub-релиза (проверка формата).
   fetch --tag TAG --dest DIR    — скачать релиз TAG, проверить подпись Ed25519
                                   release-lock.json.sig и хэши source_files,
@@ -25,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -41,6 +43,10 @@ HEX64_RE = re.compile(r'^[0-9a-f]{64}$')
 BASE64_RE = re.compile(r'^[A-Za-z0-9+/=\n]+$')
 LOCK_FORMAT = 'homecloud-ci-candidate-v1'
 PUBLIC_KEY_MEMBER = 'deploy/user/release-public.b64'
+EVIDENCE_DIR = '.homecloud-release'
+EVIDENCE_LOCK = 'release-lock.json'
+EVIDENCE_SIGNATURE = 'release-lock.json.sig'
+MAX_LOCK_BYTES = 8 * 1024 * 1024
 
 # Trust anchor belongs to the trusted bootstrap, not the downloaded release.
 # Changing this key requires an explicit key rotation procedure.
@@ -156,8 +162,15 @@ def verify_source_tree(archive, members, lock):
         raise Failure('подписанный lock не соответствует архиву:\n  ' + '\n  '.join(problems))
 
 
+def reject_evidence_members(members):
+    for name in members:
+        if name == EVIDENCE_DIR or name.startswith(EVIDENCE_DIR + '/'):
+            raise Failure('архив содержит зарезервированный каталог доказательства RELEASE')
+
+
 def extract_archive(archive, members, destination):
     """Распаковка в destination с проверкой имён (python 3.9, без tarfile filter)."""
+    reject_evidence_members(members)
     os.makedirs(destination, exist_ok=True)
     for relpath, info in members.items():
         target = os.path.realpath(os.path.join(destination, relpath))
@@ -226,23 +239,108 @@ def images_from_lock(lock):
     return pair
 
 
+def verify_release_lock(payload, signature, expected_tag=None):
+    if not payload or len(payload) > MAX_LOCK_BYTES:
+        raise Failure('release-lock: недопустимый размер')
+    if not signature or len(signature) > 4096:
+        raise Failure('release-lock: недопустимый размер подписи')
+
+    verify_signature(
+        payload, signature.decode('ascii'), trusted_public_key())
+
+    lock = json.loads(payload.decode('utf-8'))
+
+    if not isinstance(lock, dict) or lock.get('format') != LOCK_FORMAT:
+        raise Failure('неверная структура release-lock')
+
+    tag = lock.get('tag')
+
+    if not isinstance(tag, str) or not TAG_RE.fullmatch(tag):
+        raise Failure('release-lock: неверный тег')
+
+    if expected_tag is not None and tag != expected_tag:
+        raise Failure('release-lock относится к другому тегу')
+
+    return lock, images_from_lock(lock)
+
+
+def save_release_evidence(destination, payload, signature):
+    directory = os.path.join(destination, EVIDENCE_DIR)
+
+    # Exclusive creation: never reuse an existing proof directory.
+    os.mkdir(directory, 0o700)
+
+    for name, data in (
+        (EVIDENCE_LOCK, payload),
+        (EVIDENCE_SIGNATURE, signature),
+    ):
+        path = os.path.join(directory, name)
+
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+
+        with os.fdopen(descriptor, 'wb') as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+
+def read_evidence_file(directory_fd, name, limit):
+    descriptor = os.open(
+        name,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+        dir_fd=directory_fd,
+    )
+
+    with os.fdopen(descriptor, 'rb') as handle:
+        info = os.fstat(handle.fileno())
+
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
+            raise Failure('недопустимый файл доказательства RELEASE')
+
+        content = handle.read(limit + 1)
+
+        if len(content) > limit:
+            raise Failure('доказательство RELEASE превышает допустимый размер')
+
+        return content
+
+
+def verify_local_release(destination):
+    directory = os.path.join(destination, EVIDENCE_DIR)
+
+    try:
+        descriptor = os.open(
+            directory,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+
+        try:
+            payload = read_evidence_file(
+                descriptor, EVIDENCE_LOCK, MAX_LOCK_BYTES)
+            signature = read_evidence_file(
+                descriptor, EVIDENCE_SIGNATURE, 4096)
+        finally:
+            os.close(descriptor)
+
+        lock, images = verify_release_lock(payload, signature)
+
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as error:
+        raise Failure('локальное доказательство RELEASE отклонено: ' + str(error))
+
+    return {'tag': lock['tag'], 'images': images}
+
+
 def fetch_signed(tag, destination, fetch=real_fetch):
     log('скачиваю release-lock.json и подпись для %s' % tag)
     lock_payload = fetch(RELEASES + tag + '/release-lock.json')
     signature = fetch(RELEASES + tag + '/release-lock.json.sig')
     public_der = trusted_public_key()
     log('проверяю подпись Ed25519 доверенным ключом bootstrap')
-    verify_signature(lock_payload, signature.decode('ascii'), public_der)
-
-    lock = json.loads(lock_payload.decode('utf-8'))
-    if not isinstance(lock, dict):
-        raise Failure('неверная структура release-lock')
-    if lock.get('format') != LOCK_FORMAT:
-        raise Failure('неверный формат lock: %r' % (lock.get('format'),))
-    if lock.get('tag') != tag:
-        raise Failure('lock относится к %r, а не к %r' % (lock.get('tag'), tag))
-
-    images = images_from_lock(lock)
+    lock, images = verify_release_lock(lock_payload, signature, tag)
 
     log('скачиваю архив репозитория (%s)' % tag)
     tarball = fetch(CODELOAD + tag)
@@ -254,6 +352,8 @@ def fetch_signed(tag, destination, fetch=real_fetch):
         verify_source_tree(archive, members, lock)
         log('распаковываю в %s' % destination)
         extract_archive(archive, members, destination)
+
+    save_release_evidence(destination, lock_payload, signature)
     return {'tag': tag, 'images': images}
 
 
@@ -280,12 +380,21 @@ def main(argv=None):
     source.add_argument('--tag', help='подписанный релизный тег')
     source.add_argument('--ref', help='ветка/коммит без проверки подписи (test)')
     fetch_parser.add_argument('--dest', required=True, help='целевой каталог (пустой или новый)')
+    verify_parser = sub.add_parser(
+        'verify-local', help='проверить сохранённое доказательство RELEASE')
+    verify_parser.add_argument('--repo-dir', required=True)
+
     args = parser.parse_args(argv)
 
     try:
         if args.command == 'latest-tag':
             print(latest_release_tag())
             return 0
+        if args.command == 'verify-local':
+            result = verify_local_release(args.repo_dir)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
+
         destination = args.dest
         if os.path.exists(destination) and os.listdir(destination):
             raise Failure('целевой каталог не пуст: %s' % destination)

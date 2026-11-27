@@ -144,6 +144,10 @@ print(channel)
   fi
 
   CHANNEL=$answers_channel
+
+  if [ "$CHANNEL" = release ] && [ -n "$IMAGES" ]; then
+    fail '--images разрешён только для test-канала'
+  fi
 else
   say '==> Параметры установки (Enter — принять предложенное)'
   public_host=$(ask 'Адрес сервера (домен или IP)' "$primary_ip")
@@ -172,7 +176,22 @@ else
     layout_mode=system-root
   fi
   storage_serial=$(mount_serial "$storage_mount")
-  if [ -z "$IMAGES" ]; then
+  if [ "$CHANNEL" = release ]; then
+    [ -z "$IMAGES" ] || fail '--images разрешён только для test-канала'
+
+    py "$installer_dir/bootstrap.py" verify-local \
+      --repo-dir "$project_root" > "$work/release-info.json" \
+      || fail 'подписанное доказательство RELEASE не подтверждено'
+
+    backend_image=$(py -c 'import json,sys
+print(json.load(open(sys.argv[1]))["images"]["backend"])' \
+      "$work/release-info.json") || fail 'нет подписанного backend'
+
+    frontend_image=$(py -c 'import json,sys
+print(json.load(open(sys.argv[1]))["images"]["frontend"])' \
+      "$work/release-info.json") || fail 'нет подписанного frontend'
+
+  elif [ -z "$IMAGES" ]; then
     backend_image=$(ask 'Образ backend (registry/image:tag@digest)' '')
     frontend_image=$(ask 'Образ frontend (registry/image:tag@digest)' '')
   else

@@ -190,8 +190,8 @@ print(backend + "," + frontend)') \
 
   [ -n "$pair" ] || fail 'пустая пара образов RELEASE'
 
-  set -- "$@" --images "$pair"
-  say '==> Образы взяты из подписанного release-lock'
+  say '==> Образы подтверждены подписанным release-lock'
+  # install.sh independently reads the retained signed evidence.
 fi
 
 say "==> Запускаю установщик из $REPO_DIR"

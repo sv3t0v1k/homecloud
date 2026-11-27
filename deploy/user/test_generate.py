@@ -315,6 +315,11 @@ py() {
       test "$2" = --output || exit 98
       printf '%s\\n' "$HC_TEST_PROBE" > "$3"
       ;;
+    */bootstrap.py)
+      test "$2" = verify-local || exit 98
+      test "$3" = --repo-dir || exit 98
+      printf '%s\n' "$HC_TEST_RELEASE_INFO"
+      ;;
     */generate.py)
       test "$#" = 5 || exit 98
       test "$2" = --answers || exit 98
@@ -374,9 +379,19 @@ py() {
                     + "b" * 64
                 )
 
+                backend, frontend = images.split(",")
+
+                env["HC_TEST_RELEASE_INFO"] = json.dumps({
+                    "tag": "v1.2.0",
+                    "images": {
+                        "backend": backend,
+                        "frontend": frontend,
+                    },
+                })
+
                 args = [
                     "sh", "-c", script, str(installer),
-                    "--defaults", "--images", images,
+                    "--defaults",
                 ]
 
                 if root != "/opt/homecloud":
@@ -415,6 +430,14 @@ py() {
                 )
                 self.assertIn(
                     "UPDATE_CHANNEL=release\n",
+                    runtime,
+                )
+                self.assertIn(
+                    "RELEASE_BACKEND_IMAGE=" + backend + "\n",
+                    runtime,
+                )
+                self.assertIn(
+                    "RELEASE_FRONTEND_IMAGE=" + frontend + "\n",
                     runtime,
                 )
                 self.assertEqual(
@@ -575,7 +598,7 @@ py() {
         )
         self.assertIn("--channel", args)
         self.assertEqual(args[args.index("--channel") + 1], "release")
-        self.assertIn("--images", args)
+        self.assertNotIn("--images", args)
         self.assertIn("--defaults", args)
 
     def test_explicit_tag(self):
@@ -1241,7 +1264,10 @@ class HostAdmissionTests(unittest.TestCase):
 
     def test_main_never_applies_after_admission_failure(self):
         answers_path = self.root / "answers.json"
-        answers_path.write_text("{}")
+        answers_path.write_text(json.dumps(answers(
+            project_root=str(Path(generate.__file__).resolve().parents[2]),
+            update_channel="test",
+        )))
 
         with mock.patch.object(
             sys, "argv",
@@ -1328,6 +1354,106 @@ clean_path=/usr/sbin:/usr/bin:/sbin:/bin
             source.count("py deploy/linux/preflight.py --user-installer"),
             2,
         )
+
+
+class ReleaseInstallationIdentityTests(unittest.TestCase):
+    def test_test_channel_does_not_require_release_evidence(self):
+        root = Path(generate.__file__).resolve().parents[2]
+
+        config = answers(
+            project_root=str(root),
+            update_channel="test",
+        )
+
+        with mock.patch.object(
+            generate, "load_release_bootstrap",
+            side_effect=AssertionError("Unexpected RELEASE verifier"),
+        ):
+            generate.assert_install_identity(config, root)
+
+    def test_project_root_override_rejected(self):
+        root = Path(generate.__file__).resolve().parents[2]
+
+        for channel in ("release", "test"):
+            with self.subTest(channel=channel):
+                config = answers(
+                    project_root="/foreign/repo",
+                    update_channel=channel,
+                )
+
+                with self.assertRaisesRegex(
+                    generate.Refusal, "actual installer checkout"
+                ):
+                    generate.assert_install_identity(config, root)
+
+    def test_runtime_environment_injection_rejected(self):
+        fields = (
+            "backend_image",
+            "frontend_image",
+            "tls_cert_dir",
+            "acme_webroot_dir",
+            "ingress_subnet",
+            "ingress_proxy_ip",
+            "backend_proxy_subnet",
+            "frontend_proxy_ip",
+        )
+
+        for field in fields:
+            for suffix in (
+                "\nRELEASE_BACKEND_IMAGE=foreign/backend",
+                "\rRELEASE_FRONTEND_IMAGE=foreign/frontend",
+                "${UNTRUSTED_IMAGE}",
+                "\x00",
+                "#comment",
+            ):
+                with self.subTest(field=field, suffix=suffix):
+                    config = answers()
+                    config[field] += suffix
+
+                    with self.assertRaises(generate.Refusal):
+                        generate.build(config)
+
+    def test_main_never_applies_after_identity_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "answers.json"
+            path.write_text(json.dumps(answers()))
+
+            with mock.patch.object(
+                sys, "argv",
+                ["generate.py", "--answers", str(path),
+                 "--mode", "apply"],
+            ):
+                with mock.patch.object(
+                    generate.os, "geteuid", return_value=0
+                ):
+                    with mock.patch.object(
+                        generate, "assert_host_admission"
+                    ) as admission:
+                        with mock.patch.object(
+                            generate, "apply_plan"
+                        ) as apply:
+                            with mock.patch.object(
+                                generate, "create_tls"
+                            ) as tls:
+                                with mock.patch.object(sys, "stderr"):
+                                    self.assertEqual(generate.main(), 2)
+
+                                admission.assert_not_called()
+                                apply.assert_not_called()
+                                tls.assert_not_called()
+
+    def test_direct_release_cli_override_rejected(self):
+        harness = InstallerAnswersChannelTests()
+
+        result = harness.run_installer(
+            {"update_channel": "release"},
+            "--channel", "release",
+            "--images", "foreign/backend,foreign/frontend",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--images", result.stderr)
+        self.assertNotIn("SELECTED_CHANNEL=", result.stdout)
 
 
 if __name__ == '__main__':
