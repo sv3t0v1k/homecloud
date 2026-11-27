@@ -194,7 +194,10 @@ def load_config():
 
 def read_request():
     path = BASE_DIR / 'inbox' / 'request.json'
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+    )
     try:
         info = os.fstat(descriptor)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == BACKEND_UID and info.st_gid == GID and
@@ -1256,6 +1259,7 @@ def bootstrap(deps):
         require(refs == (backend_ref, frontend_ref),
                 'installed images differ from signed deployment')
 
+        smoke(config, deps, lock)
         write_installed_lock(lock_bytes)
     finally:
         os.close(lock_fd)

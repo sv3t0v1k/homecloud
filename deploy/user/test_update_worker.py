@@ -781,6 +781,32 @@ class InstallTests(WorkerCase):
                 self.assertIn('--no-build', call)
         self.assertEqual(deps.smoke_calls, [('https://192.168.1.10:443/', 'cloud.example.com')])
 
+    def test_fifo_request_is_rejected_without_blocking(self):
+        self.write_env()
+        self.write_installed_lock()
+
+        request = self.base / 'inbox' / 'request.json'
+        os.mkfifo(request, 0o600)
+
+        real_open = os.open
+
+        def guarded_open(path, flags, *args, **kwargs):
+            if Path(path) == request:
+                self.assertTrue(flags & os.O_NONBLOCK)
+
+            return real_open(path, flags, *args, **kwargs)
+
+        deps = FakeDeps()
+
+        with mock.patch.object(
+            worker.os, 'open', side_effect=guarded_open
+        ):
+            with self.assertRaises(worker.Refusal):
+                worker.install(deps)
+
+        self.assertEqual(deps.compose_calls, [])
+        self.assertFalse(worker.journal_exists())
+
     def test_no_request_is_noop(self):
         worker.install(FakeDeps())
         self.assertFalse((self.base / 'status' / 'current.json').exists())
@@ -948,9 +974,36 @@ class BootstrapTests(WorkerCase):
         deps = FakeDeps(github_routes(payload, openssl_sign(payload)))
         worker.bootstrap(deps)
         self.assertEqual(deps.http_calls, [])
+
+        self.assertTrue(deps.readonly_calls)
+        self.assertIn(
+            ('https://192.168.1.10:443/', 'cloud.example.com'),
+            deps.smoke_calls,
+        )
+
         self.assertEqual(self.install_lock().read_bytes(), payload)
         self.assertEqual(deps.compose_calls, [])
         self.assertFalse((self.base / 'status' / 'current.json').exists())
+
+    def test_bootstrap_requires_actual_healthy_runtime(self):
+        self.write_env()
+
+        for failure in ('image', 'database', 'https'):
+            with self.subTest(failure=failure):
+                deps = FakeDeps()
+
+                if failure == 'image':
+                    deps.inspected_image_override = 'foreign/image:latest'
+                elif failure == 'database':
+                    deps.actual_migrations.append('UnexpectedMigration')
+                else:
+                    deps.smoke_statuses = [404]
+
+                with self.assertRaises(worker.Refusal):
+                    worker.bootstrap(deps)
+
+                self.assertFalse(self.install_lock().exists())
+                self.assertEqual(deps.compose_calls, [])
 
     def test_bootstrap_refuses_existing_lock(self):
         self.write_env()

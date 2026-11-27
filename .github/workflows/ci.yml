@@ -269,6 +269,8 @@ jobs:
           bash scripts/tests/test-backup-production.sh
       - name: User installer and signed update regression
         shell: bash
+        env:
+          HOMECLOUD_EXPECT_COMPOSE: '5.6.0'
         run: bash scripts/ci/test-user-installer.sh
       - name: Isolated recovery contract tests with fake Docker
         run: |

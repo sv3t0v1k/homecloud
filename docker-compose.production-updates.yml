@@ -7,6 +7,12 @@
 # откатывается при отказе. UPDATE_ADMIN_USER_ID пуст — кнопка скрыта (fail-closed).
 services:
   backend:
+    # RELEASE discovery requires outbound HTTPS.
+    # Keep database and proxy networks isolated.
+    networks: !override
+      app_network:
+      backend_proxy:
+      release_egress:
     environment:
       UPDATE_INSTALL_BRIDGE_ENABLED: "true"
       UPDATE_REQUEST_INBOX: /run/homecloud-update/inbox
@@ -59,3 +65,8 @@ services:
         target: /run/homecloud-update/status
         read_only: true
         bind: {create_host_path: false}
+
+networks:
+  release_egress:
+    driver: bridge
+    internal: false

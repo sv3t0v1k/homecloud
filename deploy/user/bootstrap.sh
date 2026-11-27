@@ -22,6 +22,7 @@
 #   --tag <тег>      конкретный подписанный релиз (умолчание — последний релиз)
 #   --ref <ветка>    ветка/коммит БЕЗ проверки подписи (только test-канал)
 #   --repo-dir <d>   каталог для копии репозитория (умолчание <root>/repo)
+#   --local-bootstrap  явно доверенный локальный checkout
 #   HOMECLOUD_RAW    базовый URL raw.githubusercontent для bootstrap.py
 #                    при запуске по pipe (умолчание: .../homecloud/main)
 set -eu
@@ -38,6 +39,7 @@ INSTALL_ROOT=/opt/homecloud
 CHANNEL=release
 CHANNEL_GIVEN=0
 IMAGES_GIVEN=0
+LOCAL_BOOTSTRAP=0
 
 # Обрабатываем только исходные аргументы.
 # Аргументы install.sh добавляются в конец "$@".
@@ -87,6 +89,10 @@ while [ "$remaining" -gt 0 ]; do
           ;;
       esac
       ;;
+    --local-bootstrap)
+      [ "$LOCAL_BOOTSTRAP" = 0 ] || fail 'повторный --local-bootstrap'
+      LOCAL_BOOTSTRAP=1
+      ;;
     --defaults|--interactive|--no-start)
       set -- "$@" "$opt"
       ;;
@@ -134,10 +140,20 @@ clean_path=/usr/sbin:/usr/bin:/sbin:/bin
 py() { env -i HOME=/root PATH="$clean_path" /usr/bin/python3 -I -B "$@"; }
 say() { printf '%s\n' "$*"; }
 
-# bootstrap.py рядом со скриптом (запуск из checkout); при запуске по pipe
-# скачиваем его из raw — единственная TOFU-точка (см. шапку файла).
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || fail
-if [ -f "$script_dir/bootstrap.py" ]; then
+# Never infer trust from the current working directory.
+tmp=''
+if [ "$LOCAL_BOOTSTRAP" = 1 ]; then
+  case "$0" in
+    bootstrap.sh|*/bootstrap.sh) ;;
+    *) fail '--local-bootstrap требует запуск файла bootstrap.sh';;
+  esac
+
+  [ -f "$0" ] || fail 'локальный bootstrap.sh не найден'
+
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || fail
+
+  [ -f "$script_dir/bootstrap.py" ] || fail 'локальный bootstrap.py не найден'
+
   BOOTSTRAP_PY="$script_dir/bootstrap.py"
 else
   base=${HOMECLOUD_RAW:-https://raw.githubusercontent.com/sv3t0v1k/homecloud/main}
@@ -192,6 +208,12 @@ print(backend + "," + frontend)') \
 
   say '==> Образы подтверждены подписанным release-lock'
   # install.sh independently reads the retained signed evidence.
+fi
+
+if [ -n "$tmp" ]; then
+  rm -f -- "$tmp/bootstrap.py"
+  rmdir -- "$tmp"
+  trap - EXIT
 fi
 
 say "==> Запускаю установщик из $REPO_DIR"

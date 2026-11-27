@@ -29,9 +29,8 @@ done
 test -n "$OPENSSL_BIN"
 
 export HOMECLOUD_OPENSSL="$OPENSSL_BIN"
-export PATH="$(dirname "$OPENSSL_BIN"):$PATH"
 
-openssl version
+"$HOMECLOUD_OPENSSL" version
 
 TOTAL=0
 
@@ -73,6 +72,14 @@ run_tests deploy/user/test_update_worker.py
 run_tests deploy/user/test_bootstrap.py
 run_tests deploy/user/test_generate.py
 run_tests deploy/user/test_probe.py
+echo "=== ACTUAL COMPOSE AUTHORITY ==="
+command -v docker
+docker compose version
+
+if [ -n "${HOMECLOUD_EXPECT_COMPOSE:-}" ]; then
+  test "$(docker compose version --short)" = "$HOMECLOUD_EXPECT_COMPOSE"
+fi
+
 run_tests deploy/linux/test_preflight.py
 run_tests scripts/ci/test-release.py
 run_tests scripts/ci/test-release-sign.py

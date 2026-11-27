@@ -469,7 +469,7 @@ py() {
 class BootstrapChannelRegressionTests(unittest.TestCase):
     """Проверка аргументов и каналов реального shell-bootstrap."""
 
-    def run_bootstrap(self, *args, info=None):
+    def run_bootstrap(self, *args, info=None, pipe=False):
         path = Path(__file__).resolve().with_name("bootstrap.sh")
         script = path.read_text()
 
@@ -508,7 +508,7 @@ py() {
 
         self.assertEqual(script.count(launch), 1)
         script = script.replace(launch, capture, 1)
-        script = 'id() { printf "0\\n"; }\n' + script
+        script = 'id() { printf "0\\n"; }\ncurl() {\n  printf \'DOWNLOAD_OFFICIAL_BOOTSTRAP\\n\' >&2\n  while [ "$#" -gt 0 ]; do\n    case "$1" in\n      -o)\n        printf \'# fixture\\n\' > "$2"\n        return 0\n        ;;\n    esac\n    shift\n  done\n  return 1\n}\n' + script
 
         env = dict(os.environ)
         env["HC_TEST_PYTHON"] = sys.executable
@@ -518,6 +518,23 @@ py() {
                 "frontend": "ghcr.io/example/frontend@sha256:" + "b" * 64,
             }
         })
+
+        if pipe:
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as directory:
+                foreign = Path(directory) / "bootstrap.py"
+                foreign.write_text("raise RuntimeError('untrusted')")
+
+                return subprocess.run(
+                    ["sh", "-s", "--", *args],
+                    input=script,
+                    cwd=directory,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
 
         return subprocess.run(
             ["sh", "-c", script, str(path), *args],
@@ -587,6 +604,38 @@ py() {
         self.assertEqual(args.count("--images"), 1)
         self.assertEqual(args[args.index("--images") + 1], pair)
         self.assertEqual(args[args.index("--channel") + 1], "test")
+
+    def test_pipe_does_not_trust_neighbouring_python(self):
+        result = self.run_bootstrap("--defaults", pipe=True)
+        self.successful_args(result)
+
+        self.assertIn(
+            "DOWNLOAD_OFFICIAL_BOOTSTRAP", result.stderr)
+
+        fetch = next(
+            line for line in result.stderr.splitlines()
+            if line.startswith("FETCH ")
+        )
+
+        path = json.loads(fetch[6:])[0]
+
+        self.assertIn("homecloud-bootstrap.", path)
+        self.assertTrue(path.endswith("/bootstrap.py"))
+
+    def test_explicit_local_bootstrap_requires_script_file(self):
+        result = self.run_bootstrap(
+            "--local-bootstrap", "--defaults")
+
+        self.successful_args(result)
+
+        self.assertNotIn(
+            "DOWNLOAD_OFFICIAL_BOOTSTRAP", result.stderr)
+
+        result = self.run_bootstrap(
+            "--local-bootstrap", "--defaults", pipe=True)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("FETCH ", result.stderr)
 
     def test_default_is_signed_release(self):
         result = self.run_bootstrap("--defaults")

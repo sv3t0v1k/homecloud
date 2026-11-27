@@ -156,11 +156,66 @@ class ConfigTests(unittest.TestCase):
     def test_actual_compose_merge(self):
         p.check_config(self.config,self.inventory)
 
+    def test_fresh_user_test_install_compose_merge(self):
+        values = dict(
+            self.ENV_VALUES,
+            UPDATE_CHANNEL='test',
+            UPDATE_INSTALL_BRIDGE_ENABLED='false',
+        )
+
+        config = self.compose_merge(values)
+        p.check_config(config, self.inventory)
+
+        backend = config['services']['backend']
+
+        self.assertEqual(
+            backend['environment']['UPDATE_CHANNEL'], 'test')
+        self.assertEqual(
+            backend['environment']['UPDATE_INSTALL_BRIDGE_ENABLED'],
+            'false')
+
+        self.assertNotIn(
+            'release_egress', backend.get('networks', {}))
+        self.assertNotIn(
+            'release_egress', config['networks'])
+
+        self.assertTrue(
+            config['networks']['app_network']['internal'])
+        self.assertTrue(
+            config['networks']['backend_proxy']['internal'])
+
     def test_release_bridge_compose_merge_accepted(self):
         values = dict(self.ENV_VALUES, UPDATE_CHANNEL='release',
                       UPDATE_RELEASE_PUBLIC_KEY='MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
         config = self.compose_merge(values, ROOT/'docker-compose.production-updates.yml')
         p.check_config(config, self.inventory)
+
+        backend = config['services']['backend']
+        networks = config['networks']
+
+        self.assertEqual(
+            set(backend['networks']),
+            {'app_network', 'backend_proxy', 'release_egress'},
+        )
+
+        self.assertTrue(networks['app_network']['internal'])
+        self.assertTrue(networks['backend_proxy']['internal'])
+
+        self.assertFalse(
+            networks['release_egress'].get('internal', False))
+        self.assertFalse(
+            networks['release_egress'].get('external', False))
+        self.assertEqual(
+            networks['release_egress']['driver'], 'bridge')
+
+        for role in ('db', 'frontend', 'ingress'):
+            self.assertNotIn(
+                'release_egress',
+                config['services'][role].get('networks', {}),
+            )
+
+        self.assertFalse(backend.get('ports'))
+        self.assertFalse(config['services']['db'].get('ports'))
 
     def refusal(self, edit):
         c=copy.deepcopy(self.config)
