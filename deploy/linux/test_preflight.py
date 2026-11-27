@@ -160,6 +160,7 @@ class ConfigTests(unittest.TestCase):
         values = dict(
             self.ENV_VALUES,
             UPDATE_CHANNEL='test',
+            UPDATE_ADMIN_USER_ID='17',
             UPDATE_INSTALL_BRIDGE_ENABLED='false',
         )
 
@@ -170,6 +171,8 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(
             backend['environment']['UPDATE_CHANNEL'], 'test')
+        self.assertEqual(
+            backend['environment']['UPDATE_ADMIN_USER_ID'], '17')
         self.assertEqual(
             backend['environment']['UPDATE_INSTALL_BRIDGE_ENABLED'],
             'false')

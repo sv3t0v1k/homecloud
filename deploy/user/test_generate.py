@@ -118,6 +118,38 @@ class GenerateContractTests(unittest.TestCase):
         backend = plan['files']['/srv/data/mycloud/.homecloud-backend']
         self.assertEqual(backend['owner'], (1001, 65533))
 
+    def test_logical_storage_identity_marker(self):
+        for channel in ('test', 'release'):
+            with self.subTest(channel=channel):
+                plan = self.build(update_channel=channel)
+                marker = plan['files'][
+                    '/srv/data/mycloud/storage/.homecloud-storage-identity']
+                self.assertEqual(marker['mode'], 0o600)
+                self.assertEqual(marker['owner'], (1001, 65533))
+                self.assertEqual(
+                    marker['content'],
+                    '{"version":1,"storageLocationId":'
+                    '"f2f5c4b0-8d57-4c49-9f8c-0d095b344601",'
+                    '"machineKey":"legacy-storage",'
+                    '"mountKey":"legacy-storage"}\\n'.replace('\\n', '\n')
+                )
+
+    def test_update_owner_binding_preserves_existing_values(self):
+        raw = 'DB_PASSWORD=unchanged\nUPDATE_CHANNEL=release\n'
+        self.assertEqual(
+            generate.runtime_with_owner(raw, '17'),
+            raw + 'UPDATE_ADMIN_USER_ID=17\n')
+
+    def test_invalid_or_repeated_update_owner_refused(self):
+        raw = 'UPDATE_CHANNEL=test\n'
+        for owner in ('', '0', '-1', '2147483648', '1\nKEY=value'):
+            with self.subTest(owner=owner):
+                with self.assertRaises(generate.Refusal):
+                    generate.runtime_with_owner(raw, owner)
+        with self.assertRaises(generate.Refusal):
+            generate.runtime_with_owner(
+                raw + 'UPDATE_ADMIN_USER_ID=7\n', '17')
+
     def test_dirs_ownership(self):
         plan = self.build()
         self.assertEqual(plan['dirs']['/srv/ssd/mycloud/postgres'], (0o700, (70, 70)))
@@ -392,6 +424,7 @@ py() {
                 args = [
                     "sh", "-c", script, str(installer),
                     "--defaults",
+                    "--no-start",
                 ]
 
                 if root != "/opt/homecloud":
@@ -464,6 +497,75 @@ py() {
                     "DB_PASSWORD=<generated>\n",
                     runtime,
                 )
+
+
+class InstallerE2ERegressionTests(unittest.TestCase):
+    def test_port_prompt_retries_invalid_input(self):
+        source = Path(__file__).with_name('install.sh').read_text()
+        function = source.split('ask_port() {', 1)[1].split(
+            '# --- Фаза 1:', 1)[0]
+        harness = """
+set -eu
+MODE=interactive
+HAVE_TTY=1
+fail() { echo "$*" >&2; exit 1; }
+ask() { IFS= read -r reply; printf '%s\\n' "$reply"; }
+py() { "$HC_TEST_PYTHON" -I -B "$@"; }
+"""
+        result = subprocess.run(
+            ['sh', '-c', harness + 'ask_port() {' + function +
+             '\nask_port HTTPS 443 80\n'],
+            input='192.168.3.122:443\n0\n65536\n80\n443\n',
+            env=dict(os.environ, HC_TEST_PYTHON=sys.executable),
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '443')
+
+    def test_owner_provisioning_order_and_failure(self):
+        source = Path(__file__).with_name('install.sh').read_text()
+        function = source.split('provision_owner() {', 1)[1].split(
+            '# --- Фаза 6:', 1)[0]
+        harness = """
+set -eu
+say() { :; }
+fail() { echo "$*" >&2; exit 1; }
+compose_release() {
+  printf '%s\\n' "$*" >> "$HC_TEST_TRACE"
+  if [ "$1" = exec ]; then
+    cat >/dev/null
+    printf '17\\n'
+  fi
+}
+create_owner() {
+  printf 'create_owner\\n' >> "$HC_TEST_TRACE"
+  test "$HC_TEST_FAIL" = 0
+}
+bind_owner() {
+  printf 'bind_owner %s\\n' "$1" >> "$HC_TEST_TRACE"
+}
+"""
+        for failure in ('0', '1'):
+            with self.subTest(failure=failure):
+                with tempfile.TemporaryDirectory() as directory:
+                    trace = Path(directory) / 'trace'
+                    result = subprocess.run(
+                        ['sh', '-c', harness + 'provision_owner() {' +
+                         function + '\nprovision_owner\n'],
+                        env=dict(os.environ, HC_TEST_TRACE=str(trace),
+                                 HC_TEST_FAIL=failure),
+                        capture_output=True, text=True, timeout=30)
+                    calls = trace.read_text().splitlines()
+                    self.assertTrue(calls[0].startswith('up -d --no-build'))
+                    self.assertTrue(calls[0].endswith(' backend'))
+                    self.assertEqual(calls[1:3],
+                                     ['stop backend', 'create_owner'])
+                    if failure == '0':
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertTrue(calls[3].startswith('exec -T db'))
+                        self.assertEqual(calls[-1], 'bind_owner 17')
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(len(calls), 3)
 
 
 class BootstrapChannelRegressionTests(unittest.TestCase):
@@ -783,7 +885,7 @@ py() {
 
             return subprocess.run(
                 ["sh", "-c", script, str(path),
-                 "--answers", str(file), *args],
+                 "--answers", str(file), "--no-start", *args],
                 cwd=path.parents[2],
                 env=env,
                 capture_output=True,

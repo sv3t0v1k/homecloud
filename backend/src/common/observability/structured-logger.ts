@@ -19,6 +19,35 @@ const safeOperationalMessages = new Set([
   "Startup cleanup failed",
 ]);
 
+const safeStartupMessages = new Set([
+  "Storage unavailable: identity-mismatch/identity-unverifiable",
+  "Storage unavailable: identity-mismatch/invalid-root",
+  "Storage unavailable: identity-mismatch/identity-changed",
+  "Storage unavailable: identity-mismatch/marker-anchor-unavailable",
+  "Storage unavailable: offline/root-unavailable",
+  "Storage unavailable: offline/exact-mount-absent-ambiguous-or-nested",
+  "Storage unavailable: degraded/untrusted-directory",
+  "Storage unavailable: degraded/read-access-denied",
+  "Storage unavailable: degraded/write-probe-failed",
+  "Storage unavailable: read-only/write-access-denied",
+  "Storage unavailable: read-only/write-disabled",
+  "Upload workspace unavailable: provision legacy .tmp before startup",
+  "Invalid storage root",
+  "Invalid temporary directory",
+  ...[
+    "JWT_SECRET",
+    "JWT_REFRESH_SECRET",
+    "JWT_SECRET / JWT_REFRESH_SECRET",
+    "DATABASE_URL",
+    "DB_PASSWORD",
+    "DB_PASSWORD / DATABASE_URL",
+    "METRICS_TOKEN",
+    "REDIS_PASSWORD",
+    "STORAGE_PATH",
+    "FRONTEND_URL",
+  ].map((name) => `Unsafe or missing production configuration: ${name}`),
+]);
+
 export class StructuredLogger implements LoggerService {
   constructor(
     private readonly write: (line: string) => void = (line) =>
@@ -45,12 +74,21 @@ export class StructuredLogger implements LoggerService {
     const context = parameters.length
       ? parameters[parameters.length - 1]
       : undefined;
+    const candidate = message instanceof Error ? message.message : message;
+    const startupMessage =
+      context === "ExceptionHandler" &&
+      typeof candidate === "string" &&
+      safeStartupMessages.has(candidate)
+        ? candidate
+        : undefined;
     this.event(
       level,
       level === "error" || level === "warn"
-        ? typeof message === "string" && safeOperationalMessages.has(message)
-          ? message
-          : "runtime_" + level
+        ? startupMessage ?? (
+          typeof message === "string" && safeOperationalMessages.has(message)
+            ? message
+            : "runtime_" + level
+        )
         : typeof message === "string"
           ? message
           : "runtime_event",
