@@ -2,6 +2,9 @@
 """Синтетические тесты generate.py: контракт артефактов без root и записи."""
 import importlib.util
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 import unittest
 
@@ -288,6 +291,149 @@ class GenerateRefusalTests(unittest.TestCase):
     def test_unknown_update_channel(self):
         self.refuse(update_channel='nightly')
         self.refuse(update_channel='')
+
+
+class InstallerShellRegressionTests(unittest.TestCase):
+    """Проверка shell-оркестратора без изменения хоста."""
+
+    def test_default_answers_reach_real_generator(self):
+        installer = Path(__file__).resolve().with_name("install.sh")
+        script = installer.read_text()
+
+        boundary = (
+            'py() { env -i HOME=/root PATH="$clean_path" '
+            '/usr/bin/python3 -I -B "$@"; }'
+        )
+
+        harness = """
+py() {
+  case "$1" in
+    */probe.py)
+      test "$2" = --output || exit 98
+      printf '%s\\n' "$HC_TEST_PROBE" > "$3"
+      ;;
+    */generate.py)
+      test "$#" = 5 || exit 98
+      test "$2" = --answers || exit 98
+      test "$4" = --mode || exit 98
+      test "$5" = apply || exit 98
+      "$HC_TEST_PYTHON" -I -B "$1" --answers "$3" --mode plan
+      exit $?
+      ;;
+    *)
+      "$HC_TEST_PYTHON" -I -B "$@"
+      ;;
+  esac
+}
+"""
+
+        self.assertEqual(script.count(boundary), 1)
+        script = script.replace(boundary, harness, 1)
+        script = 'id() { printf "0\\n"; }\n' + script
+
+        for root in ("/opt/homecloud", "/srv/homecloud"):
+            with self.subTest(root=root):
+                mount = root + "/data"
+
+                probe = {
+                    "warnings": [],
+                    "system": {"arch": "x86_64"},
+                    "docker": {
+                        "present": True,
+                        "compose_version": "5.6.0",
+                    },
+                    "network": {
+                        "primary_ip": "192.168.1.10",
+                        "listening_tcp_ports": [],
+                    },
+                    "mounts": [
+                        {
+                            "target": "/",
+                            "uuid": "ssd-uuid",
+                            "serial": "SSD123",
+                        },
+                        {
+                            "target": mount,
+                            "uuid": "hdd-uuid",
+                            "serial": "HDD456",
+                        },
+                    ],
+                }
+
+                env = dict(os.environ)
+                env["HC_TEST_PROBE"] = json.dumps(probe)
+                env["HC_TEST_PYTHON"] = sys.executable
+
+                images = (
+                    "ghcr.io/sv3t0v1k/homecloud/backend@sha256:"
+                    + "a" * 64
+                    + ",ghcr.io/sv3t0v1k/homecloud/frontend@sha256:"
+                    + "b" * 64
+                )
+
+                args = [
+                    "sh", "-c", script, str(installer),
+                    "--defaults", "--images", images,
+                ]
+
+                if root != "/opt/homecloud":
+                    args += ["--root", root]
+
+                result = subprocess.run(
+                    args,
+                    env=env,
+                    cwd=installer.parents[2],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+
+                self.assertEqual(
+                    result.returncode, 0,
+                    result.stdout + result.stderr,
+                )
+
+                start = result.stdout.find("{")
+                self.assertGreaterEqual(start, 0)
+                plan = json.loads(result.stdout[start:])
+
+                files = plan["files"]
+                runtime = files[
+                    "/etc/homecloud/runtime.env"
+                ]["content"]
+
+                inventory = json.loads(files[
+                    "/etc/homecloud/host-disks.json"
+                ]["content"])
+
+                self.assertIn(
+                    "COMPOSE_PROJECT_NAME=homecloud-user\n",
+                    runtime,
+                )
+                self.assertIn(
+                    "UPDATE_CHANNEL=release\n",
+                    runtime,
+                )
+                self.assertEqual(
+                    inventory["ssd"]["serial"], "SSD123"
+                )
+                self.assertEqual(
+                    inventory["hdd"]["serial"], "HDD456"
+                )
+                self.assertEqual(
+                    inventory["hdd"]["uuid"], "hdd-uuid"
+                )
+                self.assertEqual(
+                    inventory["hdd"]["mount"], mount
+                )
+                self.assertEqual(
+                    inventory["hdd"]["data"],
+                    root + "/data/storage",
+                )
+                self.assertIn(
+                    "DB_PASSWORD=<generated>\n",
+                    runtime,
+                )
 
 
 if __name__ == '__main__':

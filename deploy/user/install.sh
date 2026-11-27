@@ -17,7 +17,7 @@ installer_dir="$script_dir"
 
 MODE=interactive
 INSTALL_ROOT=/opt/homecloud
-PROJECT_NAME=homecloud
+PROJECT_NAME=homecloud-user
 CHANNEL=release
 CHANNEL_GIVEN=0
 START=1
@@ -92,15 +92,14 @@ default_http=80;  port_free 80  || default_http=8080
 # UUID/mount/serial корневого раздела и подходящего раздела под хранилище.
 root_uuid=$(py -c 'import json,sys; m=json.load(open(sys.argv[1]))["mounts"]; print(next((r["uuid"] for r in m if r["target"]=="/" and r.get("uuid")), ""))' "$work/probe.json")
 mount_serial() {
-  py - "$1" <<'PY'
+  py - "$1" "$work/probe.json" <<'PY'
 import json, sys
 probe = json.load(open(sys.argv[2]))
 want = sys.argv[1]
 print(next((r.get('serial') or '' for r in probe['mounts'] if r['target'] == want), ''))
 PY
-"$work/probe.json"
 }
-default_storage_mount=$(py - "$INSTALL_ROOT" <<'PY'
+default_storage_mount=$(py - "$INSTALL_ROOT" "$work/probe.json" <<'PY'
 import json, sys
 probe = json.load(open(sys.argv[2]))
 target = sys.argv[1] + '/data/storage'
@@ -113,16 +112,16 @@ for row in probe['mounts']:
         best = mount
 print(best)
 PY
-"$work/probe.json") || fail
+) || fail
 default_storage_uuid=''
 if [ -n "$default_storage_mount" ]; then
-  default_storage_uuid=$(py - "$default_storage_mount" <<'PY'
+  default_storage_uuid=$(py - "$default_storage_mount" "$work/probe.json" <<'PY'
 import json, sys
 probe = json.load(open(sys.argv[2]))
 want = sys.argv[1]
 print(next((r['uuid'] for r in probe['mounts'] if r['target'] == want and r.get('uuid')), ''))
 PY
-"$work/probe.json") || fail
+) || fail
 fi
 
 # --- Фаза 2: вопросы ---------------------------------------------------------
