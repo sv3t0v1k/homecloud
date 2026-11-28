@@ -226,10 +226,11 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(len(r.USER_DEPLOYMENT_PATHS), len(expected))
         self.assertEqual(len(r.SOURCE_PATHS), len(set(r.SOURCE_PATHS)))
         self.assertTrue(expected.issubset(r.SOURCE_PATHS))
+        self.assertIn('docs/security/image-security-policy.md', r.SOURCE_PATHS)
 
         checkout = Path(__file__).resolve().parents[2]
 
-        for name in expected:
+        for name in r.SOURCE_PATHS:
             with self.subTest(name=name):
                 target = checkout / name
                 self.assertTrue(target.is_file())

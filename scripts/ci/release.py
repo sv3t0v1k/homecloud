@@ -57,7 +57,8 @@ SOURCE_PATHS = ('docker-compose.project-test.yml',
                 'scripts/ci/skopeo-closure.py', 'scripts/ci/ci-gate.py',
                 'scripts/ci/test-routing.py', 'scripts/ci/audit-domains.py',
                 'scripts/ci/test-user-installer.sh',
-                'docs/image-security-policy.md') + USER_DEPLOYMENT_PATHS
+                'docs/image-security-policy.md',
+                'docs/security/image-security-policy.md') + USER_DEPLOYMENT_PATHS
 RUNTIME = {'backend', 'frontend', 'postgres', 'ingress'}
 BUILD = {'backend-deps', 'backend-builder', 'frontend-deps', 'frontend-builder', 'buildkit'}
 ENVIRONMENTS = {'backend', 'pr-fast-backend', 'frontend', 'configuration', 'image-build-backend', 'image-build-frontend',
