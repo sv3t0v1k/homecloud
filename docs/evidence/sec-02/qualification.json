@@ -1,0 +1,200 @@
+{
+  "candidate_lock_sha256": "f8b55821ad6f07260033c8777d81e2ac121f75dc81a18bb3d7505f5fbaebb9cd",
+  "candidates": {
+    "buildkit": {
+      "archive_sha256": "aa599e48f8090d7700790c02f660570c2cd97e88a519770fcbd565e1b1234b1c",
+      "config_digest": "sha256:7fa66223d53daa577a007f3f32e4274f85d1ea37180b1eb6b0800365feefaa38",
+      "layer_digests": [
+        "sha256:881fc932939efef04ca120ad44bbd2c0917851eb247aa4995428afb1e80ede17",
+        "sha256:f38beb44996e1407f20fcb49c3d4fbdf505c6b266fe571db2b2d7f82987efd67",
+        "sha256:b00df0a8296e67a0afb22510ca6ed612ae8ff6cc18ab9381bc33fa2582fcfa69",
+        "sha256:861e3ecba141da22e0b46686379e86dc6b532c77ff5bf5b9850919796ee694cb",
+        "sha256:48124e8335c124adeacdad0c06a5c00383db1884745c67093e0ac00d2077511f",
+        "sha256:68eab75b32f829b77c686c580f6f6368fe454e6c9cc411b0ab1361e85ed4d35d",
+        "sha256:7ecbe013a2a59d3e9542430dff007aeb71eb5cb0ed8d31c23092dc0828ce0840",
+        "sha256:ef2105e7f49670ae50abf7bd5c0847a8c443b22c85457bc7867951045ae955ce"
+      ],
+      "manifest_digest": "sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e",
+      "native_anonymous_pull_verified": true,
+      "platform": "linux/amd64",
+      "reference": "ghcr.io/sv3t0v1k/homecloud-sec02-buildkit@sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e",
+      "registry_content_verified": true,
+      "scan_sha256": "e7b0c55a85f598bbeeda36c1e2ed57f17a100312d44a365d98060d635a21efe8"
+    },
+    "compose": {
+      "archive_sha256": "79c145e716af46ebadef036cd1dd75fa559abb5229dcb6a18bcb5333fde29662",
+      "config_digest": "sha256:3d2b14f82e76b079129356c16b83062d84be95c948071ea64eae95a16b99b3cd",
+      "layer_digests": [
+        "sha256:881fc932939efef04ca120ad44bbd2c0917851eb247aa4995428afb1e80ede17",
+        "sha256:cca8f9a4562d92eba90ebd65b72bc699fd214327776e8c01439b381195dea205"
+      ],
+      "manifest_digest": "sha256:90572c9597798a70d6d96ccdcebd68a90ed58050730d4f27d63379fb53a3ed28",
+      "native_anonymous_pull_verified": true,
+      "platform": "linux/amd64",
+      "reference": "ghcr.io/sv3t0v1k/homecloud-sec02-compose@sha256:90572c9597798a70d6d96ccdcebd68a90ed58050730d4f27d63379fb53a3ed28",
+      "registry_content_verified": true,
+      "scan_sha256": "4a61d0cd1f39b139c5e2d9974de9b32fd94fe551c106f711523304b4cf9f4083"
+    },
+    "gitleaks": {
+      "archive_sha256": "b91a2d83b0f8ac8d7a51bbf215b964adc0bb16c95dc2041d3aaba2821d7d6607",
+      "config_digest": "sha256:57c44e07dbcc1d2669b2fcfd1b593a8d053fd307a91db0f30c7320ef5dc209bc",
+      "layer_digests": [
+        "sha256:881fc932939efef04ca120ad44bbd2c0917851eb247aa4995428afb1e80ede17",
+        "sha256:5c2e184c5614a9a6585fc12e2fea2ac6ef72fa1a2839609efcfbe714959ac6ff"
+      ],
+      "manifest_digest": "sha256:e86133002f108ce5e58225e0bda5613b42fb58ad7e0f136161a8fa67e3ab6257",
+      "native_anonymous_pull_verified": true,
+      "platform": "linux/amd64",
+      "reference": "ghcr.io/sv3t0v1k/homecloud-sec02-gitleaks@sha256:e86133002f108ce5e58225e0bda5613b42fb58ad7e0f136161a8fa67e3ab6257",
+      "registry_content_verified": true,
+      "scan_sha256": "206d882b65540410cf1bc8454146b60e79b2b30c14c0941f06ba50ab6c544b6d"
+    },
+    "postgres": {
+      "archive_sha256": "ebeeb4a27d04dd664030924f2c3757f68688d5505eb0b23460a5d7eeb8299329",
+      "config_digest": "sha256:173ddea509d18f58c81e35ceb4f83bbc9aad52c866ed69080bf3905f9e66d189",
+      "layer_digests": [
+        "sha256:881fc932939efef04ca120ad44bbd2c0917851eb247aa4995428afb1e80ede17",
+        "sha256:6cedc56424d1d9ceb77134ef0c2ef3bd2479188a64eb446f783a5c884aecc3c2",
+        "sha256:59b353deb50eaa4fcd1796922026a0d8570745424c1334d6cdcf8ff4cf4c1d05",
+        "sha256:7a36a4ed41724c00ef6ea0773253040a8f61735b5ba14f6c359cd8af9c33ccfb",
+        "sha256:cc382d912eb7b39fe5b6dc88dc4685bb7b321cb97cb5f072663967304e0e424e",
+        "sha256:576cb8ef4643cf52bd00b72f62fd7a93596a644e1897135ae6f96c6bd8b36182",
+        "sha256:47714f1b82c2e1d4a644515bb9214b0874acd32191a99baf1d00ea9ef5c77495",
+        "sha256:8e5860b895aba3f3544448e9517ee30ca16be372e90f934c4ed06a7d9a6af2de",
+        "sha256:b9f6a8f632b2c0aec5ca58584acea8c075fc8e4a2ded53bb090fd0ea277a4e00",
+        "sha256:98e9a032676058fe224d8c481ca435f945661b3c07eac8d8df383dd2c82f7e74",
+        "sha256:a067ebecd2a3f21400d0c8eb643dfb5282249667d4413aa201c359aa9fdb3ef6",
+        "sha256:4eef20edcd46855c109977ec683bfad8e2852b89d1038816513fb53596391eb0"
+      ],
+      "manifest_digest": "sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab",
+      "native_anonymous_pull_verified": true,
+      "platform": "linux/amd64",
+      "reference": "ghcr.io/sv3t0v1k/homecloud-sec02-postgres@sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab",
+      "registry_content_verified": true,
+      "scan_sha256": "40ac25c19da32ea6a2cee9b324d30d8cbffe25df9cf69df8c30f739a110d8acb"
+    }
+  },
+  "formal_release_binding": false,
+  "integration_commit": "63b2807b4f8459b52f09b77298ed5eda99629316",
+  "limitations": [
+    "Historical scans do not replace fresh CI scans.",
+    "Raw qualification evidence is retained separately.",
+    "Evidence hashes are not cryptographic attestations.",
+    "Four diagnostic files are not yet committed.",
+    "Restore runner functional qualification is not a security scan.",
+    "Independent review and release qualification pending."
+  ],
+  "platform": "linux/amd64",
+  "qualification_evidence": {
+    "final-native-qualification.bTp6ii/native-completion.log": {
+      "sha256": "98f5a28a290c3aeac32a5a445c3da7b6087781f38c0b727d291495073c3c6ef7",
+      "verified_markers": []
+    },
+    "integration-native.IhTKGU/native.log": {
+      "sha256": "b6c882fa3dca1a7131b172e7d4a2518dea0c40ea5c04e5765c65d7b4fbf92222",
+      "verified_markers": [
+        "ANONYMOUS_NATIVE_PULL_4_OF_4_PASS",
+        "NATIVE_EXACT_TOOLCHAIN_PASS",
+        "COMPOSE_LIFECYCLE_AND_ISOLATION_PASS"
+      ]
+    },
+    "native-postgres-completion.hpcD7p/native.log": {
+      "sha256": "f906b2524e45ff2920ba13f740047dbc211453e5ebd7b2a406ef3e8140dc8278",
+      "verified_markers": [
+        "POSTGRES_NETWORK_AUTH_PASS",
+        "POSTGRES_BACKUP_RESTORE_PASS",
+        "TRANSACTION_ROLLBACK_PRESERVED_PASS",
+        "DISPOSABLE_PROJECT_CLEANUP_PASS",
+        "SEC02_NATIVE_POSTGRES_COMPLETION_PASS"
+      ]
+    },
+    "restore-runner-qualification.dLWYFi/amd64.log": {
+      "sha256": "78b7a01e3746bcd9e896e15f3e11ad2bd8989540ac9a4a3af14a03da56e460d1",
+      "verified_markers": [
+        "AMD64_RESTORE_COMPOSE_IDENTITY_PASS",
+        "NATIVE_AMD64_RESTORE_RUNNER_PASS"
+      ]
+    },
+    "restore-runner-qualification.dLWYFi/arm64.log": {
+      "sha256": "caf863501450732ba9d34a5cb1503111c9e3b4f6658d30ee70283d8354296540",
+      "verified_markers": [
+        "ARM64_RESTORE_COMPOSE_IDENTITY_PASS",
+        "NATIVE_ARM64_RESTORE_RUNNER_PASS"
+      ]
+    }
+  },
+  "recipe_commit": "ffc700e8416e45953d7d25031a9f216793c62397",
+  "regression": {
+    "includes_untracked_diagnostic_tests": true,
+    "log_sha256": "7dbd469388d3f8382f26d7959428b8001582f801e4ec2bd31b88450c90d51187",
+    "suites_passed": 13,
+    "tests_failed": 0,
+    "tests_passed": 190
+  },
+  "release_authorized": false,
+  "restore_runner": {
+    "amd64": "FUNCTIONAL_PASS",
+    "arm64": "FUNCTIONAL_PASS",
+    "compose_version": "5.8.1",
+    "full_recovery_e2e": "PENDING"
+  },
+  "schema": 1,
+  "security_policy": {
+    "new_cve_exceptions": false,
+    "severity_gate_modified": false,
+    "upstream_baseline_preserved": true
+  },
+  "source_sha256": {
+    ".github/workflows/ci-v2-fast.yml": "d6cdb556895d5c621e49a8759a08464a2fbc6e190715c6585e419f7dfa57c549",
+    ".github/workflows/ci.yml": "69040e43b3e4595a1a1e50cd42805b016e0db354b2e389cc18ffc753bc254c8e",
+    ".github/workflows/frontend-runtime-qualification.yml": "caf262f903e11647ba6a787011d04abf1cddfc8e0d8af440410b14e1180736f4",
+    ".github/workflows/recovery-native.yml": "5c24dc3c1daf7f6e74cf38eeabb606d47f0558f64b4f75f7d02a9a3a2f70573c",
+    "docker-compose.production.yml": "8a8a22fc9d6a83e8d2224fac0944a48a09c4de3624e2a0e09c740caa66e58301",
+    "ops/postgres/sec02/Dockerfile": "ef423bed849cbe2bd5365a9a086ecb20dabeb5262afccb263749ed4573a14bff",
+    "ops/postgres/sec02/build-gosu.sh": "06ac9e027cabc470e74670aae7f24cb7a577a1f1730cec8486f6f8c899c668bd",
+    "ops/postgres/sec02/prepare-context.sh": "6fdc215280cb42cee165a7542c138ac0a6c1315816028c74f9b588500246c535",
+    "scripts/ci/buildkit/Dockerfile": "52b15fd6bd55ad96b7e24d63c8a8d269a4dd02bfb123884f12fa36333e4ca282",
+    "scripts/ci/buildkit/build-runc.sh": "c309a69da9a79dbc352da6a00f7d724f88ca25df2487b964bc17613eaff9a8be",
+    "scripts/ci/buildkit/build.sh": "246bf27a580de06aa556c741ef812a2482cab6e83250bfaa7046270c3cd3601e",
+    "scripts/ci/buildkit/buildkit/go.mod": "1637ce44a6a3b2e9be851286a14af31d2b52cf6306940acb447d0e7df30e3b84",
+    "scripts/ci/buildkit/buildkit/go.sum": "531e8f04269585a18f646509918e4767de9775817c93ccd866617a7fc45808ee",
+    "scripts/ci/buildkit/cni/go.mod": "b0c4514e74c27f6a0a86f98a9dacf4857b5392084688ad3aa75a0b3bc76a18e2",
+    "scripts/ci/buildkit/cni/go.sum": "9fb797985a1c6a41aff52d93183e2b5ef02244a41f162451d338105f860065ea",
+    "scripts/ci/buildkit/runc/Dockerfile": "9e33ca536ec322e5153f4499ed3f4db271c971f2d36443d67479d7de654b9e87",
+    "scripts/ci/buildkit/runc/builder-packages.txt": "4ef11e63f15fc8999f102f8cf06f72de8638b57173bdc3778045c23404a035f0",
+    "scripts/ci/buildkit/runc/go.mod": "cb5c87e186930c8c560d7de402ea7d1ce4a74e00fd2d6ce2b71d4eb473b9e3d2",
+    "scripts/ci/buildkit/runc/go.sum": "1340303edda87843a0636e0a261fe6d7525d40f9bd703dd80392b4676fa84c1e",
+    "scripts/ci/buildkit/runc/source.lock.json": "0e1cd8a95b4255507626214163b4b210589b4807b0dfaf654c1d9238c6b82d03",
+    "scripts/ci/buildkit/source.lock.json": "9c1f06974554dc9ff2b1d96ab6d1f142b3e7d152a7b02138f223e1c7305bdc9a",
+    "scripts/ci/compose/Dockerfile": "ba7e1681afdc2280bf70b6cc536de2f5b26ff2c8ea4a1731fea7b90841c5865a",
+    "scripts/ci/compose/build.sh": "9ea653a59287f9ba3bbf191a30e32cd2ab10a515cea648f8f0cf56d8de18cfe2",
+    "scripts/ci/compose/go.mod": "fb3590b0952da18fa3bae04d4446448324779fd28b45127cb28ce53f599bac97",
+    "scripts/ci/compose/go.sum": "c457253346bb6c9237632eac855e9c04172e877a1d66f553d83d97e91ad55ce1",
+    "scripts/ci/compose/source.lock.json": "964c4e89806f2974399c41f96f6510c3e29505fa6532fd73cebb28822fe53e23",
+    "scripts/ci/gitleaks/Dockerfile": "5512df65370c332874fd48bd1af200c1c6f0cdd2eb2dd607a32aafd930ad6b60",
+    "scripts/ci/gitleaks/build.sh": "c57335c285fc7edcf3302ae5570e7f964d10baf0b6c9c4e9d39e0f88659bb8ea",
+    "scripts/ci/gitleaks/go.mod": "0d21d8af0e74395d5b88a1fd5ca4f421818c45b3f7a2b38100566eeca61ad675",
+    "scripts/ci/gitleaks/go.sum": "2d491d6ab38b4c7eeae4dc0033811dc459b1b1e8a27bc2131a3c5fa55949b8c9",
+    "scripts/ci/gitleaks/source.lock.json": "6cf2a8c50170667d23680cd0dc2b688aaf432395585c67d2266551c375b9a434",
+    "scripts/ci/install-oci-scanner.sh": "e28fde35298640edd4c91d79337037603a86d23b4bfd4aaf759a65385e3789e1",
+    "scripts/ci/phase3-backup-drill.py": "717c6bcbe07056ebff58c364194190e6e74a1e7f6367f56b29d549b07bb6a703",
+    "scripts/ci/production-images.lock.json": "5b1fa542310b56efc1e4272a599241f897c16c95becec460e48a119bf48b4485",
+    "scripts/ci/restore-e2e-runner.Dockerfile": "5b7723a43e6382d867350025b5ed329f63c8003abdd711e29619d6b2b7a3fe14",
+    "scripts/ci/restore-runtime-preflight.py": "ac4159d3ac5fef9d4de7d6cbdff73d466eea15bdf80233aeab3cb76832a45d63",
+    "scripts/ci/sec02-candidates.lock.json": "f8b55821ad6f07260033c8777d81e2ac121f75dc81a18bb3d7505f5fbaebb9cd",
+    "scripts/ci/test-copy-recovery-e2e.sh": "fc8261e1ec887a686c32f2a8874e687ef0d156455165ec3c80ed43c5f0dac056",
+    "scripts/ci/test-install-oci-scanner.py": "852a47b8326ff0cdc8accc9e0e6441aa234f57d57d76878d717db45e56ab0486",
+    "scripts/ci/test-restore-runtime-context.py": "fcc3e00da1f20fc80cba26915c3d1b1b5f28e46ef12a6eaa2605ce6724ff8eea"
+  },
+  "stage": "SEC-02",
+  "status": "LOCAL_INTEGRATION_QUALIFIED",
+  "unknown_applicability": {
+    "formal_release_binding": false,
+    "historical_evidence": true,
+    "retained_evidence_sha256": {
+      "unknown-disposition.bound.json": "d9168cbde5a4f6b1804030b16fa1ad2fb26e44c7f3d8dadf5964b59724d9b730",
+      "unknown-disposition.json": "36842466709a3905e49c08865b4aaaaa675b1b1627032cddf04e1d8592cf45c3"
+    },
+    "severity_gate_modified": false
+  }
+}
