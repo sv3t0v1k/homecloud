@@ -59,8 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
+          bash scripts/ci/qualify-apt-tool.sh skopeo "$RUNNER_TEMP/apt-skopeo-ingress-runtime"
           SOURCE=$(python3 -c 'import os; name,digest=os.environ["IMAGE"].split("@"); print(name.rsplit(":",1)[0]+"@"+digest)')
           skopeo inspect --raw "docker://$SOURCE" > evidence/registry-manifest.json
           python3 - <<'PY'
@@ -184,7 +183,10 @@ jobs:
         if: always()
         with:
           name: ingress-runtime-evidence-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ingress-runtime-evidence/
+          path: |
+            ${{ runner.temp }}/ingress-runtime-evidence/
+            ${{ runner.temp }}/apt-skopeo-ingress-runtime/*.json
+            ${{ runner.temp }}/apt-skopeo-ingress-runtime/*.log
           if-no-files-found: error
           retention-days: 14
 

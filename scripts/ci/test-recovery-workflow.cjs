@@ -36,12 +36,18 @@ test('reusable secrets gate validates excluded history before a full reachable h
 });
 
 test('real age is installed before scheduled recovery contracts in both CI routes', () => {
+  const helper = fs.readFileSync(path.join(root, 'scripts/ci/qualify-apt-tool.sh'), 'utf8');
+  const baseline = helper.indexOf('skopeo-closure.py baseline');
+  const install = helper.indexOf('apt-get install --no-install-recommends -y "$tool"');
+  const capture = helper.indexOf('skopeo-closure.py capture');
+  const evaluate = helper.indexOf('skopeo-closure.py evaluate');
+  assert.ok(baseline >= 0 && baseline < install && install < capture && capture < evaluate);
   for (const filename of ['ci-v2-fast.yml', 'ci.yml']) {
     const steps = read(filename).jobs.configuration.steps;
     const setup = steps.findIndex(step => step.name === 'Install real age before recovery and scheduled contracts');
     const contracts = steps.findIndex(step => (step.run || '').includes('bash scripts/ci/test-recovery-contracts.sh'));
     assert.ok(setup >= 0 && setup < contracts, filename);
-    assert.match(steps[setup].run, /apt-get install -y --no-install-recommends age/);
+    assert.match(steps[setup].run, /qualify-apt-tool\.sh age/);
   }
 });
 

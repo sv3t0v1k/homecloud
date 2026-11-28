@@ -96,8 +96,7 @@ jobs:
         id: load
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
+          bash scripts/ci/qualify-apt-tool.sh skopeo "$RUNNER_TEMP/apt-skopeo-frontend-runtime"
           skopeo copy --override-os linux --override-arch amd64 \
             "oci-archive:$RUNNER_TEMP/frontend.oci.tar" "docker-daemon:homecloud-pr-frontend:${{ steps.source.outputs.commit }}"
           docker image inspect "homecloud-pr-frontend:${{ steps.source.outputs.commit }}" > evidence/loaded.inspect.json
@@ -214,7 +213,10 @@ jobs:
         if: always()
         with:
           name: frontend-runtime-evidence-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/frontend-runtime-evidence/
+          path: |
+            ${{ runner.temp }}/frontend-runtime-evidence/
+            ${{ runner.temp }}/apt-skopeo-frontend-runtime/*.json
+            ${{ runner.temp }}/apt-skopeo-frontend-runtime/*.log
           if-no-files-found: error
           retention-days: 14
 
