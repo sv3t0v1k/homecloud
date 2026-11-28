@@ -2,7 +2,7 @@
 """Qualify current sources in disposable Docker Desktop containers, no mounts.
 
 No Git writes, host data, ports, existing databases or privileged containers.
-Jest executes as UID/GID1000 on a freshly built Linux builder with real PG16.15.
+Jest executes as UID/GID1000 on a freshly built Linux builder with real PG16.16.
 The production runner used for maintenance/copy tests is built separately and
 pinned by its actual image ID. Reports survive in a new /tmp artifact directory.
 """
@@ -198,7 +198,7 @@ class Qualification:
             built[stage] = self.node_image(iid.read_text().strip())
         self.builder = built["builder"]
         self.runner = built["runner"]
-        # PG must be the current native16.15 fixture, never an existing DB.
+        # PG must be the current native16.16 fixture, never an existing DB.
         pg_reference = "postgres:16-alpine"
         if self.arch == "amd64":
             pg_reference = json.loads((ROOT / "scripts/ci/production-images.lock.json").read_text())["postgres"]
@@ -262,15 +262,15 @@ class Qualification:
             if result.returncode == 0:
                 version = self.command(["docker", "exec", cid, "psql", "-U", "hc_pr45", "-d", "hc_pr45",
                                         "-tAc", "SHOW server_version"], capture=True)
-                if version != "16.15":
-                    raise ValueError("Actual PostgreSQL version differs from16.15: " + version)
+                if version != "16.16":
+                    raise ValueError("Actual PostgreSQL version differs from16.16: " + version)
                 self.report["postgres_version"] = version
                 return {"server_version": version, "storage": "private tmpfs", "network": "internal"}
             time.sleep(1)
         raise RuntimeError("Disposable PostgreSQL did not become ready")
 
     def jest(self, profile):
-        if profile == "integration" and self.report.get("postgres_version") != "16.15":
+        if profile == "integration" and self.report.get("postgres_version") != "16.16":
             raise RuntimeError("Real PostgreSQL prerequisite failed; integration not executed")
         routing = module("qualification_routes", ROOT / "scripts/ci/test-routing.py")
         args = ["--runInBand", "--runTestsByPath", *routing.routes()[profile], "--json",

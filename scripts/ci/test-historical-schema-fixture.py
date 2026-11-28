@@ -62,7 +62,7 @@ class HistoricalFixtureTests(unittest.TestCase):
             calls.append(args)
             if args[:2] == ['docker', 'create']: return cid.encode()
             if args[:2] == ['docker', 'run']: raise ValueError('injected generator failure')
-            if 'psql' in args: return b'16.15\n'
+            if 'psql' in args: return b'16.16\n'
             return b''
         with patch.object(fixture, 'run', side_effect=command), \
              patch.object(fixture.subprocess, 'run', return_value=SimpleNamespace(returncode=0)):
