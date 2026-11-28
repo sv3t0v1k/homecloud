@@ -97,8 +97,21 @@ def reject_symlinks_below(paths):
             raise ValueError('APT source, index, config, or keyring directory is a symlink: ' + str(directory))
         if directory.is_dir():
             for path in directory.rglob('*'):
-                if path.is_symlink():
+                if path.is_symlink() and not allowed_mirror_aux_symlink(path, directory):
                     raise ValueError('APT source, index, config, or keyring evidence contains a symlink: ' + str(path))
+
+
+def allowed_mirror_aux_symlink(path, directory):
+    if tuple(directory.parts[-4:]) != ('var', 'lib', 'apt', 'lists'):
+        return False
+    if path.relative_to(directory).parts != ('auxfiles', '_etc_apt_apt-mirrors.txt'):
+        return False
+    target = directory.parents[3] / 'etc/apt/apt-mirrors.txt'
+    link = Path(os.readlink(path))
+    direct = link if link.is_absolute() else path.parent / link
+    return (target.is_file() and not target.is_symlink()
+            and os.path.normpath(str(direct)) == os.path.normpath(str(target))
+            and path.resolve(strict=True) == target.resolve(strict=True))
 
 
 def sha256(path):
@@ -234,7 +247,12 @@ def apt_files(root):
         if not directory.exists():
             raise ValueError('Missing apt evidence directory: ' + str(directory))
         for path in sorted(directory.rglob('*')):
-            if not path.is_file() or path.is_symlink():
+            if path.is_symlink():
+                if allowed_mirror_aux_symlink(path, directory):
+                    paths.append(dict(path=str(path.relative_to(root)), kind='symlink',
+                                      target=os.readlink(path), sha256=sha256(path)))
+                continue
+            if not path.is_file():
                 continue
             if directory.name == 'lists' and ('partial' in path.parts or path.name.endswith('lock')):
                 continue
@@ -324,7 +342,7 @@ def source_signed_by_paths(source_texts, root=Path('/')):
     return references
 
 
-def configured_apt_repositories(source_texts):
+def configured_apt_repositories(source_texts, root=Path('/')):
     repositories = set()
     for content in source_texts:
         paragraphs = re.split(r'\n\s*\n', content)
@@ -374,7 +392,16 @@ def configured_apt_repositories(source_texts):
             else:
                 continue
             for uri in uris:
-                if not re.match(r'^https?://[^/]+/.+', uri):
+                if uri == 'mirror+file:/etc/apt/apt-mirrors.txt':
+                    mirrors = root / 'etc/apt/apt-mirrors.txt'
+                    if not mirrors.is_file() or mirrors.is_symlink():
+                        raise ValueError('Missing or invalid apt mirror list')
+                    entries = [line.strip() for line in mirrors.read_text().splitlines()
+                               if line.strip() and not line.lstrip().startswith('#')]
+                    if not entries or not all(re.fullmatch(r'https?://[^/\s]+/\S+', entry)
+                                              for entry in entries):
+                        raise ValueError('Missing or invalid apt mirror list')
+                elif not re.match(r'^https?://[^/]+/.+', uri):
                     raise ValueError('Unsupported or incomplete apt repository URI')
                 for suite in suites:
                     for component in components:
@@ -386,7 +413,7 @@ def configured_apt_repositories(source_texts):
 
 
 def origin_matches_configured(origin, repositories, package_arch=None):
-    match = re.match(r'^\d+\s+(https?://\S+)\s+([^/\s]+)/([^\s]+)\s+(\S+)\s+(Packages|Sources)$', origin)
+    match = re.match(r'^\d+\s+((?:https?://|mirror\+file:)\S+)\s+([^/\s]+)/([^\s]+)\s+(\S+)\s+(Packages|Sources)$', origin)
     if not match:
         return False
     uri, suite, component, architecture, index_type = match.groups()
@@ -423,7 +450,7 @@ def package_sources(package):
             if line and not line[0].isspace():
                 exact_version = False
                 continue
-            if re.search(r'\bhttps?://', line):
+            if re.search(r'(?:https?://|mirror\+file:)', line):
                 origins.append(line.strip())
     if not origins:
         raise ValueError('Missing repository origin for exact apt package: ' + package['package']
@@ -635,6 +662,12 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
                 or not re.fullmatch(r'[a-f0-9]{64}', item.get('sha256', ''))):
             raise ValueError('Invalid apt source/index evidence path or hash')
         path = Path(filesystem_root) / relative
+        if item.get('kind') == 'symlink':
+            if (not path.is_symlink() or os.readlink(path) != item.get('target')
+                    or not allowed_mirror_aux_symlink(path, Path(filesystem_root) / 'var/lib/apt/lists')):
+                raise ValueError('APT mirror auxiliary symlink changed')
+        elif path.is_symlink():
+            raise ValueError('Unexpected apt evidence symlink')
         if not path.is_file() or sha256(path) != item.get('sha256'):
             raise ValueError('Apt source/index evidence changed')
     source_texts = []
@@ -653,7 +686,13 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
             if active and not active.startswith('#') and re.search(
                     r'(?i)(?:trusted\s*(?:=|:)\s*(?:yes|true|on|1)|allow[-_]insecure\s*(?:=|:)\s*(?:yes|true|on|1)|allow[-_]weak\s*(?:=|:)\s*(?:yes|true|on|1)|check-valid-until\s*(?:=|:)\s*(?:no|false|off|0))', active):
                 raise ValueError('Insecure apt source override is forbidden')
-    configured_repositories = configured_apt_repositories(source_texts)
+    configured_repositories = configured_apt_repositories(source_texts, Path(filesystem_root))
+    if any(uri == 'mirror+file:/etc/apt/apt-mirrors.txt' for uri, *_ in configured_repositories):
+        by_path = {item['path']: item for item in files}
+        if ('etc/apt/apt-mirrors.txt' not in by_path
+                or by_path['etc/apt/apt-mirrors.txt'].get('kind') == 'symlink'
+                or by_path.get('var/lib/apt/lists/auxfiles/_etc_apt_apt-mirrors.txt', {}).get('kind') != 'symlink'):
+            raise ValueError('APT mirror list or auxiliary link is missing from hashed evidence')
     signed_by = source_signed_by_paths(source_texts, Path(filesystem_root))
     captured_keyrings = {item['path'] for item in metadata['keyrings']}
     if not signed_by.issubset(captured_keyrings):

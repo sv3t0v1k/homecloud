@@ -292,6 +292,60 @@ class SkopeoClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not bound to an enabled apt source'):
             self.check()
 
+    def test_hashed_hosted_mirror_and_exact_auxiliary_symlink_pass(self):
+        mirror = self.root / 'etc/apt/apt-mirrors.txt'
+        mirror.write_text('http://azure.archive.ubuntu.com/ubuntu\n')
+        source = self.root / 'etc/apt/sources.list.d/ubuntu.sources'
+        source.write_text('deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] '
+                          'mirror+file:/etc/apt/apt-mirrors.txt noble main\n')
+        self.evidence['apt_metadata']['files'][0]['sha256'] = closure.sha256(source)
+        self.evidence['apt_metadata']['sources'][0]['sha256'] = closure.sha256(source)
+        self.evidence['apt_metadata']['files'].append(
+            dict(path='etc/apt/apt-mirrors.txt', sha256=closure.sha256(mirror)))
+        aux = self.root / 'var/lib/apt/lists/auxfiles/_etc_apt_apt-mirrors.txt'
+        aux.parent.mkdir()
+        aux.symlink_to(mirror)
+        self.evidence['apt_metadata']['files'].append(
+            dict(path=str(aux.relative_to(self.root)), kind='symlink',
+                 target=str(mirror), sha256=closure.sha256(aux)))
+        self.evidence['packages'][1]['origin']['repository_origins'] = [
+            '500 mirror+file:/etc/apt/apt-mirrors.txt noble/main amd64 Packages']
+        self.assertEqual(self.check()['gate'], 'PASS')
+        full_files = list(self.evidence['apt_metadata']['files'])
+        for missing in ('etc/apt/apt-mirrors.txt', 'var/lib/apt/lists/auxfiles/_etc_apt_apt-mirrors.txt'):
+            with self.subTest(missing=missing):
+                self.evidence['apt_metadata']['files'] = [item for item in full_files if item['path'] != missing]
+                with self.assertRaisesRegex(ValueError, 'missing from hashed evidence'):
+                    self.check()
+        self.evidence['apt_metadata']['files'] = full_files
+        intermediate = self.root / 'outside-apt-link'
+        intermediate.symlink_to(mirror)
+        aux.unlink()
+        aux.symlink_to(intermediate)
+        self.assertFalse(closure.allowed_mirror_aux_symlink(aux, self.root / 'var/lib/apt/lists'))
+        aux.unlink()
+        escaped = self.root / 'escape'
+        (escaped / 'x').mkdir(parents=True)
+        (escaped / 'etc/apt').mkdir(parents=True)
+        (escaped / 'etc/apt/apt-mirrors.txt').write_text('http://untrusted.invalid/ubuntu\n')
+        (self.root / 'foo').symlink_to(escaped / 'x')
+        aux.symlink_to('../../../../../foo/../etc/apt/apt-mirrors.txt')
+        self.assertFalse(closure.allowed_mirror_aux_symlink(aux, self.root / 'var/lib/apt/lists'))
+        aux.unlink()
+        aux.symlink_to(self.root / 'etc/apt/sources.list.d/ubuntu.sources')
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            self.check()
+
+    def test_mirror_source_rejects_untrusted_or_empty_list(self):
+        source = 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] '
+        source += 'mirror+file:/etc/apt/apt-mirrors.txt noble main\n'
+        mirror = self.root / 'etc/apt/apt-mirrors.txt'
+        for content in ('', 'file:///tmp/untrusted\n', 'https://example.invalid/ubuntu\nfile:///tmp/untrusted\n'):
+            with self.subTest(content=content):
+                mirror.write_text(content)
+                with self.assertRaisesRegex(ValueError, 'invalid apt mirror list'):
+                    closure.configured_apt_repositories([source], self.root)
+
     def test_origin_requires_exact_enabled_suite_and_component(self):
         configured = closure.configured_apt_repositories([
             'deb https://archive.ubuntu.com/ubuntu noble main\n'])

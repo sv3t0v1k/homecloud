@@ -51,8 +51,7 @@ blob verification в момент публикации; это неподпис�
 evidence и обязательным ожидаемым именем инструмента. Для обоих инструментов
 проверяются фактические executables (`age` и `age-keygen` вместе), dpkg owners,
 транзитивная apt closure, runtime ELF libraries обоих файлов, signed apt index
-и архивы, версия runner, source
-commit, run ID и attempt. Новый вызов выполняет строгий HIGH/CRITICAL gate
+и архивы, версия runner, source commit, run ID и attempt. Новый вызов выполняет строгий HIGH/CRITICAL gate
 по rootfs report **до первого запуска** apt-installed `age` или `skopeo` в
 соответствующем job. Весь provider-managed Ubuntu по-прежнему сохраняется в
 raw scan и не становится предметом этого строгого gate. Исключения CVE не
@@ -61,6 +60,9 @@ raw scan и не становится предметом этого строго
 Ограничение: gate опирается на свежую Trivy DB, полноту OS package inventory
 и наличие apt metadata на конкретном runner. Ошибка любого из этих условий
 блокирует job. Это не аттестация происхождения самого hosted runner.
+APT `mirror+file:/etc/apt/apt-mirrors.txt` на hosted Ubuntu допустим только
+при хешировании самого mirror list, точной auxiliary symlink и сверке origin
+пакета с включённым source; остальные ссылки в APT evidence блокируют.
 
 ## M-01: отложенный остаточный риск
 
