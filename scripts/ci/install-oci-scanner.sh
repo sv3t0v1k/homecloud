@@ -9,10 +9,17 @@ case "$tool" in
   trivy)
     image='ghcr.io/aquasecurity/trivy@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb'
     binary='/usr/local/bin/trivy'
+    expected_sha256=''
     ;;
   gitleaks)
-    image='ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb'
+    image='ghcr.io/sv3t0v1k/homecloud-sec02-gitleaks@sha256:e86133002f108ce5e58225e0bda5613b42fb58ad7e0f136161a8fa67e3ab6257'
     binary='/usr/bin/gitleaks'
+    expected_sha256='b37d4b1499ebfa3281183e357c21dd8e1f678d9760ff1508a6cab9e1585668ea'
+    ;;
+  compose)
+    image='ghcr.io/sv3t0v1k/homecloud-sec02-compose@sha256:90572c9597798a70d6d96ccdcebd68a90ed58050730d4f27d63379fb53a3ed28'
+    binary='/docker-compose'
+    expected_sha256='a9e710eba0ded73a609b47c9c9383711686778acf8aed71407850c14a627287d'
     ;;
   *)
     echo 'Unsupported scanner' >&2
@@ -40,7 +47,23 @@ trap 'exit 1' 1 2 3 15
 container=$(docker create --platform linux/amd64 --entrypoint /bin/true "$image")
 [ -n "$container" ]
 docker cp "$container:$binary" "$target"
-test -f "$target" && test -x "$target"
+test -f "$target" && test ! -L "$target" && test -x "$target"
+
+# Проверяем квалифицированный бинарник до его исполнения.
+if [ -n "$expected_sha256" ]; then
+  python3 - "$target" "$expected_sha256" <<'PYHASH'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+with open(sys.argv[1], "rb") as stream:
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(chunk)
+
+if digest.hexdigest() != sys.argv[2]:
+    raise SystemExit("OCI tool binary SHA256 mismatch")
+PYHASH
+fi
 
 # Reject an unexpected version before executing any security scan.
 case "$tool" in
@@ -54,6 +77,10 @@ case "$tool" in
       8.30.1|v8.30.1) ;;
       *) echo 'Unexpected Gitleaks version' >&2; exit 1 ;;
     esac
+    ;;
+  compose)
+    version=$("$target" version --short)
+    test "$version" = '5.8.1'
     ;;
 esac
 

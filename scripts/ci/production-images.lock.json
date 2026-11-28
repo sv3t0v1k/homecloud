@@ -1,7 +1,7 @@
 {
   "format": "homecloud-production-candidates-v1",
   "platform": "linux/amd64",
-  "postgres": "docker.io/library/postgres:16.16-alpine@sha256:9d9e487c1bd6413c52ccb3c02f46c8e37fa1e1d1a32a84519eb4e68d0ad1da30",
+  "postgres": "ghcr.io/sv3t0v1k/homecloud-sec02-postgres@sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab",
   "ingress": "docker.io/library/nginx:1.30.7-alpine3.24-slim@sha256:e2fc266695cef82e3a686c7ed628d1f09c2a7bb5ffb2a718ae7f7c821f5583c1",
-  "buildkit": "docker.io/moby/buildkit@sha256:7583a0667093d941826bcd1d2878d6a360dfd08a82c93e6d6a6f6cce78801e12"
+  "buildkit": "ghcr.io/sv3t0v1k/homecloud-sec02-buildkit@sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e"
 }

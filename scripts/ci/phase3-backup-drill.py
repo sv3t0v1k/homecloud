@@ -14,7 +14,7 @@ import time
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-IMAGE = 'postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d'
+IMAGE = 'ghcr.io/sv3t0v1k/homecloud-sec02-postgres@sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab'
 BACKUP_ID = '20261103_000000_1234abcd'
 DB_USER = 'hc_dr'
 DB_NAME = 'hc_dr'

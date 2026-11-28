@@ -115,7 +115,7 @@ jobs:
     timeout-minutes: 110
     services:
       postgres:
-        image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
+        image: ghcr.io/sv3t0v1k/homecloud-sec02-postgres@sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab
         env:
           POSTGRES_DB: homecloud_ci
           POSTGRES_USER: homecloud_ci
@@ -300,9 +300,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/homecloud-compose-bin"
-          curl --fail --silent --show-error --location https://github.com/docker/compose/releases/download/v5.8.1/docker-compose-linux-x86_64 -o "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          echo "cf2713394ca63900da5d00e0be12045634cea93a504e1ab2f2ae24eed7f2d359  $RUNNER_TEMP/homecloud-compose-bin/docker-compose" | sha256sum --check
-          chmod +x "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
+          sh scripts/ci/install-oci-scanner.sh compose "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
           cat > "$RUNNER_TEMP/homecloud-compose-bin/docker" <<'SHIM'
           #!/bin/sh
           set -eu
@@ -384,7 +382,7 @@ jobs:
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         with:
           version: v0.38.0
-          driver-opts: image=moby/buildkit@sha256:7583a0667093d941826bcd1d2878d6a360dfd08a82c93e6d6a6f6cce78801e12
+          driver-opts: image=ghcr.io/sv3t0v1k/homecloud-sec02-buildkit@sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e
       - name: Build offline OCI provenance candidate
         id: offline
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
@@ -738,9 +736,8 @@ jobs:
       - name: Pinned gitleaks; full reachable history, forbidden audit excluded before reading
         shell: bash
         run: |
-          curl --fail --silent --show-error --location https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o "$RUNNER_TEMP/gitleaks.tar.gz"
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          set -euo pipefail
+          sh scripts/ci/install-oci-scanner.sh gitleaks "$RUNNER_TEMP/gitleaks"
           mkdir "$RUNNER_TEMP/gitleaks-evidence"
           history_opts='--full-history --all --diff-merges=first-parent -- . :(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md'
           python3 -B scripts/ci/test-gitleaks-merge-history.py --scanner "$RUNNER_TEMP/gitleaks" --log-opts="$history_opts"

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Негативные тесты OCI-установщика без доступа к Docker."""
 
+import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -20,7 +21,7 @@ case "$1" in
     test "$2" = '--platform'
     test "$3" = 'linux/amd64'
     case "$4" in
-      ghcr.io/aquasecurity/trivy@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb|ghcr.io/gitleaks/gitleaks@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb)
+      ghcr.io/aquasecurity/trivy@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb|ghcr.io/sv3t0v1k/homecloud-sec02-gitleaks@sha256:e86133002f108ce5e58225e0bda5613b42fb58ad7e0f136161a8fa67e3ab6257|ghcr.io/sv3t0v1k/homecloud-sec02-compose@sha256:90572c9597798a70d6d96ccdcebd68a90ed58050730d4f27d63379fb53a3ed28)
         ;;
       *) exit 77 ;;
     esac
@@ -33,7 +34,7 @@ case "$1" in
     ;;
   cp)
     case "$2" in
-      scanner-test-container:/usr/local/bin/trivy|scanner-test-container:/usr/bin/gitleaks)
+      scanner-test-container:/usr/local/bin/trivy|scanner-test-container:/usr/bin/gitleaks|scanner-test-container:/docker-compose)
         ;;
       *) exit 2 ;;
     esac
@@ -53,7 +54,8 @@ class InstallerTests(unittest.TestCase):
     def invoke(self, tool="trivy", version="Version: 0.76.2",
                exit_code=0, platform="linux/amd64",
                missing=False, existing=False, symlink=False,
-               wrong_digest=False):
+               wrong_digest=False, wrong_binary=False,
+                fail_operation=''):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bindir = root / "bin"
@@ -80,21 +82,36 @@ class InstallerTests(unittest.TestCase):
             if symlink:
                 target.symlink_to(root / "outside")
 
-            script = INSTALLER
+            # Меняем SHA только в изолированной тестовой копии:
+            # проверка реального содержимого остаётся активной.
+            script = root / "test-installer.sh"
+            source = INSTALLER.read_text()
+
+            image_digests = {
+                "trivy": "8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb",
+                "gitleaks": "e86133002f108ce5e58225e0bda5613b42fb58ad7e0f136161a8fa67e3ab6257",
+                "compose": "90572c9597798a70d6d96ccdcebd68a90ed58050730d4f27d63379fb53a3ed28",
+            }
+
+            binary_digests = {
+                "gitleaks": "b37d4b1499ebfa3281183e357c21dd8e1f678d9760ff1508a6cab9e1585668ea",
+                "compose": "a9e710eba0ded73a609b47c9c9383711686778acf8aed71407850c14a627287d",
+            }
+
+            if tool in binary_digests and not missing and not wrong_binary:
+                expected = hashlib.sha256(scanner.read_bytes()).hexdigest()
+                source = source.replace(binary_digests[tool], expected)
 
             if wrong_digest:
-                content = INSTALLER.read_text()
-                content = content.replace(
-                    "8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb",
-                    "0" * 64,
-                )
-                script = root / "altered-installer.sh"
-                script.write_text(content)
+                source = source.replace(image_digests[tool], "0" * 64)
+
+            script.write_text(source)
 
             env = dict(os.environ)
             env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
             env["MOCK_SCANNER"] = str(scanner)
             env["MOCK_PLATFORM"] = platform
+            env["MOCK_FAIL"] = fail_operation
 
             return subprocess.run(
                 ["sh", str(script), tool, str(target)],
@@ -114,6 +131,38 @@ class InstallerTests(unittest.TestCase):
             self.invoke("gitleaks", "v8.30.1").returncode,
             0,
         )
+
+    def test_valid_compose(self):
+        self.assertEqual(self.invoke("compose", "5.8.1").returncode, 0)
+
+    def test_old_compose_version_blocks(self):
+        self.assertNotEqual(self.invoke("compose", "5.6.0").returncode, 0)
+
+    def test_wrong_compose_image_digest_blocks(self):
+        result = self.invoke("compose", "5.8.1", wrong_digest=True)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_wrong_gitleaks_image_digest_blocks(self):
+        result = self.invoke("gitleaks", "8.30.1", wrong_digest=True)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_wrong_compose_binary_blocks(self):
+        result = self.invoke("compose", "5.8.1", wrong_binary=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("OCI tool binary SHA256 mismatch", result.stderr)
+
+    def test_wrong_gitleaks_binary_blocks(self):
+        result = self.invoke("gitleaks", "8.30.1", wrong_binary=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("OCI tool binary SHA256 mismatch", result.stderr)
+
+    def test_compose_pull_failure_blocks(self):
+        result = self.invoke("compose", "5.8.1", fail_operation="pull")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_gitleaks_copy_failure_blocks(self):
+        result = self.invoke("gitleaks", "8.30.1", fail_operation="cp")
+        self.assertNotEqual(result.returncode, 0)
 
     def test_trivy_stdout_with_error_exit_blocks(self):
         result = self.invoke(exit_code=7)

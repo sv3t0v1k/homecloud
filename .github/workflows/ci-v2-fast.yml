@@ -155,7 +155,7 @@ jobs:
     container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
     services:
       postgres:
-        image: postgres:16-alpine@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d
+        image: ghcr.io/sv3t0v1k/homecloud-sec02-postgres@sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab
         env:
           POSTGRES_DB: homecloud_ci
           POSTGRES_USER: homecloud_ci
@@ -252,15 +252,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/homecloud-compose-bin"
-          compose_image="docker.io/docker/compose-bin@sha256:1937db832e42161ab9b2bd35f3cfa24be06f8179dc4e2fc9e978e1380ee8b6be"
-          docker pull --platform linux/amd64 "$compose_image"
-          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$compose_image")" = linux/amd64
-          compose_container="$(docker create --platform linux/amd64 --entrypoint /docker-compose "$compose_image" version --short)"
-          trap 'docker rm "$compose_container" >/dev/null 2>&1 || :' EXIT
-          docker cp "$compose_container:/docker-compose" "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          test -s "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          chmod +x "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker-compose" version --short)" = 5.6.0
+          sh scripts/ci/install-oci-scanner.sh compose "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
           cat > "$RUNNER_TEMP/homecloud-compose-bin/docker" <<'SHIM'
           #!/bin/sh
           set -eu
@@ -270,7 +262,7 @@ jobs:
           SHIM
           chmod +x "$RUNNER_TEMP/homecloud-compose-bin/docker"
           echo "$RUNNER_TEMP/homecloud-compose-bin" >> "$GITHUB_PATH"
-          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker" compose version --short)" = 5.6.0
+          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker" compose version --short)" = 5.8.1
       - run: docker compose version && python3 scripts/ci/compose-check.py
       - run: python3 scripts/ci/test-update-preflight.py
       - run: python3 deploy/linux/test_startup_gate.py
@@ -289,7 +281,7 @@ jobs:
       - name: User installer and signed update regression
         shell: bash
         env:
-          HOMECLOUD_EXPECT_COMPOSE: '5.6.0'
+          HOMECLOUD_EXPECT_COMPOSE: '5.8.1'
         run: bash scripts/ci/test-user-installer.sh
       - name: Isolated recovery contract tests with fake Docker
         run: |
@@ -515,7 +507,7 @@ jobs:
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         with:
           version: v0.38.0
-          driver-opts: image=moby/buildkit@sha256:7583a0667093d941826bcd1d2878d6a360dfd08a82c93e6d6a6f6cce78801e12
+          driver-opts: image=ghcr.io/sv3t0v1k/homecloud-sec02-buildkit@sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e
       - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ghcr.io

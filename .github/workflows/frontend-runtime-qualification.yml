@@ -53,7 +53,7 @@ jobs:
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         with:
           version: v0.38.0
-          driver-opts: image=moby/buildkit@sha256:7583a0667093d941826bcd1d2878d6a360dfd08a82c93e6d6a6f6cce78801e12
+          driver-opts: image=ghcr.io/sv3t0v1k/homecloud-sec02-buildkit@sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e
 
       - name: Build linux/amd64 OCI without publishing
         id: build
