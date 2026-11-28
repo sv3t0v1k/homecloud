@@ -9,7 +9,7 @@
 name: ${COMPOSE_PROJECT_NAME:?Укажите отдельный production Compose project}
 services:
   db:
-    image: docker.io/library/postgres:16.15-alpine@sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551
+    image: docker.io/library/postgres:16.16-alpine@sha256:9d9e487c1bd6413c52ccb3c02f46c8e37fa1e1d1a32a84519eb4e68d0ad1da30
     platform: linux/amd64
     entrypoint: [sh, /run/homecloud/startup-gate.sh, db]
     command: [postgres]
