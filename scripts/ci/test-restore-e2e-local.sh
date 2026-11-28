@@ -592,8 +592,8 @@ echo "PASS: running backend container uses exact retained image ID"
 docker compose ps
 
 test "$(docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U fixture -d fixture -At \
-  -c 'SHOW server_version')" = 16.15
-echo "PASS: actual PostgreSQL16.15"
+  -c 'SHOW server_version')" = 16.16
+echo "PASS: actual PostgreSQL16.16"
 
 docker compose logs backend db \
   | grep -F "PASS: HomeCloud startup disk gate"
