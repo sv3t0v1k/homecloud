@@ -72,8 +72,8 @@ def inspect_toolchain(expected):
         raise ValueError("E2E executable architecture differs from native platform")
     version = subprocess.run(["docker", "compose", "version", "--short"],
                              check=True, capture_output=True, text=True, timeout=10).stdout.strip()
-    if version != "5.6.0":
-        raise ValueError("E2E Compose version differs from pinned 5.6.0")
+    if version != "5.8.1":
+        raise ValueError("E2E Compose version differs from pinned 5.8.1")
     print(json.dumps({"expected_platform": expected, "node": node,
                       "compose_version": version, "executables": records}, sort_keys=True), flush=True)
     print("PASS: native E2E daemon/runtime/Compose executable architecture", flush=True)

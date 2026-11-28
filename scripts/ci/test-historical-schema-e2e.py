@@ -65,8 +65,8 @@ def produce_database(count, backend, postgres):
         else:
             raise ValueError('Historical source PostgreSQL did not become ready')
         version = run(['docker', 'exec', cid, 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'fixture', '-d', 'fixture', '-At', '-c', 'SHOW server_version']).decode().strip()
-        if version != '16.15':
-            raise ValueError('Historical source PostgreSQL must be16.15')
+        if version != '16.16':
+            raise ValueError('Historical source PostgreSQL must be16.16')
         script = Path('scripts/ci/historical-schema-producer.cjs').read_bytes()
         report = json.loads(run(['docker', 'run', '--rm', '-i', '--pull=never',
                                  '--network', 'container:' + cid, '--read-only', '--user', '1001:65533',

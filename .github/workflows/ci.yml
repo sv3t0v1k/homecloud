@@ -21,17 +21,44 @@ jobs:
   pr-fast-backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 110
-    container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
     steps:
-      - name: Patch CI Perl and install toolchain
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl gcc libc6-dev git python3 unzip util-linux perl-base=5.36.0-7+deb12u4
-          test "$(dpkg-query -W -f='${Version}' perl-base)" = 5.36.0-7+deb12u4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Remove unused hosted .NET SDK before workload; retain evidence
+        run: python3 scripts/ci/minimize-runner.py
+      - name: Record hosted backend OS before workload
+        run: python3 scripts/ci/environment-evidence.py baseline
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Verify hosted backend toolchain and create isolated test user
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test ! -e /.dockerenv
+          test "$(uname -m)" = x86_64
+          for tool in cc git python3 curl unzip sudo dpkg-query; do
+            command -v "$tool"
+          done
+          test "$(node --version)" = v24.21.0
+          headers="$(dirname "$(dirname "$(node -p 'process.execPath')")")/include/node"
+          test -f "$headers/node_api.h"
+          echo "NODE_INCLUDE_DIR=$headers" >> "$GITHUB_ENV"
+          if getent passwd homecloud-ci-test >/dev/null; then
+            exit 1
+          fi
+          sudo -n useradd --create-home --user-group --shell /bin/bash homecloud-ci-test
+          test "$(id -u homecloud-ci-test)" -ne 0
+          sudo -n -u homecloud-ci-test test -x "$GITHUB_WORKSPACE/backend"
+          if sudo -n -u homecloud-ci-test sudo -n true 2>/dev/null; then
+            exit 1
+          fi
+          if sudo -n -u homecloud-ci-test test -w /var/run/docker.sock; then
+            exit 1
+          fi
       - run: python3 scripts/ci/install-npm.py
       - run: npm ci --no-audit
         working-directory: backend
@@ -49,9 +76,9 @@ jobs:
         run: |
           mapfile -t suites < ../backend-unit-suites.txt
           test "${#suites[@]}" -gt 0
-          chown -R node:node "$GITHUB_WORKSPACE"
-          runuser -u node -- npm test -- --runInBand --runTestsByPath "${suites[@]}" --json --outputFile=../backend-unit-tests.json
-      - run: python3 scripts/ci/test-routing.py verify unit backend-unit-tests.json
+          mkdir -p .ci-reports
+          bash ../scripts/ci/run-backend-unprivileged.sh npm test -- --runInBand --runTestsByPath "${suites[@]}" --json --outputFile=.ci-reports/backend-unit-tests.json
+      - run: python3 scripts/ci/test-routing.py verify unit backend/.ci-reports/backend-unit-tests.json
       - run: npm run lint
         working-directory: backend
       - run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
@@ -59,16 +86,16 @@ jobs:
       - run: node test/file-type-compiled-runtime.cjs
         working-directory: backend
       - name: Linux writer fencing and orphan child regressions
-        run: runuser -u node -- node --test --test-timeout=30000 test/inherited-root-fence.runtime.cjs test/copy-root-fence-supervisor.runtime.cjs test/operator-cli-fence.runtime.cjs
+        run: bash ../scripts/ci/run-backend-unprivileged.sh node --test --test-timeout=30000 test/inherited-root-fence.runtime.cjs test/copy-root-fence-supervisor.runtime.cjs test/operator-cli-fence.runtime.cjs
         working-directory: backend
       - name: Patched dependency runtime and multipart boundaries
-        run: runuser -u node -- node --test --test-timeout=10000 test/dependency-security-runtime.cjs
+        run: bash ../scripts/ci/run-backend-unprivileged.sh node --test --test-timeout=10000 test/dependency-security-runtime.cjs
         working-directory: backend
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: backend-unit-tests-${{ github.run_attempt }}
-          path: backend-unit-tests.json
+          path: backend/.ci-reports/backend-unit-tests.json
           if-no-files-found: error
           retention-days: 14
       - name: Mandatory actual fast backend environment qualification
@@ -86,10 +113,9 @@ jobs:
   backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 110
-    container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
     services:
       postgres:
-        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        image: ghcr.io/sv3t0v1k/homecloud-sec02-postgres@sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab
         env:
           POSTGRES_DB: homecloud_ci
           POSTGRES_USER: homecloud_ci
@@ -97,18 +123,46 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U homecloud_ci -d homecloud_ci"
           --health-interval 5s --health-timeout 3s --health-retries 20
-    env:
-      HOMECLOUD_TEST_DATABASE_URL: postgres://homecloud_ci:disposable-ci-only@postgres:5432/homecloud_ci
+        ports:
+          - 5432/tcp
     steps:
-      - name: Patch CI Perl and install toolchain
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl gcc libc6-dev git python3 unzip util-linux perl-base=5.36.0-7+deb12u4
-          test "$(dpkg-query -W -f='${Version}' perl-base)" = 5.36.0-7+deb12u4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Remove unused hosted .NET SDK before workload; retain evidence
+        run: python3 scripts/ci/minimize-runner.py
+      - name: Record hosted backend OS before workload
+        run: python3 scripts/ci/environment-evidence.py baseline
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Verify hosted backend toolchain and create isolated test user
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test ! -e /.dockerenv
+          test "$(uname -m)" = x86_64
+          for tool in cc git python3 curl unzip sudo dpkg-query; do
+            command -v "$tool"
+          done
+          test "$(node --version)" = v24.21.0
+          headers="$(dirname "$(dirname "$(node -p 'process.execPath')")")/include/node"
+          test -f "$headers/node_api.h"
+          echo "NODE_INCLUDE_DIR=$headers" >> "$GITHUB_ENV"
+          if getent passwd homecloud-ci-test >/dev/null; then
+            exit 1
+          fi
+          sudo -n useradd --create-home --user-group --shell /bin/bash homecloud-ci-test
+          test "$(id -u homecloud-ci-test)" -ne 0
+          sudo -n -u homecloud-ci-test test -x "$GITHUB_WORKSPACE/backend"
+          if sudo -n -u homecloud-ci-test sudo -n true 2>/dev/null; then
+            exit 1
+          fi
+          if sudo -n -u homecloud-ci-test test -w /var/run/docker.sock; then
+            exit 1
+          fi
       - name: Install checksum-pinned compatible npm before dependency commands
         run: python3 scripts/ci/install-npm.py
       - run: npm ci --no-audit
@@ -140,6 +194,13 @@ jobs:
           path: ci-toolchain-packages.txt
           if-no-files-found: error
           retention-days: 14
+      - name: Bind disposable PostgreSQL service
+        shell: bash
+        env:
+          POSTGRES_PORT: ${{ job.services.postgres.ports[5432] }}
+        run: |
+          [[ "$POSTGRES_PORT" =~ ^[0-9]+$ ]]
+          echo "HOMECLOUD_TEST_DATABASE_URL=postgres://homecloud_ci:disposable-ci-only@127.0.0.1:$POSTGRES_PORT/homecloud_ci" >> "$GITHUB_ENV"
       - name: Route PostgreSQL, concurrency, filesystem and bench suites
         run: python3 scripts/ci/test-routing.py list integration > backend-integration-suites.txt
       - name: Compile production code for real crash workers
@@ -151,9 +212,8 @@ jobs:
           mapfile -t suites < ../backend-integration-suites.txt
           test "${#suites[@]}" -gt 0
           report_dir="$PWD/.ci-reports"
-          install -d -o node -g node -m 0700 "$report_dir"
-          runuser -u node -- sh -c 'test -w "$1" && : > "$1/.write-check" && rm "$1/.write-check"' sh "$report_dir"
-          runuser -u node -- npm test -- --runInBand --runTestsByPath "${suites[@]}" --json --outputFile="$report_dir/backend-integration-tests.json"
+          install -d -m 0700 "$report_dir"
+          bash ../scripts/ci/run-backend-unprivileged.sh npm test -- --runInBand --runTestsByPath "${suites[@]}" --json --outputFile="$report_dir/backend-integration-tests.json"
         working-directory: backend
       - run: python3 scripts/ci/test-routing.py verify integration backend/.ci-reports/backend-integration-tests.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -240,9 +300,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/homecloud-compose-bin"
-          curl --fail --silent --show-error --location https://github.com/docker/compose/releases/download/v5.6.0/docker-compose-linux-x86_64 -o "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          echo "40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a  $RUNNER_TEMP/homecloud-compose-bin/docker-compose" | sha256sum --check
-          chmod +x "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
+          sh scripts/ci/install-oci-scanner.sh compose "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
           cat > "$RUNNER_TEMP/homecloud-compose-bin/docker" <<'SHIM'
           #!/bin/sh
           set -eu
@@ -252,14 +310,21 @@ jobs:
           SHIM
           chmod +x "$RUNNER_TEMP/homecloud-compose-bin/docker"
           echo "$RUNNER_TEMP/homecloud-compose-bin" >> "$GITHUB_PATH"
-          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker" compose version --short)" = 5.6.0
+          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker" compose version --short)" = 5.8.1
       - run: docker compose version && python3 scripts/ci/compose-check.py
       - run: python3 deploy/linux/test_startup_gate.py
       - run: python3 scripts/ci/test-entrypoint.py
       - name: Install real age before recovery and scheduled contracts
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends age
+        run: bash scripts/ci/qualify-apt-tool.sh age "$RUNNER_TEMP/apt-age-configuration"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: apt-age-configuration-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/apt-age-configuration/*.json
+            ${{ runner.temp }}/apt-age-configuration/*.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Recovery contracts and real Linux crash filesystem checks
         run: |
           bash scripts/ci/test-recovery-contracts.sh
@@ -270,7 +335,7 @@ jobs:
       - name: User installer and signed update regression
         shell: bash
         env:
-          HOMECLOUD_EXPECT_COMPOSE: '5.6.0'
+          HOMECLOUD_EXPECT_COMPOSE: '5.8.1'
         run: bash scripts/ci/test-user-installer.sh
       - name: Isolated recovery contract tests with fake Docker
         run: |
@@ -324,7 +389,7 @@ jobs:
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         with:
           version: v0.38.0
-          driver-opts: image=moby/buildkit@sha256:98cc6a3fc46220d00f8224ae483f3274fc874e9be8d7dd1e2e2c5481209228b5
+          driver-opts: image=ghcr.io/sv3t0v1k/homecloud-sec02-buildkit@sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e
       - name: Build offline OCI provenance candidate
         id: offline
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
@@ -378,11 +443,19 @@ jobs:
           assert 'desktop' not in host['operating_system'].lower()
           print('NATIVE_AMD64_HOST:', json.dumps(host, sort_keys=True))
           PY
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
+          bash scripts/ci/qualify-apt-tool.sh skopeo "$RUNNER_TEMP/apt-skopeo-image-build-${{ matrix.component }}"
           skopeo copy --override-os linux --override-arch amd64 "oci-archive:$RUNNER_TEMP/${{ matrix.component }}.oci.tar" "docker-daemon:homecloud-ci-${{ matrix.component }}:${{ github.sha }}"
           docker image inspect "homecloud-ci-${{ matrix.component }}:${{ github.sha }}" > "${{ matrix.component }}.loaded.inspect.json"
           python3 scripts/ci/oci-scan-binding.py --archive "$RUNNER_TEMP/${{ matrix.component }}.oci.tar" --loaded-inspect "${{ matrix.component }}.loaded.inspect.json" --role "${{ matrix.component }}" --source "$(git rev-parse HEAD)" --output "${{ matrix.component }}.loaded.binding.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: apt-skopeo-image-build-${{ matrix.component }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/apt-skopeo-image-build-${{ matrix.component }}/*.json
+            ${{ runner.temp }}/apt-skopeo-image-build-${{ matrix.component }}/*.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Backend production image native dependencies, without mounts or startup
         if: matrix.component == 'backend'
         env:
@@ -678,9 +751,8 @@ jobs:
       - name: Pinned gitleaks; full reachable history, forbidden audit excluded before reading
         shell: bash
         run: |
-          curl --fail --silent --show-error --location https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o "$RUNNER_TEMP/gitleaks.tar.gz"
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          set -euo pipefail
+          sh scripts/ci/install-oci-scanner.sh gitleaks "$RUNNER_TEMP/gitleaks"
           mkdir "$RUNNER_TEMP/gitleaks-evidence"
           history_opts='--full-history --all --diff-merges=first-parent -- . :(exclude)scripts/tests/PHASE-5.3.1-TEST-AUDIT.md'
           python3 -B scripts/ci/test-gitleaks-merge-history.py --scanner "$RUNNER_TEMP/gitleaks" --log-opts="$history_opts"
@@ -730,11 +802,19 @@ jobs:
         run: python3 scripts/ci/install-npm.py
       - name: Export exact pinned amd64 artifact without registry writes
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
+          bash scripts/ci/qualify-apt-tool.sh skopeo "$RUNNER_TEMP/apt-skopeo-support-${{ matrix.role }}"
           IMAGE=$(python3 -c 'import json; print(json.load(open("scripts/ci/production-images.lock.json"))["${{ matrix.role }}"])')
           SOURCE=$(python3 -c 'import sys; name,digest=sys.argv[1].split("@"); tail=name.rsplit("/",1)[-1]; name=name.rsplit(":",1)[0] if ":" in tail else name; print(name+"@"+digest)' "$IMAGE")
           skopeo copy --preserve-digests "docker://$SOURCE" "oci-archive:$RUNNER_TEMP/${{ matrix.role }}.oci.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: apt-skopeo-support-${{ matrix.role }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/apt-skopeo-support-${{ matrix.role }}/*.json
+            ${{ runner.temp }}/apt-skopeo-support-${{ matrix.role }}/*.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Validate production ingress configuration on disposable CI runner
         if: matrix.role == 'ingress'
         shell: bash
@@ -761,9 +841,6 @@ jobs:
         run: |
           EXPECTED=$(python3 -c 'import json; print(json.load(open("scripts/ci/production-images.lock.json"))["${{ matrix.role }}"].split("@")[1])')
           python3 scripts/ci/oci-scan-binding.py --archive "$RUNNER_TEMP/${{ matrix.role }}.oci.tar" --report "${{ matrix.role }}.scan.json" --role "${{ matrix.role }}" --source "$(git rev-parse HEAD)" --expected "$EXPECTED" --output "${{ matrix.role }}.binding.json"
-      - name: Qualify owner-approved exact gosu binary disposition; preserve raw severity gate
-        if: always() && matrix.role == 'postgres'
-        run: python3 scripts/ci/gosu-disposition.py --archive "$RUNNER_TEMP/postgres.oci.tar" --source "$(git rev-parse HEAD)" --output postgres.disposition.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
@@ -771,7 +848,6 @@ jobs:
           path: |
             ${{ matrix.role }}.scan*.json
             ${{ matrix.role }}.binding.json
-            ${{ matrix.role }}.disposition.json
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

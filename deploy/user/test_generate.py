@@ -677,6 +677,7 @@ py() {
             env=env,
             capture_output=True,
             text=True,
+            start_new_session=real_tty_check,
             timeout=30,
         )
 
@@ -713,6 +714,7 @@ py() {
         result = self.run_bootstrap('--tag', 'v1.2.0', real_tty_check=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('интерактивный терминал', result.stderr)
+        self.assertNotIn('DOWNLOAD_OFFICIAL_BOOTSTRAP', result.stderr)
         self.assertNotIn('FETCH ', result.stderr)
 
     def test_release_missing_verified_images_refused(self):

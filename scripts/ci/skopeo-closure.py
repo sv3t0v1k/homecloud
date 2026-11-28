@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Capture and strictly qualify the installed Debian package closure of skopeo."""
+"""Capture and strictly qualify an apt-installed tool dependency closure."""
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
 FORMAT = 'homecloud-skopeo-apt-closure-v2'
+TOOLS = ('skopeo', 'age')
+
+
+def evidence_format(tool):
+    if tool not in TOOLS:
+        raise ValueError('Unsupported apt tool')
+    return FORMAT if tool == 'skopeo' else 'homecloud-age-apt-closure-v2'
 DPKG_FORMAT = '${Package}\t${Version}\t${Architecture}\t${db:Status-Status}\t${Pre-Depends}\t${Depends}\t${Provides}\t${Multi-Arch}\n'
 
 
@@ -36,8 +44,12 @@ def apt_global_trust_paths(apt_config, root=Path('/')):
         'dir::cache::srcpkgcache': ('',),
         'dir::state::status': ('/var/lib/dpkg/status', 'status'),
     }
-    if any(key in values and values[key] not in allowed for key, allowed in expected_roots.items()):
-        raise ValueError('APT state, index, or package cache paths are redirected')
+    def normalized(value):
+        return value.rstrip('/') or value
+    redirected = {key: values[key] for key, allowed in expected_roots.items()
+                  if key in values and normalized(values[key]) not in {normalized(item) for item in allowed}}
+    if redirected:
+        raise ValueError('APT state, index, or package cache paths are redirected: ' + repr(redirected))
     etc = values.get('dir::etc', 'etc/apt')
     if etc not in ('etc/apt', '/etc/apt'):
         raise ValueError('APT global configuration directory is redirected')
@@ -86,11 +98,24 @@ def validate_global_trust_files(paths):
 def reject_symlinks_below(paths):
     for directory in paths:
         if directory.is_symlink():
-            raise ValueError('APT source, index, config, or keyring directory is a symlink')
+            raise ValueError('APT source, index, config, or keyring directory is a symlink: ' + str(directory))
         if directory.is_dir():
             for path in directory.rglob('*'):
-                if path.is_symlink():
-                    raise ValueError('APT source, index, config, or keyring evidence contains a symlink')
+                if path.is_symlink() and not allowed_mirror_aux_symlink(path, directory):
+                    raise ValueError('APT source, index, config, or keyring evidence contains a symlink: ' + str(path))
+
+
+def allowed_mirror_aux_symlink(path, directory):
+    if tuple(directory.parts[-4:]) != ('var', 'lib', 'apt', 'lists'):
+        return False
+    if path.relative_to(directory).parts != ('auxfiles', '_etc_apt_apt-mirrors.txt'):
+        return False
+    target = directory.parents[3] / 'etc/apt/apt-mirrors.txt'
+    link = Path(os.readlink(path))
+    direct = link if link.is_absolute() else path.parent / link
+    return (target.is_file() and not target.is_symlink()
+            and os.path.normpath(str(direct)) == os.path.normpath(str(target))
+            and path.resolve(strict=True) == target.resolve(strict=True))
 
 
 def sha256(path):
@@ -226,7 +251,12 @@ def apt_files(root):
         if not directory.exists():
             raise ValueError('Missing apt evidence directory: ' + str(directory))
         for path in sorted(directory.rglob('*')):
-            if not path.is_file() or path.is_symlink():
+            if path.is_symlink():
+                if allowed_mirror_aux_symlink(path, directory):
+                    paths.append(dict(path=str(path.relative_to(root)), kind='symlink',
+                                      target=os.readlink(path), sha256=sha256(path)))
+                continue
+            if not path.is_file():
                 continue
             if directory.name == 'lists' and ('partial' in path.parts or path.name.endswith('lock')):
                 continue
@@ -316,7 +346,7 @@ def source_signed_by_paths(source_texts, root=Path('/')):
     return references
 
 
-def configured_apt_repositories(source_texts):
+def configured_apt_repositories(source_texts, root=Path('/')):
     repositories = set()
     for content in source_texts:
         paragraphs = re.split(r'\n\s*\n', content)
@@ -366,7 +396,16 @@ def configured_apt_repositories(source_texts):
             else:
                 continue
             for uri in uris:
-                if not re.match(r'^https?://[^/]+/.+', uri):
+                if uri == 'mirror+file:/etc/apt/apt-mirrors.txt':
+                    mirrors = root / 'etc/apt/apt-mirrors.txt'
+                    if not mirrors.is_file() or mirrors.is_symlink():
+                        raise ValueError('Missing or invalid apt mirror list')
+                    entries = [line.strip() for line in mirrors.read_text().splitlines()
+                               if line.strip() and not line.lstrip().startswith('#')]
+                    if not entries or not all(re.fullmatch(r'https?://[^/\s]+/\S+', entry)
+                                              for entry in entries):
+                        raise ValueError('Missing or invalid apt mirror list: ' + repr(entries[:10]))
+                elif not re.match(r'^https?://[^/]+/.+', uri):
                     raise ValueError('Unsupported or incomplete apt repository URI')
                 for suite in suites:
                     for component in components:
@@ -378,7 +417,7 @@ def configured_apt_repositories(source_texts):
 
 
 def origin_matches_configured(origin, repositories, package_arch=None):
-    match = re.match(r'^\d+\s+(https?://\S+)\s+([^/\s]+)/([^\s]+)\s+(\S+)\s+(Packages|Sources)$', origin)
+    match = re.match(r'^\d+\s+((?:https?://|mirror\+file:)\S+)\s+([^/\s]+)/([^\s]+)\s+(\S+)\s+(Packages|Sources)$', origin)
     if not match:
         return False
     uri, suite, component, architecture, index_type = match.groups()
@@ -415,10 +454,11 @@ def package_sources(package):
             if line and not line[0].isspace():
                 exact_version = False
                 continue
-            if re.search(r'\bhttps?://', line):
+            if re.search(r'(?:https?://|mirror\+file:)', line):
                 origins.append(line.strip())
     if not origins:
-        raise ValueError('Missing repository origin for exact apt package: ' + package['package'])
+        raise ValueError('Missing repository origin for exact apt package: ' + package['package']
+                         + '; apt-cache policy=' + repr(policy[:2000]))
     source_texts = [path.read_text(errors='strict') for path in Path('/etc/apt').rglob('*')
                     if path.is_file() and (path.name == 'sources.list' or path.suffix in ('.list', '.sources'))]
     configured = configured_apt_repositories(source_texts)
@@ -447,9 +487,12 @@ def package_files(record):
 
 
 def elf_owners(binary):
-    output = run(['ldd', str(binary)]).stdout
-    if output.strip() in ('statically linked', 'not a dynamic executable'):
+    result = run(['ldd', str(binary)], check=False)
+    output = (result.stdout + '\n' + result.stderr).strip()
+    if output in ('statically linked', 'not a dynamic executable'):
         return []
+    if result.returncode:
+        raise ValueError('Cannot inspect runtime libraries: ' + output)
     dependencies = []
     for line in output.splitlines():
         line = line.strip()
@@ -478,22 +521,24 @@ def elf_owners(binary):
     return dependencies
 
 
-def baseline(path, source_commit):
+def baseline(path, source_commit, tool='skopeo'):
     packages = run(['dpkg-query', '-W', '-f=' + DPKG_FORMAT]).stdout
     native_arch = run(['dpkg', '--print-architecture']).stdout.strip()
-    evidence = dict(format=FORMAT, source_commit=source_commit,
+    evidence = dict(format=evidence_format(tool), source_commit=source_commit,
                     run_id=os.environ.get('GITHUB_RUN_ID', ''), attempt=os.environ.get('GITHUB_RUN_ATTEMPT', ''),
                     image_os=os.environ.get('ImageOS', ''), image_version=os.environ.get('ImageVersion', ''),
                     native_arch=native_arch, packages=packages,
                     packages_sha256=hashlib.sha256(packages.encode()).hexdigest())
     if not re.fullmatch(r'[a-f0-9]{40}', evidence['source_commit']) or not evidence['run_id'].isdigit() or not evidence['attempt'].isdigit():
         raise ValueError('Missing GitHub source/run identity for apt baseline')
+    if tool != 'skopeo':
+        evidence['tool'] = tool
     Path(path).write_text(json.dumps(evidence, sort_keys=True, indent=2) + '\n')
 
 
-def capture(baseline_path, output, binary, update_status):
+def capture(baseline_path, output, binary, update_status, tool='skopeo'):
     before = json.loads(Path(baseline_path).read_text())
-    if not isinstance(before, dict) or before.get('format') != FORMAT:
+    if not isinstance(before, dict) or before.get('format') != evidence_format(tool) or before.get('tool', 'skopeo') != tool:
         raise ValueError('Missing or unsupported skopeo baseline evidence format')
     packages_text = run(['dpkg-query', '-W', '-f=' + DPKG_FORMAT]).stdout
     native_arch = run(['dpkg', '--print-architecture']).stdout.strip()
@@ -501,11 +546,21 @@ def capture(baseline_path, output, binary, update_status):
         raise ValueError('Native Debian architecture changed after apt baseline')
     packages, before_packages = inventory(packages_text), inventory(before.get('packages', ''))
     executable = Path(binary).resolve(strict=True)
-    if executable.name != 'skopeo' or not executable.is_file():
-        raise ValueError('Expected the actual skopeo executable')
+    if executable.name != tool or not executable.is_file():
+        raise ValueError('Expected the actual ' + tool + ' executable')
     ldd = elf_owners(executable)
-    owner_names = sorted({owner.split(':', 1)[0] for library in ldd for owner in library['owners']})
-    closure_keys = dependency_closure(packages, ['skopeo', *owner_names], native_arch=native_arch)
+    companions = {}
+    if tool == 'age':
+        keygen_path = shutil.which('age-keygen')
+        if not keygen_path:
+            raise ValueError('Missing actual age-keygen executable')
+        keygen = Path(keygen_path).resolve(strict=True)
+        if keygen.name != 'age-keygen' or not keygen.is_file():
+            raise ValueError('Invalid actual age-keygen executable')
+        companions['age_keygen'] = dict(path=str(keygen), sha256=sha256(keygen), ldd=elf_owners(keygen))
+    owner_names = sorted({owner.split(':', 1)[0] for library in [*ldd, *(record for companion in companions.values() for record in companion['ldd'])]
+                          for owner in library['owners']})
+    closure_keys = dependency_closure(packages, [tool, *owner_names], native_arch=native_arch)
     closure = []
     for key in sorted(closure_keys):
         package = packages[key]
@@ -527,22 +582,29 @@ def capture(baseline_path, output, binary, update_status):
         closure.append(record)
     tool_packages = run(['dpkg-query', '-S', str(executable)]).stdout
     package_name = tool_packages.split(': ', 1)[0].split(':', 1)[0]
-    skopeo_key = next((key for key, value in packages.items() if value['name'] == 'skopeo'), None)
-    if package_name != 'skopeo' or skopeo_key not in closure_keys:
-        raise ValueError('skopeo executable is not owned by the qualified package')
-    result = dict(format=FORMAT, source_commit=before['source_commit'], run_id=before['run_id'], attempt=before['attempt'],
+    tool_key = next((key for key, value in packages.items() if value['name'] == tool), None)
+    if package_name != tool or tool_key not in closure_keys:
+        raise ValueError(tool + ' executable is not owned by the qualified package')
+    if tool == 'age':
+        keygen_packages = run(['dpkg-query', '-S', companions['age_keygen']['path']]).stdout
+        if keygen_packages.split(': ', 1)[0].split(':', 1)[0] != 'age':
+            raise ValueError('age-keygen executable is not owned by age package')
+    result = dict(format=evidence_format(tool), source_commit=before['source_commit'], run_id=before['run_id'], attempt=before['attempt'],
                   image_os=before['image_os'], image_version=before['image_version'], baseline_sha256=before['packages_sha256'],
                   native_arch=native_arch,
                   baseline_packages=before['packages'], installed_packages=packages_text,
                   installed_inventory_sha256=hashlib.sha256(packages_text.encode()).hexdigest(),
                   apt_metadata=apt_files(Path('/')), apt_update=apt_update_result(update_status), packages=closure,
-                  skopeo=dict(path=str(executable), sha256=sha256(executable), ldd=ldd))
+                  **{tool: dict(path=str(executable), sha256=sha256(executable), ldd=ldd)})
+    if tool != 'skopeo':
+        result['tool'] = tool
+        result.update(companions)
     Path(output).write_text(json.dumps(result, sort_keys=True, indent=2) + '\n')
 
 
 def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, image_os, image_version,
-                      live_state, filesystem_root='/', compare=version_satisfies):
-    if not isinstance(evidence, dict) or evidence.get('format') != FORMAT:
+                      live_state, filesystem_root='/', compare=version_satisfies, tool='skopeo'):
+    if not isinstance(evidence, dict) or evidence.get('format') != evidence_format(tool) or evidence.get('tool', 'skopeo') != tool:
         raise ValueError('Missing or unsupported skopeo closure evidence')
     expected = dict(source_commit=source_commit, run_id=str(run_id), attempt=str(attempt), image_os=image_os, image_version=image_version)
     if any(evidence.get(key) != value or not value for key, value in expected.items()):
@@ -558,9 +620,12 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
     native_arch = evidence.get('native_arch')
     if not isinstance(native_arch, str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*', native_arch):
         raise ValueError('Missing native Debian architecture evidence')
-    ldd_records = evidence.get('skopeo', {}).get('ldd', [])
+    if tool == 'age' and not isinstance(evidence.get('age_keygen'), dict):
+        raise ValueError('Missing age-keygen executable evidence')
+    ldd_records = [*evidence.get(tool, {}).get('ldd', []),
+                   *(evidence.get('age_keygen', {}).get('ldd', []) if tool == 'age' else [])]
     ldd_owner_names = sorted({owner.split(':', 1)[0] for item in ldd_records for owner in item.get('owners', [])})
-    expected_closure = dependency_closure(parsed_installed, ['skopeo', *ldd_owner_names], compare=compare,
+    expected_closure = dependency_closure(parsed_installed, [tool, *ldd_owner_names], compare=compare,
                                           native_arch=native_arch)
     if (not isinstance(live_state, dict) or live_state.get('installed_packages') != installed_packages
             or live_state.get('native_arch') != native_arch):
@@ -579,8 +644,16 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
             or not update.get('log_path')):
         raise ValueError('APT update evidence missing or unsuccessful')
     update_log = Path(update['log_path'])
-    if (update_log.is_absolute() or '..' in update_log.parts
-            or sha256(Path(filesystem_root) / update_log) != update['log_sha256']):
+    if '..' in update_log.parts:
+        raise ValueError('APT update log evidence missing or changed')
+    if update_log.is_absolute():
+        allowed = [Path(value).resolve() for value in (os.environ.get('GITHUB_WORKSPACE'), os.environ.get('RUNNER_TEMP')) if value]
+        if not allowed or not any(root == update_log or root in update_log.parents for root in allowed):
+            raise ValueError('APT update log path is outside job evidence roots')
+        log_file = update_log
+    else:
+        log_file = (Path(filesystem_root) if filesystem_root != '/' else Path.cwd()) / update_log
+    if sha256(log_file) != update['log_sha256']:
         raise ValueError('APT update log evidence missing or changed')
     files = metadata['files']
     if (not any('InRelease' in item.get('path', '') for item in files)
@@ -593,6 +666,12 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
                 or not re.fullmatch(r'[a-f0-9]{64}', item.get('sha256', ''))):
             raise ValueError('Invalid apt source/index evidence path or hash')
         path = Path(filesystem_root) / relative
+        if item.get('kind') == 'symlink':
+            if (not path.is_symlink() or os.readlink(path) != item.get('target')
+                    or not allowed_mirror_aux_symlink(path, Path(filesystem_root) / 'var/lib/apt/lists')):
+                raise ValueError('APT mirror auxiliary symlink changed')
+        elif path.is_symlink():
+            raise ValueError('Unexpected apt evidence symlink')
         if not path.is_file() or sha256(path) != item.get('sha256'):
             raise ValueError('Apt source/index evidence changed')
     source_texts = []
@@ -611,7 +690,13 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
             if active and not active.startswith('#') and re.search(
                     r'(?i)(?:trusted\s*(?:=|:)\s*(?:yes|true|on|1)|allow[-_]insecure\s*(?:=|:)\s*(?:yes|true|on|1)|allow[-_]weak\s*(?:=|:)\s*(?:yes|true|on|1)|check-valid-until\s*(?:=|:)\s*(?:no|false|off|0))', active):
                 raise ValueError('Insecure apt source override is forbidden')
-    configured_repositories = configured_apt_repositories(source_texts)
+    configured_repositories = configured_apt_repositories(source_texts, Path(filesystem_root))
+    if any(uri == 'mirror+file:/etc/apt/apt-mirrors.txt' for uri, *_ in configured_repositories):
+        by_path = {item['path']: item for item in files}
+        if ('etc/apt/apt-mirrors.txt' not in by_path
+                or by_path['etc/apt/apt-mirrors.txt'].get('kind') == 'symlink'
+                or by_path.get('var/lib/apt/lists/auxfiles/_etc_apt_apt-mirrors.txt', {}).get('kind') != 'symlink'):
+            raise ValueError('APT mirror list or auxiliary link is missing from hashed evidence')
     signed_by = source_signed_by_paths(source_texts, Path(filesystem_root))
     captured_keyrings = {item['path'] for item in metadata['keyrings']}
     if not signed_by.issubset(captured_keyrings):
@@ -663,7 +748,7 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
                 raise ValueError('Baseline package source identity mismatch')
         else:
             raise ValueError('Unknown dependency source')
-    for library in evidence.get('skopeo', {}).get('ldd', []):
+    for library in ldd_records:
         if not library.get('path') or not re.fullmatch(r'[a-f0-9]{64}', library.get('sha256', '')) or not library.get('owners'):
             raise ValueError('Incomplete skopeo runtime library evidence')
         if not Path(library['resolved_path']).is_file() or sha256(library['resolved_path']) != library['sha256']:
@@ -674,13 +759,20 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
             raise ValueError('Unknown package owns a skopeo runtime library')
     if {(name, arch) for name, _, arch in installed} != expected_closure:
         raise ValueError('Skopeo package dependency closure is incomplete or has extras')
-    if not re.fullmatch(r'[a-f0-9]{64}', evidence.get('skopeo', {}).get('sha256', '')):
+    if not re.fullmatch(r'[a-f0-9]{64}', evidence.get(tool, {}).get('sha256', '')):
         raise ValueError('Missing skopeo executable hash')
-    binary = evidence['skopeo'].get('path')
-    if not binary or not Path(binary).is_file() or sha256(binary) != evidence['skopeo']['sha256']:
+    binary = evidence[tool].get('path')
+    if not binary or not Path(binary).is_file() or sha256(binary) != evidence[tool]['sha256']:
         raise ValueError('skopeo executable changed')
-    if live_state.get('skopeo_sha256') != evidence['skopeo']['sha256'] or live_state.get('ldd') != evidence['skopeo']['ldd']:
+    if live_state.get(tool + '_sha256') != evidence[tool]['sha256'] or live_state.get('ldd') != evidence[tool]['ldd']:
         raise ValueError('skopeo executable or runtime dependency closure changed')
+    if tool == 'age':
+        keygen = evidence['age_keygen']
+        if (not re.fullmatch(r'[a-f0-9]{64}', keygen.get('sha256', ''))
+                or not keygen.get('path') or not Path(keygen['path']).is_file()
+                or sha256(keygen['path']) != keygen['sha256']
+                or live_state.get('age_keygen') != keygen):
+            raise ValueError('age-keygen executable or runtime dependency closure changed')
     report_packages = set()
     closure_names = {(name, version.removeprefix('0:')) for name, version, _ in installed}
     strict_findings = []
@@ -726,21 +818,29 @@ def validate_evidence(evidence, rootfs_report, source_commit, run_id, attempt, i
                 closure_sha256=hashlib.sha256(json.dumps(evidence, sort_keys=True).encode()).hexdigest())
 
 
-def current_state(evidence):
+def current_state(evidence, tool='skopeo'):
     packages_text = run(['dpkg-query', '-W', '-f=' + DPKG_FORMAT]).stdout
     native_arch = run(['dpkg', '--print-architecture']).stdout.strip()
     if evidence.get('native_arch') != native_arch:
         raise ValueError('Native Debian architecture changed after skopeo capture')
     packages = inventory(packages_text)
-    binary = evidence.get('skopeo', {}).get('path', '')
+    binary = evidence.get(tool, {}).get('path', '')
     if not binary or not Path(binary).is_file():
         raise ValueError('Missing actual skopeo executable for post-scan check')
-    ldd = elf_owners(Path(evidence.get('skopeo', {}).get('path', '')))
-    owner_names = sorted({owner.split(':', 1)[0] for item in ldd for owner in item['owners']})
+    ldd = elf_owners(Path(evidence.get(tool, {}).get('path', '')))
+    companions = {}
+    if tool == 'age':
+        keygen_path = shutil.which('age-keygen')
+        if not keygen_path:
+            raise ValueError('Missing actual age-keygen executable for post-scan check')
+        keygen = Path(keygen_path).resolve(strict=True)
+        companions['age_keygen'] = dict(path=str(keygen), sha256=sha256(keygen), ldd=elf_owners(keygen))
+    owner_names = sorted({owner.split(':', 1)[0] for item in [*ldd, *(record for companion in companions.values() for record in companion['ldd'])]
+                          for owner in item['owners']})
     files = {key: package_files(packages[key]) for key in dependency_closure(
-        packages, ['skopeo', *owner_names], native_arch=native_arch)}
+        packages, [tool, *owner_names], native_arch=native_arch)}
     return dict(installed_packages=packages_text, native_arch=native_arch, files=files,
-                skopeo_sha256=sha256(binary), ldd=ldd)
+                **{tool + '_sha256': sha256(binary)}, **companions, ldd=ldd)
 
 
 def main():
@@ -749,11 +849,13 @@ def main():
     baseline_parser = sub.add_parser('baseline')
     baseline_parser.add_argument('--output', required=True)
     baseline_parser.add_argument('--source', required=True)
+    baseline_parser.add_argument('--tool', choices=TOOLS, default='skopeo')
     capture_parser = sub.add_parser('capture')
     capture_parser.add_argument('--baseline', required=True)
     capture_parser.add_argument('--output', required=True)
     capture_parser.add_argument('--binary', required=True)
     capture_parser.add_argument('--apt-update-status', required=True)
+    capture_parser.add_argument('--tool', choices=TOOLS, default='skopeo')
     evaluate_parser = sub.add_parser('evaluate')
     evaluate_parser.add_argument('--evidence', required=True)
     evaluate_parser.add_argument('--rootfs', required=True)
@@ -763,20 +865,22 @@ def main():
     evaluate_parser.add_argument('--image-os', required=True)
     evaluate_parser.add_argument('--image-version', required=True)
     evaluate_parser.add_argument('--output', required=True)
+    evaluate_parser.add_argument('--tool', choices=TOOLS, default='skopeo')
     args = parser.parse_args()
     try:
         if args.command == 'baseline':
             if not re.fullmatch(r'[a-f0-9]{40}', args.source):
                 raise ValueError('Full source commit required for apt baseline')
-            baseline(args.output, args.source)
+            baseline(args.output, args.source, args.tool)
         elif args.command == 'capture':
-            capture(args.baseline, args.output, args.binary, args.apt_update_status)
+            capture(args.baseline, args.output, args.binary, args.apt_update_status, args.tool)
         else:
             evidence_path, rootfs_path = Path(args.evidence), Path(args.rootfs)
             evidence = json.loads(evidence_path.read_text())
             result = validate_evidence(evidence,
                                        json.loads(rootfs_path.read_text()), args.source, args.run_id,
-                                       args.attempt, args.image_os, args.image_version, current_state(evidence))
+                                       args.attempt, args.image_os, args.image_version, current_state(evidence, args.tool),
+                                       tool=args.tool)
             result['evidence_sha256'] = sha256(evidence_path)
             result['rootfs_report_sha256'] = sha256(rootfs_path)
             Path(args.output).write_text(json.dumps(result, sort_keys=True, indent=2) + '\n')

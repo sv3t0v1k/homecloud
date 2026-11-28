@@ -57,7 +57,11 @@ SOURCE_PATHS = ('docker-compose.project-test.yml',
                 'scripts/ci/skopeo-closure.py', 'scripts/ci/ci-gate.py',
                 'scripts/ci/test-routing.py', 'scripts/ci/audit-domains.py',
                 'scripts/ci/test-user-installer.sh',
-                'docs/image-security-policy.md') + USER_DEPLOYMENT_PATHS
+                'scripts/ci/run-backend-unprivileged.sh',
+                'scripts/ci/minimize-runner.py',
+                'backend/native/build.sh',
+                'docs/image-security-policy.md',
+                'docs/security/image-security-policy.md') + USER_DEPLOYMENT_PATHS
 RUNTIME = {'backend', 'frontend', 'postgres', 'ingress'}
 BUILD = {'backend-deps', 'backend-builder', 'frontend-deps', 'frontend-builder', 'buildkit'}
 ENVIRONMENTS = {'backend', 'pr-fast-backend', 'frontend', 'configuration', 'image-build-backend', 'image-build-frontend',
@@ -125,20 +129,19 @@ def qualification(value, commit, run_id=None, attempt=None):
                             else {'rootfs', 'global-npm', 'tools'})
                 require(set(item.get('scans', {})) == expected, 'environment scan coverage is incomplete')
                 rootfs = item['scans']['rootfs']
-                if role in ('backend', 'pr-fast-backend'):
-                    require(item.get('runner_policy') == 'PINNED_CONTAINER_STRICT'
-                            and rootfs.get('gate') == 'PASS'
-                            and not rootfs.get('findings', {}).get('HIGH', 0)
-                            and not rootfs.get('findings', {}).get('CRITICAL', 0),
-                            'pinned backend container rootfs has high/critical')
-                else:
-                    require(item.get('runner_policy') == 'GITHUB_HOSTED_PLATFORM_ASSURANCE'
-                            and rootfs.get('gate') == 'PLATFORM_ASSURANCE'
-                            and rootfs.get('risk_domain') == 'github-hosted-runner-platform'
-                            and rootfs.get('raw_findings_retained') is True,
-                            'GitHub-hosted runner evidence lacks platform assurance')
+                backend_host = role in ('backend', 'pr-fast-backend')
+                expected_policy = ('GITHUB_HOSTED_BACKEND_UNCHANGED_OS'
+                                   if backend_host else 'GITHUB_HOSTED_PLATFORM_ASSURANCE')
+                require(item.get('runner_policy') == expected_policy
+                        and rootfs.get('gate') == 'PLATFORM_ASSURANCE'
+                        and rootfs.get('risk_domain') == 'github-hosted-runner-platform'
+                        and rootfs.get('raw_findings_retained') is True,
+                        'GitHub-hosted runner evidence lacks platform assurance')
+                if backend_host:
+                    require(re.fullmatch(r'[a-f0-9]{64}', rootfs.get('backend_os_baseline_sha256', '')),
+                            'missing backend OS baseline qualification')
                 for name, scan in item['scans'].items():
-                    if name == 'rootfs' and role not in ('backend', 'pr-fast-backend'):
+                    if name == 'rootfs':
                         continue
                     require(scan.get('gate') == 'PASS'
                             and not scan.get('findings', {}).get('HIGH', 0)

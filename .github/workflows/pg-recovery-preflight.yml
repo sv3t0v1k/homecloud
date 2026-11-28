@@ -63,10 +63,11 @@ jobs:
         run: python3 scripts/ci/minimize-runner.py
       - name: Установить runtime tooling до обязательного actual rootfs scan
         if: inputs.run_drill
-        timeout-minutes: 3
+        timeout-minutes: 20
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo e2fsprogs util-linux
+          sudo apt-get update --error-on=any
+          sudo apt-get install -y --no-install-recommends e2fsprogs util-linux
+          bash scripts/ci/qualify-apt-tool.sh skopeo "$RUNNER_TEMP/d513-apt-skopeo"
       - name: Установить закреплённый scanner в одноразовый каталог
         run: sh scripts/ci/install-trivy.sh "$RUNNER_TEMP/d513-trivy"
       - name: Проверить оба exact runtime archives действующим strict image gate
@@ -103,6 +104,8 @@ jobs:
           path: |
             ${{ env.D513_EVIDENCE }}
             !${{ env.D513_EVIDENCE }}/environment/executed-tools/**
+            ${{ runner.temp }}/d513-apt-skopeo/*.json
+            ${{ runner.temp }}/d513-apt-skopeo/*.log
           if-no-files-found: error
           retention-days: 1
           compression-level: 9

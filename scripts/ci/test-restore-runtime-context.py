@@ -183,9 +183,9 @@ class ContextTests(unittest.TestCase):
         with patch.object(preflight, "TOOL_BINARIES", {"node": str(arm)}), \
              patch.object(preflight.shutil, "which", side_effect=lambda value: value), \
              patch.object(preflight.subprocess, "run") as run, redirect_stdout(io.StringIO()):
-            for version in ("5.6.0", "unqualified"):
+            for version in ("5.8.1", "5.6.0", "unqualified"):
                 run.side_effect = [SimpleNamespace(stdout='{"os":"linux","arch":"arm64"}'), SimpleNamespace(stdout=version)]
-                if version == "5.6.0":
+                if version == "5.8.1":
                     self.assertEqual(len(preflight.inspect_toolchain("linux/arm64")), 1)
                 else:
                     with self.assertRaisesRegex(ValueError, "Compose version"):
@@ -207,6 +207,41 @@ class ContextTests(unittest.TestCase):
                 exec(compile(source, "fixture-compose-installer", "exec"), {})
         write.assert_not_called()
         chmod.assert_not_called()
+
+
+    def test_tampered_amd64_compose_never_installs(self):
+        dockerfile = (
+            ROOT / "scripts/ci/restore-e2e-runner.Dockerfile"
+        ).read_text()
+
+        newline = chr(10)
+
+        source = dockerfile.split(
+            "python3 - <<'PY'" + newline, 1
+        )[1].split(
+            newline + "PY" + newline, 1
+        )[0]
+
+        with patch.dict(os.environ, {"TARGETARCH": "amd64"}):
+            with patch.object(
+                Path, "open",
+                return_value=io.BytesIO(b"tampered executable")
+            ):
+                with patch.object(Path, "write_bytes") as write:
+                    with patch.object(Path, "chmod") as chmod:
+                        with patch.object(Path, "unlink") as unlink:
+                            with self.assertRaisesRegex(
+                                SystemExit, "checksum mismatch"
+                            ):
+                                exec(compile(
+                                    source,
+                                    "fixture-compose-installer",
+                                    "exec"
+                                ), {})
+
+                            write.assert_not_called()
+                            chmod.assert_not_called()
+                            unlink.assert_not_called()
 
 
 if __name__ == "__main__":

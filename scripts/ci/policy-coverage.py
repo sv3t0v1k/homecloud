@@ -156,13 +156,13 @@ def qualify(root, source, profile='release'):
                                  datetime.now(timezone.utc), current.get('java_db'))
             summaries = {}
             for role, report in reports.items():
-                if role == 'rootfs' and name not in environment.PINNED_BACKEND_ENVIRONMENTS:
+                if role == 'rootfs':
                     summaries[role] = policy.evaluate_host_platform(report, current)
                 else:
                     summaries[role] = policy.evaluate_environment(report, component=role in ('component', 'global-npm', 'tools'))
             accepted = {'PASS', 'PLATFORM_ASSURANCE'}
             return dict(source_commit=source, scans=summaries,
-                        runner_policy='GITHUB_HOSTED_PLATFORM_ASSURANCE' if name not in environment.PINNED_BACKEND_ENVIRONMENTS else 'PINNED_CONTAINER_STRICT',
+                        runner_policy='GITHUB_HOSTED_BACKEND_UNCHANGED_OS' if name in environment.BACKEND_HOST_ENVIRONMENTS else 'GITHUB_HOSTED_PLATFORM_ASSURANCE',
                         gate='BLOCKED' if any(s['gate'] not in accepted for s in summaries.values()) else 'PASS')
         attempt('environments', name, check)
     for role in (() if profile == 'pull-request' else RAW_BASES):

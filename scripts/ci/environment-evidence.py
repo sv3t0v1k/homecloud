@@ -12,7 +12,11 @@ import re
 import subprocess
 import sys
 
-PINNED_BACKEND_ENVIRONMENTS = ('backend', 'pr-fast-backend')
+BACKEND_HOST_ENVIRONMENTS = ('backend', 'pr-fast-backend')
+OS_INVENTORY_ARGV = [
+    'dpkg-query', '-W',
+    '-f=${Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n',
+]
 
 
 def command(argv):
@@ -28,9 +32,8 @@ def minimization_module():
 
 
 def validate_minimization(evidence):
-    # Backend already runs in the locked Node container. Every other actual
-    # workload keeps the hosted host rootfs, including provider tools/daemon.
-    if evidence.get('environment_id') and evidence['environment_id'] not in PINNED_BACKEND_ENVIRONMENTS:
+    # Every release qualification job uses the actual hosted runner.
+    if evidence.get('environment_id'):
         minimization_module().validate(evidence.get('runner_minimization', {}),
                                        evidence['source_commit'], evidence['github'])
 
@@ -49,6 +52,131 @@ def validate_host_platform_identity(evidence):
     os_release = evidence.get('os_release', '')
     if not re.search(r'^ID=ubuntu$', os_release, re.MULTILINE) or not re.search(r'^VERSION_ID="?24\.04"?$', os_release, re.MULTILINE):
         raise ValueError('Runner image metadata does not match Ubuntu 24.04 rootfs')
+
+
+
+def backend_inventory_sha256(record):
+    if not isinstance(record, dict) or record.get('exit_code') != 0:
+        raise ValueError('Invalid backend OS baseline inventory')
+    text = record.get('stdout')
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError('Empty backend OS baseline inventory')
+    lines = text.splitlines()
+    installed = 0
+    identities = set()
+    for line in lines:
+        fields = line.split('\t')
+        if len(fields) != 4 or not all(fields):
+            raise ValueError('Malformed backend OS baseline inventory')
+        name, version, arch, status = fields
+        identity = (name, arch)
+        if identity in identities:
+            raise ValueError('Duplicate backend OS inventory entry')
+        identities.add(identity)
+        if status == 'installed':
+            installed += 1
+    if not installed:
+        raise ValueError('No installed backend OS packages')
+    canonical = '\n'.join(sorted(lines)) + '\n'
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def validate_backend_baseline(evidence):
+    role = evidence.get('environment_id')
+    if role not in BACKEND_HOST_ENVIRONMENTS:
+        return None
+
+    baseline = evidence.get('backend_os_baseline')
+
+    if not isinstance(baseline, dict):
+        raise ValueError('Missing backend OS baseline')
+
+    if (baseline.get('format') != 'homecloud-backend-os-baseline-v1'
+            or baseline.get('environment_id') != role
+            or baseline.get('source_commit') != evidence.get('source_commit')):
+        raise ValueError('Mismatched backend OS baseline identity')
+
+    github = evidence.get('github', {})
+    recorded = baseline.get('github', {})
+
+    minimization_module().validate_github_identity(recorded, github)
+
+    if github.get('job') != role:
+        raise ValueError('Backend baseline job mismatch')
+
+    for field in ('runner_os', 'runner_arch', 'image_os', 'image_version'):
+        if not github.get(field) or recorded.get(field) != github[field]:
+            raise ValueError('Backend baseline runner mismatch: ' + field)
+
+    initial = backend_inventory_sha256(baseline.get('inventory'))
+    final = backend_inventory_sha256(evidence.get('os_package_inventory'))
+
+    if baseline.get('inventory_sha256') != initial or initial != final:
+        raise ValueError('Backend OS baseline changed during workload')
+
+    return initial
+
+
+def capture_backend_baseline():
+    workspace, temporary = minimization_module().context(os.environ)
+    role = os.environ.get('GITHUB_JOB')
+
+    if role not in BACKEND_HOST_ENVIRONMENTS:
+        raise ValueError('Unexpected backend baseline job')
+
+    source = subprocess.check_output(
+        ['git', 'rev-parse', 'HEAD'], cwd=workspace, text=True
+    ).strip()
+
+    if not re.fullmatch(r'[a-f0-9]{40}', source):
+        raise ValueError('Invalid backend baseline source')
+
+    github = dict(
+        run_id=os.environ.get('GITHUB_RUN_ID'),
+        run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT'),
+        sha=os.environ.get('GITHUB_SHA'),
+        job=role,
+        runner_environment=os.environ.get('RUNNER_ENVIRONMENT'),
+        runner_os=os.environ.get('RUNNER_OS'),
+        runner_arch=os.environ.get('RUNNER_ARCH'),
+        image_os=os.environ.get('ImageOS'),
+        image_version=os.environ.get('ImageVersion'),
+    )
+
+    identity = dict(
+        github=github,
+        os_release=Path('/etc/os-release').read_text(),
+    )
+    validate_host_platform_identity(identity)
+
+    retained = json.loads(
+        (temporary / 'homecloud-runner-minimization.json').read_text()
+    )
+    minimization_module().validate(retained, source, github)
+
+    inventory = command(OS_INVENTORY_ARGV)
+    digest = backend_inventory_sha256(inventory)
+
+    record = dict(
+        format='homecloud-backend-os-baseline-v1',
+        environment_id=role,
+        source_commit=source,
+        github=github,
+        inventory=inventory,
+        inventory_sha256=digest,
+    )
+
+    destination = temporary / 'homecloud-backend-os-baseline.json'
+    fd = os.open(
+        str(destination),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+    )
+    with os.fdopen(fd, 'w') as stream:
+        json.dump(record, stream, indent=2)
+        stream.write('\n')
+
+    print('PASS: hosted backend OS baseline', digest)
 
 
 def scopes(workspace, component):
@@ -285,15 +413,19 @@ def capture(environment_id, component, workspace, output, skip_dirs, scanner, re
                         'Pseudo filesystems and temporary directories excluded; installed system/toolcache directories included.',
                         'Checkout excluded before rootfs traversal; selected application scanned separately.',
                         'Environment is observed at this job step; this is not container image provenance.'])
-    if environment_id not in PINNED_BACKEND_ENVIRONMENTS:
-        evidence['runner_minimization'] = json.loads(Path(os.environ['RUNNER_TEMP'], 'homecloud-runner-minimization.json').read_text())
-        if Path(minimization_module().TARGET).exists():
-            raise ValueError('Unused SDK reappeared before environment scan')
-        validate_minimization(evidence)
+    evidence['runner_minimization'] = json.loads(Path(os.environ['RUNNER_TEMP'], 'homecloud-runner-minimization.json').read_text())
+    if Path(minimization_module().TARGET).exists():
+        raise ValueError('Unused SDK reappeared before environment scan')
+    validate_minimization(evidence)
+    validate_host_platform_identity(evidence)
     evidence['global_npm_inventory'] = command(['npm', 'list', '--global', '--all', '--json'])
     evidence['global_npm_root'] = global_root_record
     evidence['global_npm_manifests'] = installed_manifests(global_root, root)
-    evidence['os_package_inventory'] = command(['dpkg-query', '-W', '-f=${Package}\t${Version}\t${Architecture}\t${db:Status-Status}\n'])
+    evidence['os_package_inventory'] = command(OS_INVENTORY_ARGV)
+    if environment_id in BACKEND_HOST_ENVIRONMENTS:
+        evidence['backend_os_baseline'] = json.loads(
+            Path(os.environ['RUNNER_TEMP'], 'homecloud-backend-os-baseline.json').read_text()
+        )
     if selected:
         evidence['component_npm_inventory'] = command(['npm', 'list', '--all', '--json', '--prefix', str(selected)])
         evidence['component_npm_manifests'] = installed_manifests(selected / 'node_modules', root, allow_workspace=True)
@@ -342,8 +474,7 @@ def validate(evidence, reports, metadata, now, java_metadata=None):
         raise ValueError('Stale or invalid vulnerability DB metadata')
     if evidence.get('source_kind') != 'actual-job-filesystem' or evidence.get('platform') != 'linux/x86_64':
         raise ValueError('Expected actual Linux amd64 job environment')
-    if evidence.get('environment_id') not in PINNED_BACKEND_ENVIRONMENTS:
-        validate_host_platform_identity(evidence)
+    validate_host_platform_identity(evidence)
     if evidence['workspace'] not in evidence['rootfs_excluded_dirs']:
         raise ValueError('Checkout was not excluded')
     if evidence['os_package_inventory']['exit_code'] != 0 or not evidence['os_package_inventory']['stdout'].strip():
@@ -388,7 +519,13 @@ def validate(evidence, reports, metadata, now, java_metadata=None):
             raise ValueError(f'{name}: missing actual package inventory')
 
 
+    validate_backend_baseline(evidence)
+
+
 def main():
+    if sys.argv[1] == 'baseline':
+        capture_backend_baseline()
+        return
     if sys.argv[1] == 'capture':
         try:
             capture(*sys.argv[2:])
@@ -410,10 +547,18 @@ def main():
         java_path = db_path.parent.parent / 'java-db' / 'metadata.json'
         java_db = json.loads(java_path.read_text()) if java_path.is_file() else None
         evidence['java_db'] = java_db
-        if evidence.get('environment_id') not in PINNED_BACKEND_ENVIRONMENTS:
-            retained = json.loads(Path(evidence['runner_temp'], 'homecloud-runner-minimization.json').read_text())
-            if retained != evidence['runner_minimization'] or Path(minimization_module().TARGET).exists():
-                raise ValueError('Runner minimization changed during environment scan')
+        retained = json.loads(Path(evidence['runner_temp'], 'homecloud-runner-minimization.json').read_text())
+        if retained != evidence['runner_minimization'] or Path(minimization_module().TARGET).exists():
+            raise ValueError('Runner minimization changed during environment scan')
+        if evidence.get('environment_id') in BACKEND_HOST_ENVIRONMENTS:
+            baseline = json.loads(
+                Path(evidence['runner_temp'], 'homecloud-backend-os-baseline.json').read_text()
+            )
+            if baseline != evidence.get('backend_os_baseline'):
+                raise ValueError('Backend baseline changed during scan')
+            final = command(OS_INVENTORY_ARGV)
+            if backend_inventory_sha256(final) != backend_inventory_sha256(evidence['os_package_inventory']):
+                raise ValueError('Backend OS inventory changed during scan')
         for tool in evidence['executed_tools']:
             # Recheck both source and staged bytes after every scan, before evidence PASS.
             actual_digest = hashlib.sha256(Path(tool['real_path']).read_bytes()).hexdigest()

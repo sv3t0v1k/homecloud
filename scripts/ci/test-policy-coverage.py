@@ -79,7 +79,7 @@ class CoverageTests(unittest.TestCase):
         for name in coverage.ENVIRONMENTS:
             p = self.write('env-'+name+'/rootfs.json', self.report('/', image=False))
             rootfs_report = json.loads(p.read_text())
-            rootfs_report['ArtifactName'] = 'runner-host' if name not in ('backend', 'pr-fast-backend') else 'container-root'
+            rootfs_report['ArtifactName'] = 'runner-host'
             p.write_text(json.dumps(rootfs_report))
             component = coverage.COMPONENTS.get(name, 'none')
             reports = {'rootfs': coverage.sha(p)}
@@ -114,8 +114,26 @@ class CoverageTests(unittest.TestCase):
                        github=dict(runner_environment='github-hosted', runner_os='Linux', runner_arch='X64',
                                    image_os='ubuntu24', image_version='20261018.1.0'),
                        os_release='ID=ubuntu\nVERSION_ID="24.04"\n',
-                       rootfs_artifact_name='runner-host' if name not in ('backend', 'pr-fast-backend') else 'container-root',
+                       rootfs_artifact_name='runner-host',
                        global_npm_root=dict(exit_code=0, stdout='/usr/lib/node_modules')))
+            if name in coverage.environment.BACKEND_HOST_ENVIRONMENTS:
+                path = self.root / ('env-'+name) / 'environment.json'
+                current = json.loads(path.read_text())
+                current['github'].update(
+                    run_id='123', run_attempt='1', sha='b'*40, job=name
+                )
+                inventory = dict(exit_code=0, stdout='libc\t1\tamd64\tinstalled')
+                current['os_package_inventory'] = inventory
+                current['backend_os_baseline'] = dict(
+                    format='homecloud-backend-os-baseline-v1',
+                    environment_id=name,
+                    source_commit=self.source,
+                    github=dict(current['github']),
+                    inventory=inventory,
+                    inventory_sha256=coverage.environment.backend_inventory_sha256(inventory),
+                )
+                path.write_text(json.dumps(current))
+
         raw_lock = json.loads(Path(__file__).with_name('images.lock.json').read_text())
         for role in ('node', 'nginx', 'postgres', 'node-ci'):
             ref = ('node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd'
@@ -220,6 +238,32 @@ class CoverageTests(unittest.TestCase):
                 result = self.qualify()
                 self.assertEqual(result['status'], 'BLOCKED', result['errors'])
                 self.assertEqual(result['environments']['frontend']['scans'][report_name]['gate'], 'BLOCKED')
+
+    def test_backend_without_baseline_blocks(self):
+        self.fixture()
+        path = self.root/'env-backend/environment.json'
+        current = json.loads(path.read_text())
+        current.pop('backend_os_baseline')
+        path.write_text(json.dumps(current))
+        result = self.qualify()
+        self.assertEqual(result['status'], 'BLOCKED')
+        self.assertEqual(result['coverage'], 'INCOMPLETE')
+
+    def test_hosted_backend_component_findings_still_block(self):
+        self.fixture()
+        path = self.root/'env-backend/component.json'
+        report = json.loads(path.read_text())
+        report['Results'][0]['Vulnerabilities'] = [
+            dict(PkgName='example', VulnerabilityID='CVE-TEST', Severity='HIGH')
+        ]
+        path.write_text(json.dumps(report))
+        env_path = self.root/'env-backend/environment.json'
+        current = json.loads(env_path.read_text())
+        current['report_sha256']['component'] = coverage.sha(path)
+        env_path.write_text(json.dumps(current))
+        result = self.qualify()
+        self.assertEqual(result['status'], 'BLOCKED')
+        self.assertEqual(result['environments']['backend']['scans']['component']['gate'], 'BLOCKED')
 
     def test_missing_environment_blocks(self):
         self.fixture()

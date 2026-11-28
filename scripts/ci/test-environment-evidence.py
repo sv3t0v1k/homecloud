@@ -30,6 +30,26 @@ class EvidenceTests(unittest.TestCase):
                              component_npm_inventory=dict(exit_code=0, stdout=json.dumps({'dependencies': {'example': {'version': '1.0.0'}}})),
                              os_package_inventory={'exit_code': 0, 'stdout': 'libc\t1\tamd64\tinstalled'},
                              tools={'node': {'exit_code': 0}, 'npm': {'exit_code': 0}})
+        github = dict(
+            run_id='123', run_attempt='1', sha='b'*40,
+            job='backend', runner_environment='github-hosted',
+            runner_os='Linux', runner_arch='X64',
+            image_os='ubuntu24', image_version='20261018.1.0',
+        )
+        self.evidence.update(
+            github=github,
+            os_release='ID=ubuntu\nVERSION_ID="24.04"\n',
+            runner_minimization=dict(
+                format=module.minimization_module().FORMAT,
+                source_commit=self.evidence['source_commit'],
+                github=github,
+                removed_paths=[module.minimization_module().TARGET],
+                absent_after=True,
+                status='REMOVED_BEFORE_WORKLOAD',
+                rootfs_scope_changed=False,
+            ),
+        )
+        self.refresh_backend_baseline()
         self.reports = {
             'tools': dict(ArtifactType='filesystem', ArtifactName='/evidence/executed-tools', Trivy={'Version':'0.76.2'}, Results=[dict(Class='lang-pkgs', Type='gobinary', Target='trivy', Packages=[dict(Name='github.com/aquasecurity/trivy', Version='v0.76.2')])]),
             'rootfs': dict(ArtifactType='filesystem', ArtifactName='runner-host', Trivy={'Version': '0.76.2'},
@@ -43,6 +63,32 @@ class EvidenceTests(unittest.TestCase):
                                    dict(Name='bundled', Version='1.0.0', FilePath='npm/node_modules/bundled/package.json')])]),
             'component': dict(ArtifactType='filesystem', ArtifactName='/checkout/backend/node_modules', Trivy={'Version': '0.76.2'},
                               Results=[dict(Class='lang-pkgs', Type='node-pkg', Packages=[dict(Name='example', Version='1.0.0', FilePath='example/package.json')])])}
+
+    def refresh_backend_baseline(self):
+        inventory = copy.deepcopy(self.evidence['os_package_inventory'])
+        self.evidence['backend_os_baseline'] = dict(
+            format='homecloud-backend-os-baseline-v1',
+            environment_id=self.evidence['environment_id'],
+            source_commit=self.evidence['source_commit'],
+            github=copy.deepcopy(self.evidence['github']),
+            inventory=inventory,
+            inventory_sha256=module.backend_inventory_sha256(inventory),
+        )
+
+    def test_backend_baseline_missing_or_changed_blocks(self):
+        original = copy.deepcopy(self.evidence)
+        mutations = [
+            lambda e: e.pop('backend_os_baseline'),
+            lambda e: e['backend_os_baseline'].update(source_commit='d'*40),
+            lambda e: e['backend_os_baseline']['github'].update(run_attempt='2'),
+            lambda e: e['backend_os_baseline'].update(inventory_sha256='f'*64),
+            lambda e: e['os_package_inventory'].update(stdout='libc\t2\tamd64\tinstalled'),
+        ]
+        for mutate in mutations:
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.assertRaises(ValueError):
+                module.validate_backend_baseline(value)
 
     def check(self):
         module.validate(self.evidence, self.reports, self.db, self.now)
@@ -274,9 +320,11 @@ class EvidenceTests(unittest.TestCase):
     def test_os_versions_reconstruct_epoch_release(self):
         self.evidence['os_package_inventory']['stdout'] = 'libc:amd64\t2:1.2.3-4+deb12u1\tamd64\tinstalled'
         self.reports['rootfs']['Results'][0]['Packages'][0].update(Version='1.2.3', Epoch=2, Release='4+deb12u1')
+        self.refresh_backend_baseline()
         self.check()
         self.evidence['os_package_inventory']['stdout'] = 'libc\t0:1.2.3-4+deb12u1\tamd64\tinstalled'
         self.reports['rootfs']['Results'][0]['Packages'][0]['Epoch'] = 0
+        self.refresh_backend_baseline()
         self.check()
 
     def test_successful_npm_optional_empty_slots_are_not_installed(self):

@@ -78,7 +78,7 @@ jobs:
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         with:
           version: v0.38.0
-          driver-opts: image=moby/buildkit@sha256:98cc6a3fc46220d00f8224ae483f3274fc874e9be8d7dd1e2e2c5481209228b5
+          driver-opts: image=ghcr.io/sv3t0v1k/homecloud-sec02-buildkit@sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e
       - name: Verify exact backend context before build
         id: context
         shell: bash
@@ -136,8 +136,7 @@ jobs:
           assert 'desktop' not in host['operating_system'].lower()
           print('NATIVE_AMD64_HOST:', json.dumps(host, sort_keys=True))
           PY
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
+          bash scripts/ci/qualify-apt-tool.sh skopeo "$RUNNER_TEMP/apt-skopeo-native-recovery"
           skopeo copy --override-os linux --override-arch amd64 "oci-archive:$RUNNER_TEMP/backend.oci.tar" "docker-daemon:homecloud-ci-backend:${{ steps.source.outputs.commit }}"
           docker image inspect "homecloud-ci-backend:${{ steps.source.outputs.commit }}" > "backend.loaded.inspect.json"
           python3 scripts/ci/oci-scan-binding.py --archive "$RUNNER_TEMP/backend.oci.tar" --loaded-inspect "backend.loaded.inspect.json" --role "backend" --source "$(git rev-parse HEAD)" --output "backend.loaded.binding.json"
@@ -247,6 +246,8 @@ jobs:
             backend.native-host.json
             backend.loaded.inspect.json
             backend.loaded.binding.json
+            ${{ runner.temp }}/apt-skopeo-native-recovery/*.json
+            ${{ runner.temp }}/apt-skopeo-native-recovery/*.log
           if-no-files-found: error
           retention-days: 14
       - name: Retain the exact verified OCI for parallel scenarios
@@ -312,8 +313,7 @@ jobs:
           assert 'desktop' not in host['operating_system'].lower()
           print('NATIVE_AMD64_HOST:', json.dumps(host, sort_keys=True))
           PY
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
+          bash scripts/ci/qualify-apt-tool.sh skopeo "$RUNNER_TEMP/apt-skopeo-native-scenario"
           skopeo copy --override-os linux --override-arch amd64 "oci-archive:$RUNNER_TEMP/native-recovery-candidate/backend.oci.tar" "docker-daemon:homecloud-ci-backend:${{ inputs.source_sha }}"
           docker image inspect "homecloud-ci-backend:${{ inputs.source_sha }}" > backend.loaded.inspect.json
           python3 scripts/ci/oci-scan-binding.py --archive "$RUNNER_TEMP/native-recovery-candidate/backend.oci.tar" --loaded-inspect backend.loaded.inspect.json --role backend --source "$(git rev-parse HEAD)" --output backend.loaded.binding.json
@@ -423,6 +423,8 @@ jobs:
             backend.native-host.json
             backend.loaded.inspect.json
             backend.loaded.binding.json
+            ${{ runner.temp }}/apt-skopeo-native-scenario/*.json
+            ${{ runner.temp }}/apt-skopeo-native-scenario/*.log
           if-no-files-found: error
           retention-days: 14
 

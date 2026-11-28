@@ -1,0 +1,13 @@
+{
+  "GoModSum": "h1:zv68k6hLifgdbLY6nD1grn5S9/2VsGEzZAR9VPycgTI=",
+  "Path": "github.com/docker/compose/v5",
+  "Sum": "h1:b6Y695MqWVstDjC3QWbKq2N8Gd3Au8rt5+qMao00xD8=",
+  "Version": "v5.8.1",
+  "binary_sha256": "a9e710eba0ded73a609b47c9c9383711686778acf8aed71407850c14a627287d",
+  "commit": "60046ef6022f64924562cb01806aaee0353ea5a1",
+  "go_mod_sha256": "fb3590b0952da18fa3bae04d4446448324779fd28b45127cb28ce53f599bac97",
+  "go_sum_sha256": "c457253346bb6c9237632eac855e9c04172e877a1d66f553d83d97e91ad55ce1",
+  "go_version": "1.27.4",
+  "platform": "linux/amd64",
+  "version": "5.8.1"
+}

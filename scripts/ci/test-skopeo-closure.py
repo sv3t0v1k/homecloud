@@ -98,6 +98,60 @@ class SkopeoClosureTests(unittest.TestCase):
         self.assertEqual(result['gate'], 'PASS')
         self.assertEqual(result['packages'], 2)
 
+    def test_age_uses_the_same_strict_closure_and_rejects_cross_tool_evidence(self):
+        self.binary.rename(self.root / 'usr/bin/age')
+        self.binary = self.root / 'usr/bin/age'
+        self.deb.rename(self.root / 'var/cache/apt/archives/age_1.16.1_amd64.deb')
+        self.deb = self.root / 'var/cache/apt/archives/age_1.16.1_amd64.deb'
+        self.installed = self.installed.replace('skopeo', 'age')
+        self.evidence['installed_packages'] = self.installed
+        self.evidence['installed_inventory_sha256'] = hashlib.sha256(self.installed.encode()).hexdigest()
+        self.evidence['format'] = closure.evidence_format('age')
+        self.evidence['tool'] = 'age'
+        self.evidence['packages'][1]['package']['name'] = 'age'
+        self.evidence['packages'][1]['package']['package'] = 'age:amd64'
+        self.evidence['packages'][1]['files'][0]['path'] = str(self.binary)
+        self.evidence['packages'][1]['files'][0]['sha256'] = closure.sha256(self.binary)
+        self.evidence['packages'][1]['origin']['source'] = 'age'
+        self.evidence['packages'][1]['origin']['filename'] = 'pool/main/a/age/age_1.16.1_amd64.deb'
+        self.evidence['packages'][1]['origin']['archive_sha256'] = closure.sha256(self.deb)
+        self.evidence['packages'][1]['origin']['archive_path'] = str(self.deb.relative_to(self.root))
+        self.evidence['age'] = self.evidence.pop('skopeo')
+        self.evidence['age']['path'] = str(self.binary)
+        self.evidence['age']['sha256'] = closure.sha256(self.binary)
+        keygen = self.root / 'usr/bin/age-keygen'
+        keygen.write_bytes(b'fixture age-keygen executable')
+        self.evidence['packages'][1]['files'].append(
+            dict(path=str(keygen), kind='file', sha256=closure.sha256(keygen)))
+        self.evidence['age_keygen'] = dict(path=str(keygen), sha256=closure.sha256(keygen),
+                                           ldd=self.evidence['age']['ldd'])
+        self.rootfs['Results'][0]['Packages'][1]['Name'] = 'age'
+        live = dict(installed_packages=self.installed, native_arch='amd64',
+                    files={('libc6', 'amd64'): self.evidence['packages'][0]['files'],
+                           ('age', 'amd64'): self.evidence['packages'][1]['files']},
+                    age_sha256=self.evidence['age']['sha256'], age_keygen=self.evidence['age_keygen'],
+                    ldd=self.evidence['age']['ldd'])
+        def evaluate(tool='age'):
+            return closure.validate_evidence(self.evidence, self.rootfs, 'a' * 40, '123', '1',
+                                             'ubuntu24', '20261018.1.0', live, str(self.root),
+                                             compare=lambda actual, operator, expected: actual == expected or operator == '>=' and actual == '2.39',
+                                             tool=tool)
+        self.assertEqual(evaluate()['gate'], 'PASS')
+        with self.assertRaisesRegex(ValueError, 'Missing or unsupported skopeo closure evidence'):
+            evaluate('skopeo')
+        self.rootfs['Results'][0]['Vulnerabilities'] = [
+            dict(VulnerabilityID='CVE-AGE', PkgName='age', InstalledVersion='1.16.1', Severity='HIGH')]
+        with self.assertRaisesRegex(ValueError, 'High/Critical'):
+            evaluate()
+        self.rootfs['Results'][0]['Vulnerabilities'] = []
+        keygen.write_bytes(b'changed age-keygen')
+        with self.assertRaisesRegex(ValueError, 'dependency file changed'):
+            evaluate()
+        keygen.write_bytes(b'fixture age-keygen executable')
+        self.evidence.pop('age_keygen')
+        with self.assertRaisesRegex(ValueError, 'Missing age-keygen'):
+            evaluate()
+
     def test_v1_evidence_is_rejected_after_closure_format_upgrade(self):
         self.evidence['format'] = 'homecloud-skopeo-apt-closure-v1'
         with self.assertRaisesRegex(ValueError, 'Missing or unsupported skopeo closure evidence'):
@@ -238,6 +292,60 @@ class SkopeoClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not bound to an enabled apt source'):
             self.check()
 
+    def test_hashed_hosted_mirror_and_exact_auxiliary_symlink_pass(self):
+        mirror = self.root / 'etc/apt/apt-mirrors.txt'
+        mirror.write_text('http://azure.archive.ubuntu.com/ubuntu\n')
+        source = self.root / 'etc/apt/sources.list.d/ubuntu.sources'
+        source.write_text('deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] '
+                          'mirror+file:/etc/apt/apt-mirrors.txt noble main\n')
+        self.evidence['apt_metadata']['files'][0]['sha256'] = closure.sha256(source)
+        self.evidence['apt_metadata']['sources'][0]['sha256'] = closure.sha256(source)
+        self.evidence['apt_metadata']['files'].append(
+            dict(path='etc/apt/apt-mirrors.txt', sha256=closure.sha256(mirror)))
+        aux = self.root / 'var/lib/apt/lists/auxfiles/_etc_apt_apt-mirrors.txt'
+        aux.parent.mkdir()
+        aux.symlink_to(mirror)
+        self.evidence['apt_metadata']['files'].append(
+            dict(path=str(aux.relative_to(self.root)), kind='symlink',
+                 target=str(mirror), sha256=closure.sha256(aux)))
+        self.evidence['packages'][1]['origin']['repository_origins'] = [
+            '500 mirror+file:/etc/apt/apt-mirrors.txt noble/main amd64 Packages']
+        self.assertEqual(self.check()['gate'], 'PASS')
+        full_files = list(self.evidence['apt_metadata']['files'])
+        for missing in ('etc/apt/apt-mirrors.txt', 'var/lib/apt/lists/auxfiles/_etc_apt_apt-mirrors.txt'):
+            with self.subTest(missing=missing):
+                self.evidence['apt_metadata']['files'] = [item for item in full_files if item['path'] != missing]
+                with self.assertRaisesRegex(ValueError, 'missing from hashed evidence'):
+                    self.check()
+        self.evidence['apt_metadata']['files'] = full_files
+        intermediate = self.root / 'outside-apt-link'
+        intermediate.symlink_to(mirror)
+        aux.unlink()
+        aux.symlink_to(intermediate)
+        self.assertFalse(closure.allowed_mirror_aux_symlink(aux, self.root / 'var/lib/apt/lists'))
+        aux.unlink()
+        escaped = self.root / 'escape'
+        (escaped / 'x').mkdir(parents=True)
+        (escaped / 'etc/apt').mkdir(parents=True)
+        (escaped / 'etc/apt/apt-mirrors.txt').write_text('http://untrusted.invalid/ubuntu\n')
+        (self.root / 'foo').symlink_to(escaped / 'x')
+        aux.symlink_to('../../../../../foo/../etc/apt/apt-mirrors.txt')
+        self.assertFalse(closure.allowed_mirror_aux_symlink(aux, self.root / 'var/lib/apt/lists'))
+        aux.unlink()
+        aux.symlink_to(self.root / 'etc/apt/sources.list.d/ubuntu.sources')
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            self.check()
+
+    def test_mirror_source_rejects_untrusted_or_empty_list(self):
+        source = 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] '
+        source += 'mirror+file:/etc/apt/apt-mirrors.txt noble main\n'
+        mirror = self.root / 'etc/apt/apt-mirrors.txt'
+        for content in ('', 'file:///tmp/untrusted\n', 'https://example.invalid/ubuntu\nfile:///tmp/untrusted\n'):
+            with self.subTest(content=content):
+                mirror.write_text(content)
+                with self.assertRaisesRegex(ValueError, 'invalid apt mirror list'):
+                    closure.configured_apt_repositories([source], self.root)
+
     def test_origin_requires_exact_enabled_suite_and_component(self):
         configured = closure.configured_apt_repositories([
             'deb https://archive.ubuntu.com/ubuntu noble main\n'])
@@ -266,6 +374,10 @@ class SkopeoClosureTests(unittest.TestCase):
                         'Dir::Cache::pkgcache "/tmp/pkgcache";'):
             with self.subTest(setting=setting), self.assertRaisesRegex(ValueError, 'state, index, or package cache paths are redirected'):
                 closure.apt_global_trust_paths(setting)
+
+    def test_trailing_slash_on_canonical_apt_roots_is_allowed(self):
+        closure.apt_global_trust_paths('Dir::State "var/lib/apt/";\nDir::Cache "var/cache/apt/";\n'
+                                       'Dir::State::lists "/var/lib/apt/lists/";\n')
 
     def test_symlinked_apt_source_evidence_blocks(self):
         source_dir = self.root / 'etc/apt/sources.list.d'

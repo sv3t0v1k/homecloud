@@ -7,7 +7,7 @@ PLATFORM="${2:-linux/arm64}"
 # Backend remains native ARM64 on Apple Silicon.
 PG_PLATFORM="linux/amd64"
 
-PG_IMAGE="docker.io/library/postgres:16.15-alpine@sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551"
+PG_IMAGE="ghcr.io/sv3t0v1k/homecloud-sec02-postgres@sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab"
 
 TOKEN="hc-copy-e2e-$(date +%s)-$$"
 

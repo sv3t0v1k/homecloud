@@ -155,7 +155,7 @@ jobs:
     container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
     services:
       postgres:
-        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        image: ghcr.io/sv3t0v1k/homecloud-sec02-postgres@sha256:fbf91774bc5574e34be7404e234da57791fcd6ff9dbc7bd96625eaf2fdddf0ab
         env:
           POSTGRES_DB: homecloud_ci
           POSTGRES_USER: homecloud_ci
@@ -252,15 +252,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/homecloud-compose-bin"
-          compose_image="docker.io/docker/compose-bin@sha256:1937db832e42161ab9b2bd35f3cfa24be06f8179dc4e2fc9e978e1380ee8b6be"
-          docker pull --platform linux/amd64 "$compose_image"
-          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$compose_image")" = linux/amd64
-          compose_container="$(docker create --platform linux/amd64 --entrypoint /docker-compose "$compose_image" version --short)"
-          trap 'docker rm "$compose_container" >/dev/null 2>&1 || :' EXIT
-          docker cp "$compose_container:/docker-compose" "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          test -s "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          chmod +x "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
-          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker-compose" version --short)" = 5.6.0
+          sh scripts/ci/install-oci-scanner.sh compose "$RUNNER_TEMP/homecloud-compose-bin/docker-compose"
           cat > "$RUNNER_TEMP/homecloud-compose-bin/docker" <<'SHIM'
           #!/bin/sh
           set -eu
@@ -270,15 +262,22 @@ jobs:
           SHIM
           chmod +x "$RUNNER_TEMP/homecloud-compose-bin/docker"
           echo "$RUNNER_TEMP/homecloud-compose-bin" >> "$GITHUB_PATH"
-          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker" compose version --short)" = 5.6.0
+          test "$("$RUNNER_TEMP/homecloud-compose-bin/docker" compose version --short)" = 5.8.1
       - run: docker compose version && python3 scripts/ci/compose-check.py
       - run: python3 scripts/ci/test-update-preflight.py
       - run: python3 deploy/linux/test_startup_gate.py
       - run: python3 scripts/ci/test-entrypoint.py
       - name: Install real age before recovery and scheduled contracts
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends age
+        run: bash scripts/ci/qualify-apt-tool.sh age "$RUNNER_TEMP/apt-age-configuration"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: apt-age-configuration-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/apt-age-configuration/*.json
+            ${{ runner.temp }}/apt-age-configuration/*.log
+          if-no-files-found: error
+          retention-days: 14
       - name: Recovery contracts and real Linux crash filesystem checks
         run: |
           bash scripts/ci/test-recovery-contracts.sh
@@ -289,7 +288,7 @@ jobs:
       - name: User installer and signed update regression
         shell: bash
         env:
-          HOMECLOUD_EXPECT_COMPOSE: '5.6.0'
+          HOMECLOUD_EXPECT_COMPOSE: '5.8.1'
         run: bash scripts/ci/test-user-installer.sh
       - name: Isolated recovery contract tests with fake Docker
         run: |
@@ -515,7 +514,7 @@ jobs:
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         with:
           version: v0.38.0
-          driver-opts: image=moby/buildkit@sha256:98cc6a3fc46220d00f8224ae483f3274fc874e9be8d7dd1e2e2c5481209228b5
+          driver-opts: image=ghcr.io/sv3t0v1k/homecloud-sec02-buildkit@sha256:cd50bcd8315282a6e05a6b1758426fca5fccaf4a136be129e96977f11b57504e
       - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
         with:
           registry: ghcr.io

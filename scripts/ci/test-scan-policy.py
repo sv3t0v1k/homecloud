@@ -79,7 +79,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(result['findings'], {'CRITICAL': 1})
         self.assertTrue(result['high_critical_present'])
         self.assertTrue(result['raw_findings_retained'])
-        with self.assertRaisesRegex(ValueError, 'Pinned backend'):
+        with self.assertRaisesRegex(ValueError, 'backend OS baseline'):
             policy.evaluate_host_platform(report, {**evidence, 'environment_id': 'backend'})
         with self.assertRaisesRegex(ValueError, 'Validated'):
             policy.evaluate_host_platform(report, {**evidence, 'evidence_status': 'BLOCKED'})

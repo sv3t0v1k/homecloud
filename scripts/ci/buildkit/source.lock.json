@@ -1,0 +1,31 @@
+{
+  "binaries": {
+    "buildkit-cni-bridge": "af3d31905b5625aadebb686cf3646296831802f7d26842e67e23368f678dfae7",
+    "buildkit-cni-firewall": "71465712b398d1a94a77467b6f80dcf3d1b20b01e774cdfaf51697acc8e08619",
+    "buildkit-cni-host-local": "6743804f34f2154b3ec6b5c1af4b6d7223d339147ba01f2d3cef41db81073ff4",
+    "buildkit-cni-loopback": "10ab6e686f510341dff89e1ce7ea9ab08bed9db1a81732dfe491a74819567b9a",
+    "buildkitd": "8de0251bb9703fcf4d247e5b16eed2790fe08d61dca3e1c2f16a75455258dfad"
+  },
+  "go_version": "go1.27.4",
+  "platform": "linux/amd64",
+  "sources": {
+    "buildkit": {
+      "GoModSum": "h1:i872EpyI/+sYyZywXAp+fWr1DK6qFDdWVxhoAMG1B6Q=",
+      "Path": "github.com/moby/buildkit",
+      "Sum": "h1:5eMfbpfMFsznXL18kdc8JgxbnHtZsXptuRjzgTvyk3A=",
+      "Version": "v0.35.1",
+      "commit": "412cc86ad3c4252b82e929f9b1b1ad167376ded8",
+      "go_mod_sha256": "1637ce44a6a3b2e9be851286a14af31d2b52cf6306940acb447d0e7df30e3b84",
+      "go_sum_sha256": "531e8f04269585a18f646509918e4767de9775817c93ccd866617a7fc45808ee"
+    },
+    "cni": {
+      "GoModSum": "h1:fj7kS55qg3o/RgS+WGsF3+ZxwIImMPusQZKzBpcSr4c=",
+      "Path": "github.com/containernetworking/plugins",
+      "Sum": "h1:8oU6WsIsU3bpnNZuvHp74a6cE1MJwbj2P7s4/yTUNlA=",
+      "Version": "v1.9.1",
+      "commit": "adc3e6b5b581638afbd194cf2e9319ecbb0151a1",
+      "go_mod_sha256": "b0c4514e74c27f6a0a86f98a9dacf4857b5392084688ad3aa75a0b3bc76a18e2",
+      "go_sum_sha256": "9fb797985a1c6a41aff52d93183e2b5ef02244a41f162451d338105f860065ea"
+    }
+  }
+}

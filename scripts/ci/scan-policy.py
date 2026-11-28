@@ -82,22 +82,24 @@ def evaluate_host_platform(report, evidence):
     """Retain the full host scan while applying provider assurance to GitHub-managed rootfs."""
     if not isinstance(evidence, dict) or evidence.get('evidence_status') != 'PASS':
         raise ValueError('Validated environment evidence is required for host platform assurance')
-    if evidence.get('environment_id') in ('backend', 'pr-fast-backend'):
-        raise ValueError('Pinned backend container rootfs remains under the strict environment gate')
     checker = Path(__file__).with_name('environment-evidence.py')
     import importlib.util
     spec = importlib.util.spec_from_file_location('environment_evidence', checker)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.validate_host_platform_identity(evidence)
+    baseline_sha = module.validate_backend_baseline(evidence)
     if report.get('ArtifactName') != evidence.get('rootfs_artifact_name'):
         raise ValueError('Host scan target does not match validated environment evidence')
     findings = validate_environment_report(report)
     counts = Counter(finding['Severity'] for finding in findings)
     blocked = bool(counts['HIGH'] or counts['CRITICAL'])
-    return dict(artifact=report['ArtifactName'], findings=dict(sorted(counts.items())),
-                gate='PLATFORM_ASSURANCE', high_critical_present=blocked,
-                risk_domain='github-hosted-runner-platform', raw_findings_retained=True)
+    summary = dict(artifact=report['ArtifactName'], findings=dict(sorted(counts.items())),
+                   gate='PLATFORM_ASSURANCE', high_critical_present=blocked,
+                   risk_domain='github-hosted-runner-platform', raw_findings_retained=True)
+    if baseline_sha is not None:
+        summary['backend_os_baseline_sha256'] = baseline_sha
+    return summary
 
 
 def validate_environment_report(report):

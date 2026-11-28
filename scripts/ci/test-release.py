@@ -112,9 +112,12 @@ class ReleaseTests(unittest.TestCase):
                     production='NO_GO', errors=[], runtime={role:image(role) for role in r.RUNTIME},
                     build={role:image(role) for role in r.BUILD},
                     environments={role:dict(source_commit=self.commit,gate='PASS',
-                                            runner_policy='PINNED_CONTAINER_STRICT' if role in ('backend', 'pr-fast-backend') else 'GITHUB_HOSTED_PLATFORM_ASSURANCE',
-                                            scans={'rootfs':dict(gate='PASS',findings={}) if role in ('backend', 'pr-fast-backend') else
-                                                   dict(gate='PLATFORM_ASSURANCE',findings={'HIGH':1},risk_domain='github-hosted-runner-platform',raw_findings_retained=True),
+                                            runner_policy='GITHUB_HOSTED_BACKEND_UNCHANGED_OS' if role in ('backend', 'pr-fast-backend') else 'GITHUB_HOSTED_PLATFORM_ASSURANCE',
+                                            scans={'rootfs':dict(gate='PLATFORM_ASSURANCE',findings={'HIGH':1},
+                                                                  risk_domain='github-hosted-runner-platform',
+                                                                  raw_findings_retained=True,
+                                                                  **({'backend_os_baseline_sha256':'a'*64}
+                                                                     if role in ('backend', 'pr-fast-backend') else {})),
                                                   'global-npm':dict(gate='PASS',findings={}),
                                                   'tools':dict(gate='PASS',findings={}),
                                                   **({'component':dict(gate='PASS',findings={})} if role in ('backend','pr-fast-backend','frontend','security-backend','security-frontend') else {})})
@@ -149,7 +152,10 @@ class ReleaseTests(unittest.TestCase):
                      lambda q:q['raw_bases'].pop('postgres'), lambda q:q.update(errors=['missing evidence']),
                      lambda q:q['runtime']['backend'].update(gate='BLOCKED'),
                      lambda q:q['runtime']['backend'].update(findings={'HIGH':1}),
-                     lambda q:q['environments']['backend']['scans']['rootfs'].update(findings={'CRITICAL':1}),
+                     lambda q:q['environments']['backend']['scans']['rootfs'].pop('backend_os_baseline_sha256'),
+                     lambda q:q['environments']['backend']['scans']['rootfs'].update(backend_os_baseline_sha256='invalid'),
+                     lambda q:q['environments']['backend']['scans']['component'].update(findings={'CRITICAL':1}),
+                     lambda q:q['environments']['backend'].update(runner_policy='PINNED_CONTAINER_STRICT'),
                      lambda q:q['environments']['frontend']['scans']['global-npm'].update(gate='BLOCKED',findings={'HIGH':1}),
                      lambda q:q['environments']['frontend']['scans']['tools'].update(gate='BLOCKED',findings={'CRITICAL':1}),
                      lambda q:q['environments']['frontend']['scans']['rootfs'].update(raw_findings_retained=False),
@@ -226,10 +232,11 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(len(r.USER_DEPLOYMENT_PATHS), len(expected))
         self.assertEqual(len(r.SOURCE_PATHS), len(set(r.SOURCE_PATHS)))
         self.assertTrue(expected.issubset(r.SOURCE_PATHS))
+        self.assertIn('docs/security/image-security-policy.md', r.SOURCE_PATHS)
 
         checkout = Path(__file__).resolve().parents[2]
 
-        for name in expected:
+        for name in r.SOURCE_PATHS:
             with self.subTest(name=name):
                 target = checkout / name
                 self.assertTrue(target.is_file())
