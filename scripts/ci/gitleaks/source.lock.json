@@ -1,0 +1,13 @@
+{
+  "GoModSum": "h1:rTDwxRjufMKAkhTI/Mijd07nday1yOhf9qywjwz5Irw=",
+  "Path": "github.com/zricethezav/gitleaks/v8",
+  "Sum": "h1:PmEvCfVI7ti9dV3s5aMZUY7sS2GxRvG3yzih7E+cS3w=",
+  "Version": "v8.30.1",
+  "binary_sha256": "b37d4b1499ebfa3281183e357c21dd8e1f678d9760ff1508a6cab9e1585668ea",
+  "commit": "8d1f98c7967eb1e79cb44ac6241a124e145d2165",
+  "go_mod_sha256": "0d21d8af0e74395d5b88a1fd5ca4f421818c45b3f7a2b38100566eeca61ad675",
+  "go_sum_sha256": "2d491d6ab38b4c7eeae4dc0033811dc459b1b1e8a27bc2131a3c5fa55949b8c9",
+  "go_version": "1.27.4",
+  "platform": "linux/amd64",
+  "version": "8.30.1"
+}

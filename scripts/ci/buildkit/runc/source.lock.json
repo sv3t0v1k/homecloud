@@ -1,0 +1,13 @@
+{
+  "GoModSum": "h1:xGf9+KlNJkiI1y/C4rLIyLFckqs8WOMo4FFplswY9sw=",
+  "Path": "github.com/opencontainers/runc",
+  "Sum": "h1:eUUowc2WJCnFYzI87C1WqRcu356Dk/wsoi90y+2wEfE=",
+  "Version": "v1.5.2",
+  "binary_sha256": "a04d82a7936b94d58faaaf13f4c6a7d93602701fc671b018535f919b636b731c",
+  "builder": "docker.io/library/golang@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280",
+  "commit": "29dd3dc2b13b4123162e5fe132504bb4b15569f1",
+  "go_mod_sha256": "cb5c87e186930c8c560d7de402ea7d1ce4a74e00fd2d6ce2b71d4eb473b9e3d2",
+  "go_sum_sha256": "1340303edda87843a0636e0a261fe6d7525d40f9bd703dd80392b4676fa84c1e",
+  "go_version": "go1.27.4",
+  "platform": "linux/amd64"
+}
