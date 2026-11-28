@@ -375,6 +375,10 @@ class SkopeoClosureTests(unittest.TestCase):
             with self.subTest(setting=setting), self.assertRaisesRegex(ValueError, 'state, index, or package cache paths are redirected'):
                 closure.apt_global_trust_paths(setting)
 
+    def test_trailing_slash_on_canonical_apt_roots_is_allowed(self):
+        closure.apt_global_trust_paths('Dir::State "var/lib/apt/";\nDir::Cache "var/cache/apt/";\n'
+                                       'Dir::State::lists "/var/lib/apt/lists/";\n')
+
     def test_symlinked_apt_source_evidence_blocks(self):
         source_dir = self.root / 'etc/apt/sources.list.d'
         alias = source_dir / 'alias.list'

@@ -44,8 +44,12 @@ def apt_global_trust_paths(apt_config, root=Path('/')):
         'dir::cache::srcpkgcache': ('',),
         'dir::state::status': ('/var/lib/dpkg/status', 'status'),
     }
-    if any(key in values and values[key] not in allowed for key, allowed in expected_roots.items()):
-        raise ValueError('APT state, index, or package cache paths are redirected')
+    def normalized(value):
+        return value.rstrip('/') or value
+    redirected = {key: values[key] for key, allowed in expected_roots.items()
+                  if key in values and normalized(values[key]) not in {normalized(item) for item in allowed}}
+    if redirected:
+        raise ValueError('APT state, index, or package cache paths are redirected: ' + repr(redirected))
     etc = values.get('dir::etc', 'etc/apt')
     if etc not in ('etc/apt', '/etc/apt'):
         raise ValueError('APT global configuration directory is redirected')
@@ -400,7 +404,7 @@ def configured_apt_repositories(source_texts, root=Path('/')):
                                if line.strip() and not line.lstrip().startswith('#')]
                     if not entries or not all(re.fullmatch(r'https?://[^/\s]+/\S+', entry)
                                               for entry in entries):
-                        raise ValueError('Missing or invalid apt mirror list')
+                        raise ValueError('Missing or invalid apt mirror list: ' + repr(entries[:10]))
                 elif not re.match(r'^https?://[^/]+/.+', uri):
                     raise ValueError('Unsupported or incomplete apt repository URI')
                 for suite in suites:
