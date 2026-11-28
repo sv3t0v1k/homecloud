@@ -21,17 +21,44 @@ jobs:
   pr-fast-backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 110
-    container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
     steps:
-      - name: Patch CI Perl and install toolchain
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl gcc libc6-dev git python3 unzip util-linux perl-base=5.36.0-7+deb12u4
-          test "$(dpkg-query -W -f='${Version}' perl-base)" = 5.36.0-7+deb12u4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Remove unused hosted .NET SDK before workload; retain evidence
+        run: python3 scripts/ci/minimize-runner.py
+      - name: Record hosted backend OS before workload
+        run: python3 scripts/ci/environment-evidence.py baseline
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Verify hosted backend toolchain and create isolated test user
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test ! -e /.dockerenv
+          test "$(uname -m)" = x86_64
+          for tool in cc git python3 curl unzip sudo dpkg-query; do
+            command -v "$tool"
+          done
+          test "$(node --version)" = v24.21.0
+          headers="$(dirname "$(dirname "$(node -p 'process.execPath')")")/include/node"
+          test -f "$headers/node_api.h"
+          echo "NODE_INCLUDE_DIR=$headers" >> "$GITHUB_ENV"
+          if getent passwd homecloud-ci-test >/dev/null; then
+            exit 1
+          fi
+          sudo -n useradd --create-home --user-group --shell /bin/bash homecloud-ci-test
+          test "$(id -u homecloud-ci-test)" -ne 0
+          sudo -n -u homecloud-ci-test test -x "$GITHUB_WORKSPACE/backend"
+          if sudo -n -u homecloud-ci-test sudo -n true 2>/dev/null; then
+            exit 1
+          fi
+          if sudo -n -u homecloud-ci-test test -w /var/run/docker.sock; then
+            exit 1
+          fi
       - run: python3 scripts/ci/install-npm.py
       - run: npm ci --no-audit
         working-directory: backend
@@ -49,9 +76,9 @@ jobs:
         run: |
           mapfile -t suites < ../backend-unit-suites.txt
           test "${#suites[@]}" -gt 0
-          chown -R node:node "$GITHUB_WORKSPACE"
-          runuser -u node -- npm test -- --runInBand --runTestsByPath "${suites[@]}" --json --outputFile=../backend-unit-tests.json
-      - run: python3 scripts/ci/test-routing.py verify unit backend-unit-tests.json
+          mkdir -p .ci-reports
+          bash ../scripts/ci/run-backend-unprivileged.sh npm test -- --runInBand --runTestsByPath "${suites[@]}" --json --outputFile=.ci-reports/backend-unit-tests.json
+      - run: python3 scripts/ci/test-routing.py verify unit backend/.ci-reports/backend-unit-tests.json
       - run: npm run lint
         working-directory: backend
       - run: ./node_modules/.bin/tsc --noEmit -p tsconfig.json
@@ -59,16 +86,16 @@ jobs:
       - run: node test/file-type-compiled-runtime.cjs
         working-directory: backend
       - name: Linux writer fencing and orphan child regressions
-        run: runuser -u node -- node --test --test-timeout=30000 test/inherited-root-fence.runtime.cjs test/copy-root-fence-supervisor.runtime.cjs test/operator-cli-fence.runtime.cjs
+        run: bash ../scripts/ci/run-backend-unprivileged.sh node --test --test-timeout=30000 test/inherited-root-fence.runtime.cjs test/copy-root-fence-supervisor.runtime.cjs test/operator-cli-fence.runtime.cjs
         working-directory: backend
       - name: Patched dependency runtime and multipart boundaries
-        run: runuser -u node -- node --test --test-timeout=10000 test/dependency-security-runtime.cjs
+        run: bash ../scripts/ci/run-backend-unprivileged.sh node --test --test-timeout=10000 test/dependency-security-runtime.cjs
         working-directory: backend
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: backend-unit-tests-${{ github.run_attempt }}
-          path: backend-unit-tests.json
+          path: backend/.ci-reports/backend-unit-tests.json
           if-no-files-found: error
           retention-days: 14
       - name: Mandatory actual fast backend environment qualification
@@ -86,7 +113,6 @@ jobs:
   backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 110
-    container: node:24.21.0-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd
     services:
       postgres:
         image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
@@ -97,18 +123,46 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U homecloud_ci -d homecloud_ci"
           --health-interval 5s --health-timeout 3s --health-retries 20
-    env:
-      HOMECLOUD_TEST_DATABASE_URL: postgres://homecloud_ci:disposable-ci-only@postgres:5432/homecloud_ci
+        ports:
+          - 5432/tcp
     steps:
-      - name: Patch CI Perl and install toolchain
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl gcc libc6-dev git python3 unzip util-linux perl-base=5.36.0-7+deb12u4
-          test "$(dpkg-query -W -f='${Version}' perl-base)" = 5.36.0-7+deb12u4
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Remove unused hosted .NET SDK before workload; retain evidence
+        run: python3 scripts/ci/minimize-runner.py
+      - name: Record hosted backend OS before workload
+        run: python3 scripts/ci/environment-evidence.py baseline
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.21.0'
+      - name: Verify hosted backend toolchain and create isolated test user
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test ! -e /.dockerenv
+          test "$(uname -m)" = x86_64
+          for tool in cc git python3 curl unzip sudo dpkg-query; do
+            command -v "$tool"
+          done
+          test "$(node --version)" = v24.21.0
+          headers="$(dirname "$(dirname "$(node -p 'process.execPath')")")/include/node"
+          test -f "$headers/node_api.h"
+          echo "NODE_INCLUDE_DIR=$headers" >> "$GITHUB_ENV"
+          if getent passwd homecloud-ci-test >/dev/null; then
+            exit 1
+          fi
+          sudo -n useradd --create-home --user-group --shell /bin/bash homecloud-ci-test
+          test "$(id -u homecloud-ci-test)" -ne 0
+          sudo -n -u homecloud-ci-test test -x "$GITHUB_WORKSPACE/backend"
+          if sudo -n -u homecloud-ci-test sudo -n true 2>/dev/null; then
+            exit 1
+          fi
+          if sudo -n -u homecloud-ci-test test -w /var/run/docker.sock; then
+            exit 1
+          fi
       - name: Install checksum-pinned compatible npm before dependency commands
         run: python3 scripts/ci/install-npm.py
       - run: npm ci --no-audit
@@ -140,6 +194,13 @@ jobs:
           path: ci-toolchain-packages.txt
           if-no-files-found: error
           retention-days: 14
+      - name: Bind disposable PostgreSQL service
+        shell: bash
+        env:
+          POSTGRES_PORT: ${{ job.services.postgres.ports[5432] }}
+        run: |
+          [[ "$POSTGRES_PORT" =~ ^[0-9]+$ ]]
+          echo "HOMECLOUD_TEST_DATABASE_URL=postgres://homecloud_ci:disposable-ci-only@127.0.0.1:$POSTGRES_PORT/homecloud_ci" >> "$GITHUB_ENV"
       - name: Route PostgreSQL, concurrency, filesystem and bench suites
         run: python3 scripts/ci/test-routing.py list integration > backend-integration-suites.txt
       - name: Compile production code for real crash workers
@@ -151,9 +212,8 @@ jobs:
           mapfile -t suites < ../backend-integration-suites.txt
           test "${#suites[@]}" -gt 0
           report_dir="$PWD/.ci-reports"
-          install -d -o node -g node -m 0700 "$report_dir"
-          runuser -u node -- sh -c 'test -w "$1" && : > "$1/.write-check" && rm "$1/.write-check"' sh "$report_dir"
-          runuser -u node -- npm test -- --runInBand --runTestsByPath "${suites[@]}" --json --outputFile="$report_dir/backend-integration-tests.json"
+          install -d -m 0700 "$report_dir"
+          bash ../scripts/ci/run-backend-unprivileged.sh npm test -- --runInBand --runTestsByPath "${suites[@]}" --json --outputFile="$report_dir/backend-integration-tests.json"
         working-directory: backend
       - run: python3 scripts/ci/test-routing.py verify integration backend/.ci-reports/backend-integration-tests.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

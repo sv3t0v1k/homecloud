@@ -145,7 +145,9 @@ class MinimizationTests(unittest.TestCase):
         self.assertNotIn('/usr/share/dotnet', script)
         self.assertNotIn('--skip-files', script)
         self.assertIn('--platform-host-evidence', script)
-        self.assertIn('if [ "$environment_id" = backend ]', script)
+        self.assertNotIn('if [ "$environment_id" = backend ]', script)
+        workflow = (Path(__file__).parents[2] / '.github/workflows/ci.yml').read_text()
+        self.assertEqual(workflow.count('scripts/ci/environment-evidence.py baseline'), 2)
 
 
 if __name__ == '__main__':

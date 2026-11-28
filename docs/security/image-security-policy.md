@@ -9,6 +9,27 @@
 расширение coverage, не исключение или изменение порогов. GitHub run ещё не
 подтвердил новую схему; Production NO_GO сохраняется.
 
+## SEC-02.3 — переход backend RELEASE CI на hosted runner
+
+Для jobs backend и pr-fast-backend в ci.yml применяется GitHub-hosted
+Ubuntu 24.04 вместо отдельного Debian Node container. Сохраняются
+полный raw rootfs scan, проверка identity и minimization evidence.
+
+Дополнительно обязательна привязанная к source, job, run и attempt
+исходная инвентаризация системных пакетов. Изменение состава или версий
+пакетов блокирует квалификацию. Collector повторно проверяет evidence.
+
+Установленные зависимости приложения, global npm и зарегистрированные
+исполняемые инструменты остаются под строгим HIGH/CRITICAL gate.
+Политика publication environment не меняется.
+
+Это изменение заменяет требования к pinned backend CI containers
+только в RELEASE qualification. Быстрый TEST CI остаётся прежним.
+Старый node-ci raw-base report пока сохраняется как диагностика.
+
+Индивидуальные CVE exceptions не вводятся.
+Production и RELEASE остаются NO_GO до полной квалификации.
+
 ## Действующая блокировка
 
 Общий gate требует все существующие функциональные/dependency/secret проверки и полную квалификацию следующих контуров:
