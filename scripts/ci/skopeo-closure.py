@@ -94,11 +94,11 @@ def validate_global_trust_files(paths):
 def reject_symlinks_below(paths):
     for directory in paths:
         if directory.is_symlink():
-            raise ValueError('APT source, index, config, or keyring directory is a symlink')
+            raise ValueError('APT source, index, config, or keyring directory is a symlink: ' + str(directory))
         if directory.is_dir():
             for path in directory.rglob('*'):
                 if path.is_symlink():
-                    raise ValueError('APT source, index, config, or keyring evidence contains a symlink')
+                    raise ValueError('APT source, index, config, or keyring evidence contains a symlink: ' + str(path))
 
 
 def sha256(path):
@@ -426,7 +426,8 @@ def package_sources(package):
             if re.search(r'\bhttps?://', line):
                 origins.append(line.strip())
     if not origins:
-        raise ValueError('Missing repository origin for exact apt package: ' + package['package'])
+        raise ValueError('Missing repository origin for exact apt package: ' + package['package']
+                         + '; apt-cache policy=' + repr(policy[:2000]))
     source_texts = [path.read_text(errors='strict') for path in Path('/etc/apt').rglob('*')
                     if path.is_file() and (path.name == 'sources.list' or path.suffix in ('.list', '.sources'))]
     configured = configured_apt_repositories(source_texts)
