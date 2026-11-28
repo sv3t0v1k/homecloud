@@ -98,6 +98,60 @@ class SkopeoClosureTests(unittest.TestCase):
         self.assertEqual(result['gate'], 'PASS')
         self.assertEqual(result['packages'], 2)
 
+    def test_age_uses_the_same_strict_closure_and_rejects_cross_tool_evidence(self):
+        self.binary.rename(self.root / 'usr/bin/age')
+        self.binary = self.root / 'usr/bin/age'
+        self.deb.rename(self.root / 'var/cache/apt/archives/age_1.16.1_amd64.deb')
+        self.deb = self.root / 'var/cache/apt/archives/age_1.16.1_amd64.deb'
+        self.installed = self.installed.replace('skopeo', 'age')
+        self.evidence['installed_packages'] = self.installed
+        self.evidence['installed_inventory_sha256'] = hashlib.sha256(self.installed.encode()).hexdigest()
+        self.evidence['format'] = closure.evidence_format('age')
+        self.evidence['tool'] = 'age'
+        self.evidence['packages'][1]['package']['name'] = 'age'
+        self.evidence['packages'][1]['package']['package'] = 'age:amd64'
+        self.evidence['packages'][1]['files'][0]['path'] = str(self.binary)
+        self.evidence['packages'][1]['files'][0]['sha256'] = closure.sha256(self.binary)
+        self.evidence['packages'][1]['origin']['source'] = 'age'
+        self.evidence['packages'][1]['origin']['filename'] = 'pool/main/a/age/age_1.16.1_amd64.deb'
+        self.evidence['packages'][1]['origin']['archive_sha256'] = closure.sha256(self.deb)
+        self.evidence['packages'][1]['origin']['archive_path'] = str(self.deb.relative_to(self.root))
+        self.evidence['age'] = self.evidence.pop('skopeo')
+        self.evidence['age']['path'] = str(self.binary)
+        self.evidence['age']['sha256'] = closure.sha256(self.binary)
+        keygen = self.root / 'usr/bin/age-keygen'
+        keygen.write_bytes(b'fixture age-keygen executable')
+        self.evidence['packages'][1]['files'].append(
+            dict(path=str(keygen), kind='file', sha256=closure.sha256(keygen)))
+        self.evidence['age_keygen'] = dict(path=str(keygen), sha256=closure.sha256(keygen),
+                                           ldd=self.evidence['age']['ldd'])
+        self.rootfs['Results'][0]['Packages'][1]['Name'] = 'age'
+        live = dict(installed_packages=self.installed, native_arch='amd64',
+                    files={('libc6', 'amd64'): self.evidence['packages'][0]['files'],
+                           ('age', 'amd64'): self.evidence['packages'][1]['files']},
+                    age_sha256=self.evidence['age']['sha256'], age_keygen=self.evidence['age_keygen'],
+                    ldd=self.evidence['age']['ldd'])
+        def evaluate(tool='age'):
+            return closure.validate_evidence(self.evidence, self.rootfs, 'a' * 40, '123', '1',
+                                             'ubuntu24', '20261018.1.0', live, str(self.root),
+                                             compare=lambda actual, operator, expected: actual == expected or operator == '>=' and actual == '2.39',
+                                             tool=tool)
+        self.assertEqual(evaluate()['gate'], 'PASS')
+        with self.assertRaisesRegex(ValueError, 'Missing or unsupported skopeo closure evidence'):
+            evaluate('skopeo')
+        self.rootfs['Results'][0]['Vulnerabilities'] = [
+            dict(VulnerabilityID='CVE-AGE', PkgName='age', InstalledVersion='1.16.1', Severity='HIGH')]
+        with self.assertRaisesRegex(ValueError, 'High/Critical'):
+            evaluate()
+        self.rootfs['Results'][0]['Vulnerabilities'] = []
+        keygen.write_bytes(b'changed age-keygen')
+        with self.assertRaisesRegex(ValueError, 'dependency file changed'):
+            evaluate()
+        keygen.write_bytes(b'fixture age-keygen executable')
+        self.evidence.pop('age_keygen')
+        with self.assertRaisesRegex(ValueError, 'Missing age-keygen'):
+            evaluate()
+
     def test_v1_evidence_is_rejected_after_closure_format_upgrade(self):
         self.evidence['format'] = 'homecloud-skopeo-apt-closure-v1'
         with self.assertRaisesRegex(ValueError, 'Missing or unsupported skopeo closure evidence'):
